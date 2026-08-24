@@ -109,20 +109,27 @@ async function refreshDiscover() {
   for (const r of results) {
     const tr = document.createElement('tr');
     tr.innerHTML =
+      '<td></td>' +
       '<td>' + (r.title || '') + '</td>' +
       '<td><code>' + shortHash(r.content_hash) + '</code></td>' +
       '<td>' + (r.host || '') + '</td>' +
       '<td>' + (r.tunnel || '—') + '</td>' +
-      '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>' +
-      '<td></td>';
-    const actions = tr.lastElementChild;
+      '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>';
+    const actions = tr.firstElementChild;
 
     const dlBtn = document.createElement('button');
     dlBtn.textContent = 'Download';
-    dlBtn.addEventListener('click', () => {
-      document.querySelector('.tab-btn[data-tab="downloads"]').click();
-      document.getElementById('download-hash').value = r.content_hash;
-      document.getElementById('download-relays').value = relays.join(', ');
+    dlBtn.addEventListener('click', async () => {
+      dlBtn.textContent = 'Downloading…';
+      dlBtn.disabled = true;
+      const resp = await startDownload(r.content_hash, relays, null, false);
+      if (resp.error) {
+        dlBtn.textContent = 'Download';
+        dlBtn.disabled = false;
+        alert('error: ' + resp.error);
+        return;
+      }
+      dlBtn.textContent = 'Downloading (see Downloads tab)';
     });
     actions.appendChild(dlBtn);
 
@@ -204,21 +211,28 @@ async function refreshHosts() {
 
 const activeJobRows = {};
 
+async function startDownload(contentHash, relays, outPath, lightning) {
+  const resp = await apiPost('/api/download', {
+    content_hash: contentHash,
+    relay: relays,
+    out_path: outPath,
+    lightning: lightning,
+  });
+  if (resp.error) return resp;
+  addJobRow(resp.job_id, contentHash);
+  pollJob(resp.job_id);
+  return resp;
+}
+
 document.getElementById('download-form').addEventListener('submit', async e => {
   e.preventDefault();
-  const body = {
-    content_hash: document.getElementById('download-hash').value,
-    relay: relayList(document.getElementById('download-relays')),
-    out_path: document.getElementById('download-out').value || null,
-    lightning: document.getElementById('download-lightning').checked,
-  };
-  const resp = await apiPost('/api/download', body);
-  if (resp.error) {
-    alert('error: ' + resp.error);
-    return;
-  }
-  addJobRow(resp.job_id, body.content_hash);
-  pollJob(resp.job_id);
+  const resp = await startDownload(
+    document.getElementById('download-hash').value,
+    relayList(document.getElementById('download-relays')),
+    document.getElementById('download-out').value || null,
+    document.getElementById('download-lightning').checked,
+  );
+  if (resp.error) alert('error: ' + resp.error);
 });
 
 function playInline(jobId) {
