@@ -741,8 +741,14 @@ def select_host(candidates, k=3, reputation=None, trust_in_signers=None):
                     print(f"  x {c['host']}: failed possession challenge ({k} chunks sampled) — skipping")
                     continue
                 price = get_price(conn)
-        except OSError as e:
-            print(f"  x {c['host']}: unreachable ({e})")
+        except (OSError, ValueError, KeyError) as e:
+            # ValueError also catches json.JSONDecodeError: a tunnel CONNECT
+            # paired with a dead/gone registration (or any host that closes
+            # mid-protocol) reads back '' instead of raising a socket error,
+            # and a malformed INFO dict raises KeyError on ['sha256'] above —
+            # either way this is one bad candidate, not a reason to abort the
+            # whole auction.
+            print(f"  x {c['host']}: unreachable ({type(e).__name__}: {e})")
             continue
         rep_score, rep_why = (reputation.trust_score(c['signer_pubkey'], trust_in_signers)
                                if reputation else (0.5, 'no reputation store'))
