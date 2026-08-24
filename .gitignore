@@ -2,6 +2,7 @@ build/
 dist/
 download_*
 weed.egg-info/
+real_archive/
 *.egg-info/
 *.pyc
 __pycache__/
