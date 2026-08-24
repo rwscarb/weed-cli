@@ -173,6 +173,33 @@ td button {
   color: var(--muted);
 }
 
+#discover-table td.title-cell {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.title-icons {
+  display: flex;
+  gap: 0.3rem;
+  flex: none;
+}
+
+.icon-btn {
+  background: none;
+  border: none;
+  margin: 0;
+  padding: 0.1rem 0.3rem;
+  font-size: 1rem;
+  line-height: 1;
+  color: var(--muted);
+}
+
+.icon-btn:hover:not(:disabled) { color: var(--text); }
+.icon-btn.active { color: var(--accent); }
+.icon-btn:disabled { cursor: default; }
+
 .status-done { color: var(--accent); }
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }

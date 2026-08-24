@@ -128,7 +128,8 @@ def _rehydrate_jobs_from_library():
         _jobs[rec['job_id']] = {
             'status': 'done', 'idx': 0, 'n_chunks': None,
             'content_hash': content_hash, 'path': rec['path'],
-            'title': rec.get('title'), 'error': None,
+            'title': rec.get('title'), 'size': rec.get('size'), 'bps': rec.get('bps'),
+            'error': None,
         }
 _lan_url = None   # set once in run_web_ui() -- the base URL a phone on the
                    # same LAN can actually reach this server at, or None if
@@ -208,14 +209,18 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
 
     try:
+        t0 = time.time()
         with _quiet():
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
                                                use_lightning=use_lightning, on_progress=on_progress)
+        elapsed = time.time() - t0
+        size = os.path.getsize(path)
+        bps = size / elapsed if elapsed > 0 else None
         with _lock:
-            _jobs[job_id].update(status='done', path=path)
+            _jobs[job_id].update(status='done', path=path, size=size, bps=bps)
             _library['downloads'][content_hash] = {
                 'content_hash': content_hash, 'job_id': job_id, 'path': path,
-                'title': title, 'downloaded_at': time.time(),
+                'title': title, 'downloaded_at': time.time(), 'size': size, 'bps': bps,
             }
             _save_library()
     except SystemExit as e:

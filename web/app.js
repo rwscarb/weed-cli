@@ -299,12 +299,13 @@ async function refreshDiscover() {
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td></td>' +
-      '<td>' + (r.title || '') + '</td>' +
+      '<td class="title-cell"><span class="title-text">' + (r.title || '') + '</span></td>' +
       '<td><code>' + shortHash(r.content_hash) + '</code></td>' +
       '<td>' + (r.host || '') + '</td>' +
       '<td>' + (r.tunnel || '—') + '</td>' +
       '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>';
     const actions = tr.firstElementChild;
+    const titleCell = tr.children[1];
 
     const already = downloadsByHash.get(r.content_hash);
     if (already) {
@@ -356,29 +357,48 @@ async function refreshDiscover() {
       actions.appendChild(dlBtn);
     }
 
+    // Like/Subscribe live as icons to the right of the title, not in the
+    // actions column -- Download/Play/Share are the "do something with
+    // this file" controls, these two are more like a lightweight social
+    // reaction and stay out of their way.
+    const iconGroup = document.createElement('span');
+    iconGroup.className = 'title-icons';
+
     const likeBtn = document.createElement('button');
+    likeBtn.type = 'button';
+    likeBtn.className = 'icon-btn';
+    likeBtn.textContent = '♥';
     const alreadyLiked = likedHashes.has(r.content_hash);
-    likeBtn.textContent = alreadyLiked ? 'Liked' : 'Like';
+    likeBtn.title = alreadyLiked ? 'Liked' : 'Like';
+    likeBtn.classList.toggle('active', alreadyLiked);
     likeBtn.disabled = alreadyLiked;
     likeBtn.addEventListener('click', async () => {
+      likeBtn.disabled = true;
       await apiPost('/api/like', { content_hash: r.content_hash, relay: relays[0] });
       likedHashes.add(r.content_hash);
-      likeBtn.textContent = 'Liked';
-      likeBtn.disabled = true;
+      likeBtn.title = 'Liked';
+      likeBtn.classList.add('active');
     });
-    actions.appendChild(likeBtn);
+    iconGroup.appendChild(likeBtn);
 
     const subBtn = document.createElement('button');
+    subBtn.type = 'button';
+    subBtn.className = 'icon-btn';
+    subBtn.textContent = '🔔';
     const alreadySubscribed = subscribedPubkeys.has(r.signer_pubkey);
-    subBtn.textContent = alreadySubscribed ? 'Subscribed' : 'Subscribe';
+    subBtn.title = alreadySubscribed ? 'Subscribed' : 'Subscribe';
+    subBtn.classList.toggle('active', alreadySubscribed);
     subBtn.disabled = alreadySubscribed;
     subBtn.addEventListener('click', async () => {
+      subBtn.disabled = true;
       await apiPost('/api/subscribe', { target_pubkey: r.signer_pubkey, relay: relays[0] });
       subscribedPubkeys.add(r.signer_pubkey);
-      subBtn.textContent = 'Subscribed';
-      subBtn.disabled = true;
+      subBtn.title = 'Subscribed';
+      subBtn.classList.add('active');
     });
-    actions.appendChild(subBtn);
+    iconGroup.appendChild(subBtn);
+
+    titleCell.appendChild(iconGroup);
 
     tbody.appendChild(tr);
   }
