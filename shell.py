@@ -183,7 +183,7 @@ class WeedShell(cmd.Cmd):
             relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
             expanded_dir = os.path.expanduser(archive_dir)
             for entry in entries:
-                file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
+                file_path = node.resolve_file_path(entry, expanded_dir)
                 tt = threading.Thread(target=_bg,
                                        args=(node.run_host_tunnel, relay_host, relay_port,
                                              entry['sha256'], entry, all_leaves[entry['sha256']],

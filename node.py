@@ -197,6 +197,22 @@ def load_leaves(archive_dir, root_hash):
         return json.load(f)
 
 
+def resolve_file_path(entry, archive_dir):
+    """last_path is recorded at archive time (see ott's own manifest
+    writer) and is an absolute path on whatever machine ran `ott add` —
+    trusting it unconditionally breaks the moment archive_dir is the same
+    content mounted somewhere else (a Docker bind mount at /share instead
+    of the original /home/user/share it was archived from, a synced
+    folder on another machine, ...), since it's still non-empty and short-
+    circuits the `or` before archive_dir is ever considered. Falling back
+    whenever last_path doesn't actually exist trusts the directory the
+    caller explicitly told us to look in over a possibly-stale hint."""
+    last_path = entry.get('last_path')
+    if last_path and os.path.exists(last_path):
+        return last_path
+    return os.path.join(archive_dir, entry['name'])
+
+
 def _graceful_close(sock):
     """Plain sock.close() on an SSL-wrapped socket tears down the TCP
     connection without ever sending a TLS close_notify -- fine for the
@@ -289,7 +305,7 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
     entries_by_hash = {}
     for entry in entries:
         leaves = load_leaves(archive_dir, entry['sha256'])
-        file_path = entry.get('last_path') or os.path.join(archive_dir, entry['name'])
+        file_path = resolve_file_path(entry, archive_dir)
         if not os.path.exists(file_path):
             sys.exit(f"archived file not found on disk at {file_path}")
         entries_by_hash[entry['sha256']] = (entry, leaves, file_path)

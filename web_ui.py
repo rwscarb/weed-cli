@@ -219,7 +219,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                 relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
                 expanded_dir = os.path.expanduser(archive_dir)
                 for entry in entries:
-                    file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
+                    file_path = node.resolve_file_path(entry, expanded_dir)
                     threading.Thread(target=node.run_host_tunnel,
                                       args=(relay_host, relay_port, entry['sha256'], entry,
                                             all_leaves[entry['sha256']], file_path, price),
