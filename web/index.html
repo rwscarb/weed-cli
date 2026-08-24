@@ -34,7 +34,8 @@
     </form>
     <form class="inline-form" @submit.prevent>
       <label>Search
-        <input type="text" v-model="discoverSearch" placeholder="title or content hash">
+        <input type="text" v-model="discoverSearch" placeholder="title or content hash"
+               @keydown="onSearchKeydown">
       </label>
       <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
       <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
@@ -49,13 +50,13 @@
         <tr v-else-if="!filteredDiscoverResults.length">
           <td colspan="7">no results match your search/filters</td>
         </tr>
-        <tr v-for="r in filteredDiscoverResults" :key="r.content_hash"
-            :class="{'dl-progress-row': r._dl.downloading}"
+        <tr v-for="r in filteredDiscoverResults" :key="r.content_hash" :data-hash="r.content_hash"
+            :class="{'dl-progress-row': r._dl.downloading, 'row-highlighted': r.content_hash === searchHighlightHash}"
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
           <td><div class="actions-row">
             <template v-if="library.downloads[r.content_hash]">
               <button type="button" class="play-btn"
-                      @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash))">▶ Play</button>
+                      @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
               <button type="button" class="play-btn icon-only" v-if="!r._dl.downloading" title="Re-download"
                       @click="download(r)">↻</button>
               <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
@@ -71,11 +72,11 @@
               <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
                       :disabled="library.likes.has(r.content_hash)"
                       :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
-                      @click="like(r)">+1</button>
+                      @click="like(r.content_hash)">+1</button>
               <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
                       :disabled="library.subscriptions.has(r.signer_pubkey)"
                       :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
-                      @click="subscribe(r)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+                      @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
             </span>
           </div></td>
           <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
@@ -170,7 +171,7 @@
             <template v-if="j.status === 'done'">
               {{ j.path }}
               <button type="button" class="play-btn"
-                      @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash))">▶ Play</button>
+                      @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
               <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
                       @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
               <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
@@ -199,15 +200,24 @@
 <div id="player-backdrop" :class="{hidden: !(player.visible && player.mode === 'theater')}"
      @click="setPlayerMode('pip')"></div>
 <div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible}]">
-  <div class="player-header" @click="onPlayerHeaderClick">
+  <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title">{{ player.title }}</span>
     <div class="player-controls">
+      <button type="button" class="icon-btn like-icon" :class="{active: player.contentHash && library.likes.has(player.contentHash)}"
+              :disabled="!player.contentHash || library.likes.has(player.contentHash)"
+              :title="!player.contentHash ? 'content hash unknown' : (library.likes.has(player.contentHash) ? 'Liked' : 'Like')"
+              @click.stop="like(player.contentHash)">+1</button>
+      <button type="button" class="icon-btn sub-icon" :class="{active: player.signerPubkey && library.subscriptions.has(player.signerPubkey)}"
+              :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
+              :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
+              @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
       <button type="button" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
       <button type="button" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
       <button type="button" title="Close" @click.stop="closePlayer">✕</button>
     </div>
   </div>
-  <video ref="playerVideo" controls></video>
+  <video ref="playerVideo" controls
+         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="player.isPlaying = false"></video>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">

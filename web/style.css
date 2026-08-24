@@ -171,6 +171,14 @@ td button {
   color: var(--muted);
 }
 
+/* keyboard nav in the search box (Up/Down to move, Enter/Space to act) --
+   a left accent bar reads clearly without fighting .dl-progress-row's own
+   background animation if both ever land on the same row */
+.row-highlighted {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: rgba(110, 231, 183, 0.08);
+}
+
 /* the flex layout lives on this inner wrapper, not the <td> itself --
    display:flex directly on a td overrides its display:table-cell,
    pulling it out of normal table row layout and misaligning it against
@@ -316,6 +324,14 @@ td button {
   overflow: hidden;
   display: flex;
   flex-direction: column;
+}
+
+/* the pip<->theater/fullscreen position+size animation only runs while
+   this class is on (added right before a mode switch, removed after --
+   see setPlayerMode) -- an unconditional transition here would also
+   apply to every native drag-resize step below, making resizing feel
+   laggy/rubber-banded instead of tracking the cursor directly */
+#global-player.mode-transitioning {
   transition: width 0.18s ease, height 0.18s ease, top 0.18s ease,
               left 0.18s ease, right 0.18s ease, bottom 0.18s ease,
               transform 0.18s ease;
@@ -328,6 +344,17 @@ td button {
   left: auto;
   top: auto;
   transform: none;
+  /* native browser resize handle (bottom-right corner) -- no JS needed
+     for this part, just needs overflow != visible, which it already is */
+  resize: both;
+  min-width: 220px;
+  min-height: 160px;
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+#global-player.mode-pip .player-header {
+  cursor: move;
 }
 
 #global-player.mode-theater {
@@ -374,6 +401,13 @@ td button {
 #global-player video {
   display: block;
   width: 100%;
+  /* fills whatever space is left after the header once the box is
+     resized (native resize can make it taller/shorter than the video's
+     own aspect ratio), letterboxed instead of leaving dead space or
+     overflowing */
+  flex: 1;
+  min-height: 0;
+  object-fit: contain;
   background: #000;
 }
 

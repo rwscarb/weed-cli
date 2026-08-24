@@ -40,6 +40,11 @@ const app = createApp({
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
       discoverSearch: '',
+      // content_hash of the row the search box's arrow-key navigation is
+      // currently sitting on, or null -- tracked by hash rather than a
+      // raw index so it survives the filtered list reshuffling under it
+      // as search/filter state changes
+      searchHighlightHash: null,
       // 'any' | 'yes' | 'no' -- a checkbox can only say "must be true or
       // don't care", not "must be false", so these are a tri-state
       // toggle instead (see the filter-toggle component below)
@@ -76,7 +81,10 @@ const app = createApp({
       // PIP-style in the corner, can grow to a centered theater modal, or
       // go true native fullscreen. Never tied to whichever tab/row started
       // it, so switching tabs doesn't stop or hide playback.
-      player: { visible: false, mode: 'pip', jobId: null, title: '' },
+      player: {
+        visible: false, mode: 'pip', jobId: null, title: '',
+        contentHash: null, signerPubkey: null, isPlaying: false,
+      },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
@@ -105,6 +113,25 @@ const app = createApp({
         return true;
       });
     },
+    highlightedIndex() {
+      if (!this.searchHighlightHash) return -1;
+      return this.filteredDiscoverResults.findIndex(r => r.content_hash === this.searchHighlightHash);
+    },
+    // what the browser tab shows -- a playing video wins over an active
+    // download (you're far more likely to be glancing at the tab to
+    // check playback than to time a download), which wins over the
+    // static default. jobs (not r._dl) is the single source of truth
+    // for "is anything downloading" -- every download, whether started
+    // from a Discover row or the Downloads tab form, always lands there.
+    pageTitle() {
+      if (this.player.visible) {
+        return (this.player.isPlaying ? '▶ ' : '⏸ ') + this.player.title + ' — weed';
+      }
+      const running = this.jobs.filter(j => j.status === 'running');
+      if (running.length === 1) return `⬇ ${running[0].pct}% — weed`;
+      if (running.length > 1) return `⬇ ${running.length} downloading — weed`;
+      return 'weed';
+    },
     // The server's idea of "your phone's own address" beats the browser's:
     // location.origin only reflects whatever address *this* browser used
     // to load the page, which is 127.0.0.1 the instant someone opens it
@@ -120,6 +147,13 @@ const app = createApp({
         left: this.qr.left != null ? this.qr.left + 'px' : 'auto',
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
+    },
+  },
+
+  watch: {
+    pageTitle: {
+      immediate: true,
+      handler(title) { document.title = title; },
     },
   },
 
@@ -139,6 +173,7 @@ const app = createApp({
       this.jobs.push({
         job_id: d.job_id, content_hash: d.content_hash, pct: 0, status: 'done',
         path: d.path, error: null, size: d.size, bps: d.bps, title: d.title,
+        signer_pubkey: d.signer_pubkey,
       });
     }
 
@@ -218,9 +253,11 @@ const app = createApp({
     // :fullscreen is handled entirely in CSS, so Esc-to-exit (which
     // bypasses our own button) still lands back in whichever of
     // pip/theater it was in before, with no extra JS bookkeeping.
-    openPlayer(jobId, title) {
+    openPlayer(jobId, title, contentHash, signerPubkey) {
       this.player.jobId = jobId;
       this.player.title = title || jobId;
+      this.player.contentHash = contentHash || null;
+      this.player.signerPubkey = signerPubkey || null;
       this.player.mode = 'pip';
       this.player.visible = true;
       this.$nextTick(() => {
@@ -236,16 +273,69 @@ const app = createApp({
       video.removeAttribute('src');
       video.load();
       this.player.visible = false;
+      this.player.isPlaying = false;
     },
     setPlayerMode(mode) {
+      const el = this.$refs.globalPlayer;
+      if (el) {
+        el.classList.add('mode-transitioning');
+        // clear any manual drag/resize from the PIP mode this is leaving
+        // (or entering) -- inline styles outrank the mode-pip/
+        // mode-theater CSS rules, so a leftover drag position would
+        // otherwise still win over theater's centered layout
+        el.style.top = '';
+        el.style.left = '';
+        el.style.right = '';
+        el.style.bottom = '';
+        el.style.width = '';
+        el.style.height = '';
+        setTimeout(() => el.classList.remove('mode-transitioning'), 220);
+      }
       this.player.mode = mode;
     },
     togglePlayerMode() {
-      this.player.mode = this.player.mode === 'theater' ? 'pip' : 'theater';
+      this.setPlayerMode(this.player.mode === 'theater' ? 'pip' : 'theater');
+    },
+    // Dragging (PIP only -- theater stays centered) shares the header
+    // with the existing click-to-toggle behavior, so pointerdown starts
+    // tracking movement and only *becomes* a drag past a small
+    // threshold; a real drag sets a one-shot flag that suppresses the
+    // click event the browser still fires afterward, so it doesn't also
+    // toggle the mode on top of the move.
+    onPlayerHeaderPointerDown(e) {
+      if (e.target.closest('button')) return;
+      if (this.player.mode !== 'pip') return;
+      const el = this.$refs.globalPlayer;
+      const rect = el.getBoundingClientRect();
+      this._drag = { moved: false, startX: e.clientX, startY: e.clientY, startLeft: rect.left, startTop: rect.top };
+      window.addEventListener('pointermove', this.onPlayerDragMove);
+      window.addEventListener('pointerup', this.onPlayerDragEnd, { once: true });
+    },
+    onPlayerDragMove(e) {
+      if (!this._drag) return;
+      const dx = e.clientX - this._drag.startX;
+      const dy = e.clientY - this._drag.startY;
+      if (!this._drag.moved && Math.hypot(dx, dy) < 4) return;
+      this._drag.moved = true;
+      const el = this.$refs.globalPlayer;
+      // keep at least a corner on-screen instead of letting it get
+      // dragged somewhere unrecoverable
+      const left = Math.min(Math.max(this._drag.startLeft + dx, -el.offsetWidth + 60), window.innerWidth - 60);
+      const top = Math.min(Math.max(this._drag.startTop + dy, 0), window.innerHeight - 40);
+      el.style.left = left + 'px';
+      el.style.top = top + 'px';
+      el.style.right = 'auto';
+      el.style.bottom = 'auto';
+    },
+    onPlayerDragEnd() {
+      window.removeEventListener('pointermove', this.onPlayerDragMove);
+      if (this._drag && this._drag.moved) this._suppressNextClick = true;
+      this._drag = null;
     },
     onPlayerHeaderClick(e) {
       if (e.target.closest('button')) return;
-      this.setPlayerMode(this.player.mode === 'pip' ? 'theater' : 'pip');
+      if (this._suppressNextClick) { this._suppressNextClick = false; return; }
+      this.togglePlayerMode();
     },
     toggleFullscreen() {
       if (document.fullscreenElement) document.exitFullscreen();
@@ -262,6 +352,39 @@ const app = createApp({
         _dl: { downloading: false, pct: 0 },
         _verify: { busy: false, label: 'Verify', title: '' },
       }));
+      this.searchHighlightHash = null;
+    },
+
+    // Up/Down move a highlight through the currently-filtered rows;
+    // Enter/Space act on whichever one is highlighted -- Play if it's
+    // already downloaded, otherwise Download (there's nothing to "play"
+    // yet, so this is the closest equivalent to hitting that row's own
+    // primary button)
+    onSearchKeydown(e) {
+      const list = this.filteredDiscoverResults;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!list.length) return;
+        let idx = this.highlightedIndex;
+        if (e.key === 'ArrowDown') idx = idx < 0 ? 0 : Math.min(idx + 1, list.length - 1);
+        else idx = idx < 0 ? list.length - 1 : Math.max(idx - 1, 0);
+        this.searchHighlightHash = list[idx].content_hash;
+        this.$nextTick(() => {
+          const el = document.querySelector(`tr[data-hash="${CSS.escape(this.searchHighlightHash)}"]`);
+          if (el) el.scrollIntoView({ block: 'nearest' });
+        });
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        const r = list[this.highlightedIndex];
+        if (!r) return;
+        e.preventDefault();
+        const rec = this.library.downloads[r.content_hash];
+        if (rec) {
+          this.openPlayer(rec.job_id, r.title || rec.title || this.shortHash(r.content_hash),
+            r.content_hash, r.signer_pubkey || rec.signer_pubkey);
+        } else if (!r._dl.downloading) {
+          this.download(r);
+        }
+      }
     },
 
     // Handles both the first Download and any later Re-download click for
@@ -271,20 +394,23 @@ const app = createApp({
     async download(r) {
       r._dl.downloading = true;
       r._dl.pct = 0;
-      const resp = await this.startDownload(r.content_hash, this.discoverRelaysList, null, false, r.title, {
-        onProgress: pct => { r._dl.pct = pct; },
-        onDone: job => {
-          r._dl.downloading = false;
-          this.library.downloads[r.content_hash] = {
-            content_hash: r.content_hash, job_id: job.job_id, path: job.path,
-            title: r.title, size: job.size, bps: job.bps,
-          };
+      const resp = await this.startDownload(
+        r.content_hash, this.discoverRelaysList, null, false, r.title, r.signer_pubkey,
+        {
+          onProgress: pct => { r._dl.pct = pct; },
+          onDone: job => {
+            r._dl.downloading = false;
+            this.library.downloads[r.content_hash] = {
+              content_hash: r.content_hash, job_id: job.job_id, path: job.path,
+              title: r.title, size: job.size, bps: job.bps, signer_pubkey: r.signer_pubkey,
+            };
+          },
+          onError: err => {
+            r._dl.downloading = false;
+            alert('error: ' + err);
+          },
         },
-        onError: err => {
-          r._dl.downloading = false;
-          alert('error: ' + err);
-        },
-      });
+      );
       if (resp.error) {
         r._dl.downloading = false;
         alert('error: ' + resp.error);
@@ -316,16 +442,20 @@ const app = createApp({
       }, 3000);
     },
 
-    async like(r) {
-      await this.apiPost('/api/like', { content_hash: r.content_hash, relay: this.discoverRelaysList[0] });
-      this.library.likes.add(r.content_hash);
+    // takes a plain content_hash rather than a whole Discover row object
+    // so the player header (which only ever knows content_hash/
+    // signer_pubkey, not a full discover result) can call the exact same
+    // logic instead of a separate copy
+    async like(contentHash) {
+      await this.apiPost('/api/like', { content_hash: contentHash, relay: this.discoverRelaysList[0] });
+      this.library.likes.add(contentHash);
     },
 
     // outline -> filled star on subscribe, same toggle language as
     // GitHub/Twitter follow stars
-    async subscribe(r) {
-      await this.apiPost('/api/subscribe', { target_pubkey: r.signer_pubkey, relay: this.discoverRelaysList[0] });
-      this.library.subscriptions.add(r.signer_pubkey);
+    async subscribe(signerPubkey) {
+      await this.apiPost('/api/subscribe', { target_pubkey: signerPubkey, relay: this.discoverRelaysList[0] });
+      this.library.subscriptions.add(signerPubkey);
     },
 
     // ── host ──────────────────────────────────────────────────────────
@@ -384,34 +514,48 @@ const app = createApp({
       }, 500);
     },
 
-    async startDownload(contentHash, relays, outPath, lightning, title, extra) {
+    async startDownload(contentHash, relays, outPath, lightning, title, signerPubkey, extra) {
       const resp = await this.apiPost('/api/download', {
         content_hash: contentHash, relay: relays, out_path: outPath,
-        lightning: lightning, title: title || null,
+        lightning: lightning, title: title || null, signer_pubkey: signerPubkey || null,
       });
       if (resp.error) return resp;
 
-      const job = {
+      this.jobs.push({
         job_id: resp.job_id, content_hash: contentHash, pct: 0, status: 'running',
-        path: null, error: null, size: null, bps: null, title,
-      };
-      this.jobs.push(job);
+        path: null, error: null, size: null, bps: null, title, signer_pubkey: signerPubkey || null,
+      });
+      // Vue 3's reactivity is proxy-based: mutating a plain object literal
+      // through a closure-held reference writes the right data but never
+      // passes through the proxy's set trap, so nothing gets told to
+      // re-render -- the jobs table (and pageTitle's download-progress
+      // text) would silently freeze at whatever it first rendered.
+      // Re-finding the job via this.jobs on every update instead means
+      // every mutation goes through the reactive array itself.
+      const findJob = () => this.jobs.find(j => j.job_id === resp.job_id);
 
       this.pollJob(resp.job_id, {
         onProgress: pct => {
-          job.pct = pct;
+          const job = findJob();
+          if (job) job.pct = pct;
           if (extra && extra.onProgress) extra.onProgress(pct);
         },
         onDone: j => {
-          job.status = 'done';
-          job.path = j.path;
-          job.size = j.size;
-          job.bps = j.bps;
+          const job = findJob();
+          if (job) {
+            job.status = 'done';
+            job.path = j.path;
+            job.size = j.size;
+            job.bps = j.bps;
+          }
           if (extra && extra.onDone) extra.onDone(j);
         },
         onError: err => {
-          job.status = 'error';
-          job.error = err;
+          const job = findJob();
+          if (job) {
+            job.status = 'error';
+            job.error = err;
+          }
           if (extra && extra.onError) extra.onError(err);
         },
       });
@@ -419,11 +563,15 @@ const app = createApp({
     },
 
     async submitDownload() {
+      // no signer_pubkey here -- a manually-entered content_hash has no
+      // associated Discover row to pull one from, so Subscribe just
+      // won't be available from the player for this download
       const resp = await this.startDownload(
         this.downloadForm.hash,
         this.splitRelays(this.downloadForm.relays),
         this.downloadForm.out || null,
         this.downloadForm.lightning,
+        null,
         null,
       );
       if (resp.error) alert('error: ' + resp.error);
