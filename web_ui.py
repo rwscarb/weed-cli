@@ -289,8 +289,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == '/api/whoami':
             return self._json({'pubkey': _identity().pubkey_hex()})
-        if path == '/api/lan-url':
-            return self._json({'url': _lan_url})
+        if path == '/api/config':
+            return self._json({'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
+                                'default_tunnel': DEFAULT_TUNNEL})
         if path == '/api/discover':
             return self._json({'results': node.discover(qs.get('relay') or [DEFAULT_RELAY])})
         if path == '/api/hosts':
