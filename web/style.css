@@ -196,6 +196,17 @@ td button {
   color: var(--muted);
 }
 
+.icon-btn.like-icon {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 1.3rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.icon-btn.sub-icon {
+  font-size: 1.2rem;
+}
+
 .icon-btn:hover:not(:disabled) { color: var(--text); }
 .icon-btn.active { color: var(--accent); }
 .icon-btn:disabled { cursor: default; }

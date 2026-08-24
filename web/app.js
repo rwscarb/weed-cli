@@ -366,8 +366,8 @@ async function refreshDiscover() {
 
     const likeBtn = document.createElement('button');
     likeBtn.type = 'button';
-    likeBtn.className = 'icon-btn';
-    likeBtn.textContent = '♥';
+    likeBtn.className = 'icon-btn like-icon';
+    likeBtn.textContent = '+1';
     const alreadyLiked = likedHashes.has(r.content_hash);
     likeBtn.title = alreadyLiked ? 'Liked' : 'Like';
     likeBtn.classList.toggle('active', alreadyLiked);
@@ -381,11 +381,14 @@ async function refreshDiscover() {
     });
     iconGroup.appendChild(likeBtn);
 
+    // outline -> filled star on subscribe, same toggle language as
+    // GitHub/Twitter follow stars -- pairs better with the "+1" text
+    // glyph next to it than an emoji bell would
     const subBtn = document.createElement('button');
     subBtn.type = 'button';
-    subBtn.className = 'icon-btn';
-    subBtn.textContent = '🔔';
+    subBtn.className = 'icon-btn sub-icon';
     const alreadySubscribed = subscribedPubkeys.has(r.signer_pubkey);
+    subBtn.textContent = alreadySubscribed ? '★' : '☆';
     subBtn.title = alreadySubscribed ? 'Subscribed' : 'Subscribe';
     subBtn.classList.toggle('active', alreadySubscribed);
     subBtn.disabled = alreadySubscribed;
@@ -393,6 +396,7 @@ async function refreshDiscover() {
       subBtn.disabled = true;
       await apiPost('/api/subscribe', { target_pubkey: r.signer_pubkey, relay: relays[0] });
       subscribedPubkeys.add(r.signer_pubkey);
+      subBtn.textContent = '★';
       subBtn.title = 'Subscribed';
       subBtn.classList.add('active');
     });

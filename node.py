@@ -197,6 +197,29 @@ def load_leaves(archive_dir, root_hash):
         return json.load(f)
 
 
+def _graceful_close(sock):
+    """Plain sock.close() on an SSL-wrapped socket tears down the TCP
+    connection without ever sending a TLS close_notify -- fine for the
+    plaintext direct-connect path, but every tunneled connection here is
+    TLS all the way to Fly's edge (fly.tunnel-relay.toml terminates TLS
+    there, handlers = ["tls"]), and Fly's proxy logs that abrupt cutoff as
+    'fly-proxy-p2p/tls/tcp-backhaul: unexpected end of file' even though
+    the app-level protocol already got every byte it needed by then.
+    unwrap() sends the close_notify so the edge sees a clean shutdown
+    instead of a truncation."""
+    if isinstance(sock, ssl.SSLSocket):
+        try:
+            # unwrap() blocks waiting for the peer's own close_notify --
+            # cap that wait so a peer that's already gone can't leak this
+            # thread forever, same reasoning as the timeouts already used
+            # for connect_via_tunnel/_connect_tunnel_socket
+            sock.settimeout(5)
+            sock = sock.unwrap()
+        except (OSError, ssl.SSLError, ValueError):
+            pass
+    sock.close()
+
+
 def serve_session(conn, entries_by_hash, default_hash, price):
     """Handle every command on one connection, not just one — a download
     needs INFO + LEAVES + one FETCH per chunk (thousands, for a real
@@ -213,7 +236,7 @@ def serve_session(conn, entries_by_hash, default_hash, price):
     tunnel path (already scoped to one file before this function runs)
     keep working unchanged."""
     selected = default_hash
-    with conn:
+    try:
         while True:
             line = recv_line(conn)
             if not line:
@@ -256,6 +279,8 @@ def serve_session(conn, entries_by_hash, default_hash, price):
                 conn.sendall((f'DATA {base64.b64encode(data).decode()}\n').encode())
             elif parts[0] == 'PRICE':
                 conn.sendall(f'PRICE {price}\n'.encode())
+    finally:
+        _graceful_close(conn)
 
 
 def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0):
@@ -409,7 +434,7 @@ class HostConnection:
         return recv_line(self.sock)
 
     def close(self):
-        self.sock.close()
+        _graceful_close(self.sock)
 
     def __enter__(self):
         return self
