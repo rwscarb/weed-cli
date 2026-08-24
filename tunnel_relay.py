@@ -18,6 +18,9 @@ raw pipe (CONNECT/DATA, once paired):
   REGISTER <token>          host -> relay, persistent control connection.
                              token is whatever the host wants to be found
                              under (node.py uses the archive's content_hash).
+                             Replies OK, or ERR if another still-active
+                             connection already holds this token (first
+                             registration wins; no stealing an active one).
   CONNECT <token>           downloader -> relay, wants to reach that host.
                              Everything sent after this line IS the tunneled
                              protocol, not a relay command.
@@ -41,7 +44,7 @@ _pending_streams = {}  # stream_id -> _Pairing (defined below)
 _lock = threading.Lock()
 
 
-def recv_line(sock):
+def recv_line(sock, timeout=10, max_len=256):
     """Byte-at-a-time on purpose: CONNECT/DATA connections become a raw
     byte pipe immediately after this first line, and the real client
     (HostConnection.connect_via_tunnel) sends its next protocol command
@@ -49,14 +52,33 @@ def recv_line(sock):
     those bytes along with the handshake line, leaving nothing for pipe()
     to forward. One byte at a time guarantees this stops exactly at the
     newline and never reads into what comes after. Only runs once per
-    connection (a ~20-40 byte line), not on the hot path."""
-    buf = bytearray()
-    while True:
-        b = sock.recv(1)
-        if not b or b == b'\n':
-            break
-        buf += b
-    return buf.decode().strip()
+    connection (a ~20-40 byte line), not on the hot path.
+
+    The read timeout and length cap are specific to this one line, not
+    the socket in general: a client that never sends a newline (or
+    trickles bytes in one at a time forever) would otherwise tie up this
+    thread's connection slot indefinitely, and daemon_threads has no cap
+    on how many of those can pile up. Neither limit costs a real client
+    anything — every genuine REGISTER/CONNECT/DATA line arrives
+    immediately and is ~20-40 bytes. The timeout is cleared again before
+    returning since callers keep using this same socket afterward:
+    REGISTER's control connection sits idle between real downloads for
+    as long as minutes or hours (see node.py's heartbeat), and pipe()
+    needs plain unbounded blocking reads once a connection becomes a raw
+    byte pipe."""
+    sock.settimeout(timeout)
+    try:
+        buf = bytearray()
+        while True:
+            b = sock.recv(1)
+            if not b or b == b'\n':
+                break
+            buf += b
+            if len(buf) > max_len:
+                raise ValueError(f'line exceeds {max_len} bytes')
+        return buf.decode().strip()
+    finally:
+        sock.settimeout(None)
 
 
 def pipe(src, dst):
@@ -76,8 +98,31 @@ def pipe(src, dst):
 
 
 def handle_register(conn, token, quiet):
+    """token is a content_hash, which is public the moment a host
+    announces it (see discover()) -- refusing a second REGISTER while
+    the first is still active stops anyone else from squatting/
+    hijacking that host's rendezvous slot for content they didn't
+    publish. The entry only exists in _registrations while that
+    connection's own recv loop below is still blocked waiting on it, so
+    "still in the dict" and "still alive" are the same thing here; a
+    genuinely dead registration is already gone by the time this runs
+    again (see the `finally` cleanup)."""
     with _lock:
+        if token in _registrations:
+            try:
+                conn.sendall(b'ERR token already registered\n')
+            except OSError:
+                pass
+            conn.close()
+            return
         _registrations[token] = conn
+    try:
+        conn.sendall(b'OK\n')
+    except OSError:
+        with _lock:
+            if _registrations.get(token) is conn:
+                del _registrations[token]
+        return
     if not quiet:
         print(f"[tunnel] {token[:16]}... registered", flush=True)
     try:
@@ -165,7 +210,16 @@ def handle_data(conn, stream_id):
 
 class TunnelHandler(socketserver.BaseRequestHandler):
     def handle(self):
-        line = recv_line(self.request)
+        try:
+            line = recv_line(self.request)
+        except (socket.timeout, ValueError, OSError):
+            # a client that never sent a line, sent one too slowly, or
+            # sent one too long -- recv_line's own timeout/length cap
+            # already protects the server from this; it's routine, not
+            # a bug, so close quietly instead of socketserver logging a
+            # full traceback for it
+            self.request.close()
+            return
         parts = line.split()
         if len(parts) < 2:
             self.request.close()

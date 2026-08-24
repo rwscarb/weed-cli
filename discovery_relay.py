@@ -41,6 +41,22 @@ DATA_PATH = os.environ.get('WEED_RELAY_DATA',
 _events = []
 _lock = threading.Lock()
 
+# no real signed event (a handful of JSON fields: hashes, URLs, titles)
+# is anywhere close to this; it's purely a cap against a client claiming
+# a huge Content-Length and making this internet-facing server read an
+# unbounded amount into memory
+MAX_BODY_SIZE = 256 * 1024
+
+# bounds one identity's storage footprint on this relay -- signer_pubkey
+# is cryptographically bound to its event's signature (see
+# verify_attestation), so it can't be spoofed to blame someone else's
+# quota, and is genuinely what's exceeding the cap. Doesn't stop an
+# attacker from generating a fresh keypair per event -- Ed25519 keygen is
+# free -- but that's a fundamentally bigger attack (unlimited identities)
+# than "spam with one key," and defending against it needs proof-of-
+# work/stake, a bigger design decision than this PoC calls for.
+MAX_EVENTS_PER_SIGNER = 200
+
 
 def _load_events():
     if not os.path.exists(DATA_PATH):
@@ -62,6 +78,33 @@ def _append_event(event):
         f.write(json.dumps(event) + '\n')
 
 
+def _rewrite_events_file():
+    """Full rewrite instead of the usual cheap append -- only needed when
+    an entry was evicted from _events (see _evict_oldest_for_signer),
+    since dropping a line from a JSONL file means rewriting it."""
+    os.makedirs(os.path.dirname(DATA_PATH) or '.', exist_ok=True)
+    tmp = DATA_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        for event in _events:
+            f.write(json.dumps(event) + '\n')
+    os.replace(tmp, DATA_PATH)
+
+
+def _evict_oldest_for_signer(signer_pubkey):
+    """Caller must hold _lock. Drops that signer's own oldest event once
+    they're at the cap, making room for the new one -- an active
+    publisher keeps working, they just eventually lose their own oldest
+    entries first, same trade as any keep-last-N retention policy."""
+    if not signer_pubkey:
+        return
+    mine = [e for e in _events if e['payload'].get('signer_pubkey') == signer_pubkey]
+    if len(mine) < MAX_EVENTS_PER_SIGNER:
+        return
+    oldest = min(mine, key=lambda e: e['payload'].get('ts', 0))
+    _events.remove(oldest)
+    _rewrite_events_file()
+
+
 class RelayHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # quiet — poc_discovery.py prints what matters
@@ -70,6 +113,13 @@ class RelayHandler(BaseHTTPRequestHandler):
         if self.path != '/event':
             self.send_response(404); self.end_headers(); return
         length = int(self.headers.get('Content-Length', 0))
+        if length > MAX_BODY_SIZE:
+            self.send_response(413)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({'ok': False,
+                                          'reason': f'body too large (max {MAX_BODY_SIZE} bytes)'}).encode())
+            return
         try:
             event = json.loads(self.rfile.read(length))
             ok, reason = verify_attestation(event)  # generic: works on any {payload, signature} blob
@@ -84,6 +134,7 @@ class RelayHandler(BaseHTTPRequestHandler):
         eid = attestation_id(event)
         with _lock:
             if not any(attestation_id(e) == eid for e in _events):
+                _evict_oldest_for_signer(event['payload'].get('signer_pubkey'))
                 _events.append(event)
                 _append_event(event)
         self.send_response(200)
