@@ -321,14 +321,14 @@ async function refreshDiscover() {
     const tr = document.createElement('tr');
     tr.innerHTML =
       '<td></td>' +
-      '<td class="title-cell"><span class="title-text">' + (r.title || '') + '</span></td>' +
+      '<td><div class="title-row"><span class="title-text">' + (r.title || '') + '</span></div></td>' +
       '<td><code>' + shortHash(r.content_hash) + '</code></td>' +
       '<td>' + (r.host || '') + '</td>' +
       '<td>' + (r.tunnel || '—') + '</td>' +
       '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>' +
       '<td></td>';
     const actions = tr.firstElementChild;
-    const titleCell = tr.children[1];
+    const titleRow = tr.children[1].firstElementChild;
     const shareCell = tr.lastElementChild;
 
     const already = downloadsByHash.get(r.content_hash);
@@ -434,7 +434,7 @@ async function refreshDiscover() {
     });
     iconGroup.appendChild(subBtn);
 
-    titleCell.appendChild(iconGroup);
+    titleRow.appendChild(iconGroup);
 
     tbody.appendChild(tr);
   }

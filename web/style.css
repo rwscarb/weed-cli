@@ -173,7 +173,12 @@ td button {
   color: var(--muted);
 }
 
-#discover-table td.title-cell {
+/* the flex layout lives on this inner wrapper, not the <td> itself --
+   display:flex directly on a td overrides its display:table-cell,
+   pulling it out of normal table row layout and misaligning it against
+   sibling cells (different vertical-align behavior, row height no
+   longer agreeing across columns) */
+.title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
