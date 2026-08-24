@@ -49,8 +49,6 @@ nav#tabs {
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab-btn:hover { color: var(--text); }
 
-.tab-panel { display: none; }
-.tab-panel.active { display: block; }
 
 h2 { font-size: 1.2rem; margin-top: 0; }
 h3 { font-size: 1rem; color: var(--muted); margin-top: 2rem; }
@@ -185,49 +183,78 @@ td button {
   gap: 0.5rem;
 }
 
+/* Download/Re-download/Play/Verify + the size/speed stats, all in the
+   same actions column -- wraps instead of squeezing once Verify's
+   result text temporarily widens it */
+.actions-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
 .title-icons {
   display: flex;
   gap: 0.3rem;
   flex: none;
 }
 
+/* same language as .play-btn: faint dark outline at rest, only lights up
+   on hover -- and a shared min-width so the "+1" badge and the star
+   render as the same size instead of each hugging its own glyph */
 .icon-btn {
-  background: none;
-  border: none;
+  min-width: 2.1rem;
   margin: 0;
-  padding: 0.1rem 0.3rem;
+  padding: 0.1rem 0.4rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
   font-size: 1rem;
-  line-height: 1;
+  line-height: 1.4;
   color: var(--muted);
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
 }
 
 .icon-btn.like-icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 1.05rem;
+  font-size: 0.9rem;
   font-weight: 700;
   letter-spacing: 0.02em;
 }
 
 .icon-btn.sub-icon {
-  font-size: 1.2rem;
+  font-size: 1.1rem;
 }
 
-.icon-btn:hover:not(:disabled) { color: var(--text); }
-.icon-btn.active { color: var(--accent); }
+.icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
+.icon-btn.active { border-color: var(--accent); color: var(--accent); }
 .icon-btn:disabled { cursor: default; }
 
 .status-done { color: var(--accent); }
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }
 
+/* faint outline at rest, filled/bright only on hover -- also a fixed
+   min-width so "Play" and "Download" render the same size instead of
+   each hugging its own label, keeping whatever follows (stats text,
+   the Title column) starting at a consistent x across every row */
 .play-btn {
-  padding: 0.25rem 0.6rem;
+  min-width: 4.75rem;
+  padding: 0.3rem 0.7rem;
   font-size: 0.8rem;
-  background: var(--accent);
-  color: #fff;
-  border: none;
+  text-align: center;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--border);
   border-radius: 4px;
   cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.play-btn:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #05130d;
 }
 
 /* one global player, shared by every "▶ Play" button anywhere in the app
@@ -341,6 +368,7 @@ td button {
 }
 
 .qr-btn {
+  min-width: auto;
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);
@@ -415,9 +443,14 @@ code {
   th, td { padding: 0.4rem; }
 
   /* least essential columns first -- keep whatever answers "what is this
-     and can I act on it", drop the rest to a swipe-to-see-more table */
+     and can I act on it", drop the rest to a swipe-to-see-more table.
+     Host/Tunnel/By are server-address trivia, not actionable from a
+     phone; the phone/share column is actively pointless here too --
+     you're already ON the phone, there's nothing to scan */
+  #discover-table th:nth-child(4), #discover-table td:nth-child(4),
   #discover-table th:nth-child(5), #discover-table td:nth-child(5),
-  #discover-table th:nth-child(6), #discover-table td:nth-child(6) {
+  #discover-table th:nth-child(6), #discover-table td:nth-child(6),
+  #discover-table th:nth-child(7), #discover-table td:nth-child(7) {
     display: none;
   }
   #hosts-table th:nth-child(4), #hosts-table td:nth-child(4) {
@@ -426,6 +459,49 @@ code {
   #jobs-table th:nth-child(1), #jobs-table td:nth-child(1) {
     display: none;
   }
+
+  /* Play/Re-download/Verify shrink a bit so more of them fit per line
+     once they're flowing across the row's full width below (next rule)
+     instead of squeezed into a narrow left column */
+  .play-btn {
+    min-width: 3.2rem;
+    padding: 0.25rem 0.45rem;
+    font-size: 0.72rem;
+  }
+  .actions-row { gap: 0.25rem; }
+
+  /* Shrinking the buttons alone doesn't fix the real problem: the
+     actions column only ever gets a sliver of the row's width, so
+     Play/Re-download/Verify still stack one-per-line no matter how
+     small they are. Below this width, give up on the 3-column table
+     shape for each body row and stack it into a little card instead --
+     title+hash on top, action buttons flowing left-to-right along the
+     bottom where they have the whole row's width to share. (Children of
+     a flex container are "blockified" regardless of their own display,
+     so table-cell tds here behave as plain flex items -- same reasoning
+     as .title-row/.actions-row already being inner wrappers rather than
+     display:flex directly on a td, just applied to the row itself this
+     time since every cell in it needs to reflow together.) */
+  #discover-table tbody tr {
+    display: flex;
+    flex-direction: column;
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+  #discover-table tbody td {
+    width: 100%;
+    padding: 0.15rem 0;
+    border-bottom: none;
+  }
+  #discover-table tbody td:nth-child(1) { order: 3; padding-top: 0.4rem; }
+  #discover-table tbody td:nth-child(2) { order: 1; }
+  #discover-table tbody td:nth-child(3) { order: 2; }
+
+  /* space-between shoves +1/★ all the way to the title column's far
+     edge, leaving an odd gap next to a short title -- follow the text
+     directly instead */
+  .title-row { justify-content: flex-start; }
 
   /* the popup's top/left are set inline from the trigger button's
      position -- on a narrow screen that math can push a 200px-wide box

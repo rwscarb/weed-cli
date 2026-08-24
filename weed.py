@@ -118,6 +118,10 @@ def build_parser():
     p_web.add_argument('--bind', default='127.0.0.1',
                         help='bind address (default 127.0.0.1 — local only; no auth is built, '
                              'so only widen this on a network you trust)')
+    p_web.add_argument('--advertise-host',
+                        help='IP/hostname for the phone QR and lan-url instead of '
+                             'auto-detecting it — use this if the startup QR was missing or '
+                             'pointed at the wrong address')
 
     p_serve = sub.add_parser('serve', help='alias for "web" with positional args, '
                                             'e.g. `serve 0.0.0.0 8080`')
@@ -126,6 +130,10 @@ def build_parser():
                                'from your phone — no auth is built, only widen this on a '
                                'network you trust)')
     p_serve.add_argument('port', nargs='?', type=int, default=8080)
+    p_serve.add_argument('--advertise-host',
+                          help='IP/hostname for the phone QR and lan-url instead of '
+                               'auto-detecting it — use this if the startup QR was missing or '
+                               'pointed at the wrong address')
 
     return parser
 
@@ -209,7 +217,7 @@ def cmd_subscribe(args):
 
 def cmd_web(args):
     import web_ui
-    web_ui.run_web_ui(port=args.port, bind_host=args.bind)
+    web_ui.run_web_ui(port=args.port, bind_host=args.bind, advertise_host=args.advertise_host)
 
 
 NATIVE_COMMANDS = {

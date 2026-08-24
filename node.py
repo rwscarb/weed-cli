@@ -541,6 +541,54 @@ def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=No
     return out_path
 
 
+def verify_local_download(content_hash, relay_urls, path):
+    """Re-checks an already-downloaded file against its own Merkle-
+    committed chunk hashes without re-downloading a single byte: one
+    INFO+LEAVES round-trip to a currently-advertising host (to learn
+    chunk_size and get the leaf hash list — this repo's protocol has no
+    way to fetch just that from the file itself), then a purely local
+    read-and-rehash of every chunk already on disk. Same trust chain
+    download() uses (Merkle-root the leaves against the host's advertised
+    sha256 before trusting anything it says), just pointed at bytes that
+    are already local instead of a live FETCH stream."""
+    from ott import merkle_root
+
+    hosts = discover_hosts_for(relay_urls, content_hash)
+    if not hosts:
+        return {'ok': False, 'error': 'no host currently advertising this content_hash on the given relay(s)'}
+    match = hosts[0]
+    tunnel = _parse_tunnel(match['tunnel']) if match.get('tunnel') else None
+
+    with open_connection(match['host'], tunnel=tunnel, content_hash=content_hash) as conn:
+        if content_hash and not tunnel:
+            sel = conn.request(f'SELECT {content_hash}')
+            if sel != 'OK':
+                return {'ok': False, 'error': f"host rejected SELECT: {sel}"}
+        info = json.loads(conn.request('INFO'))
+        leaves = json.loads(conn.request('LEAVES'))
+
+    if len(leaves) != info['n_chunks'] or merkle_root(leaves) != info['sha256'] \
+            or info['sha256'] != content_hash:
+        return {'ok': False, 'error': "host's advertised LEAVES don't Merkle-root to this "
+                                       "content_hash — refusing to trust it as a reference"}
+    if not os.path.isfile(path):
+        return {'ok': False, 'error': f'{path} no longer exists on disk'}
+
+    actual_size = os.path.getsize(path)
+    if actual_size != info['size']:
+        return {'ok': False, 'error': f'local file is {actual_size:,} bytes, host advertises '
+                                       f'{info["size"]:,} — refetch with re-download'}
+
+    mismatches = []
+    with open(path, 'rb') as f:
+        for idx in range(info['n_chunks']):
+            data = f.read(info['chunk_size'])
+            if hashlib.sha256(data).hexdigest() != leaves[idx]:
+                mismatches.append(idx)
+
+    return {'ok': not mismatches, 'n_chunks': info['n_chunks'], 'mismatches': mismatches}
+
+
 # ── possession challenge + price auction, wired to real discovery ───────
 #
 # Everything below stitches poc_challenge_auction.py (challenge-gate a

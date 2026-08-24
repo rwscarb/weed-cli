@@ -231,6 +231,19 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _jobs[job_id].update(status='error', error=f'{type(e).__name__}: {e}')
 
 
+class WebUIServer(ThreadingHTTPServer):
+    def handle_error(self, request, client_address):
+        """A client opening a TCP connection and resetting it before ever
+        sending a request line is routine, not a bug -- phone browsers,
+        a QR-scanner app's in-app preview, and Chrome's own speculative
+        preconnects all do this. socketserver's default handle_error
+        prints a full traceback for every one of these; only genuinely
+        unexpected errors get that treatment here."""
+        if sys.exc_info()[0] in (ConnectionResetError, BrokenPipeError, TimeoutError):
+            return
+        super().handle_error(request, client_address)
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # quiet — this is a local UI, not a service worth logging every hit for
@@ -296,6 +309,7 @@ class Handler(BaseHTTPRequestHandler):
         handlers = {
             '/api/host': self._handle_host, '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
+            '/api/verify': self._handle_verify,
         }
         handler = handlers.get(path)
         if not handler:
@@ -369,6 +383,26 @@ class Handler(BaseHTTPRequestHandler):
                 _library['subscriptions'].append(target_pubkey)
                 _save_library()
         self._json({'result': result})
+
+    def _handle_verify(self, body):
+        """Re-checks an already-downloaded file against its own
+        Merkle-committed chunk hashes without re-fetching it -- see
+        node.verify_local_download's docstring. Runs synchronously (this
+        is a local read + one INFO/LEAVES round-trip, not a real
+        download, so it's fast enough not to need a job/poll dance like
+        /api/download does)."""
+        content_hash = body.get('content_hash')
+        if not content_hash:
+            return self._json({'error': 'content_hash required'}, status=400)
+        with _lock:
+            rec = _library['downloads'].get(content_hash)
+        if not rec:
+            return self._json({'error': 'no local download on record for this content_hash'},
+                               status=404)
+        relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
+        with _quiet():
+            result = node.verify_local_download(content_hash, relay_urls, rec['path'])
+        self._json(result)
 
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range
@@ -472,13 +506,18 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False):
+def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None):
     global _lan_url
     _load_library()
     _rehydrate_jobs_from_library()
-    srv = ThreadingHTTPServer((bind_host, port), Handler)
+    srv = WebUIServer((bind_host, port), Handler)
 
-    reachable_host = _detect_lan_ip() if bind_host == '0.0.0.0' else bind_host
+    # advertise_host is an escape hatch for _detect_lan_ip()'s UDP-route
+    # trick guessing wrong (multiple interfaces/VPNs, sandboxed or
+    # container networking, no outbound route at all) -- same failure
+    # shape as "the QR/lan-url doesn't point at a reachable address",
+    # just fixed by telling this explicitly instead of guessing
+    reachable_host = advertise_host or (_detect_lan_ip() if bind_host == '0.0.0.0' else bind_host)
     if bind_host != '127.0.0.1' and reachable_host:
         _lan_url = f'http://{reachable_host}:{port}/'
 
@@ -513,9 +552,15 @@ def main():
     parser.add_argument('--bind', default='127.0.0.1',
                          help='bind address (default: 127.0.0.1, local only -- no auth is '
                               'built, so only widen this on a network you trust)')
+    parser.add_argument('--advertise-host',
+                         help="IP/hostname to put in the phone QR and lan-url instead of "
+                              "auto-detecting it -- use this if the QR at startup was missing "
+                              "or pointed at the wrong address (auto-detection guesses via an "
+                              "outbound route, which can pick the wrong interface or fail "
+                              "outright on unusual networking)")
     args = parser.parse_args()
     port = args.port_flag if args.port_flag is not None else args.port
-    run_web_ui(port, bind_host=args.bind)
+    run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host)
 
 
 if __name__ == '__main__':

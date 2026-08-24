@@ -7,110 +7,205 @@
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
+<div id="app">
 <header>
   <h1>weed</h1>
   <p class="tagline">censorship-resistant video PoC — local control UI</p>
-  <div id="identity" class="identity">loading identity…</div>
-  <button type="button" id="phone-qr-toggle" class="qr-toggle">📱 Open on phone</button>
+  <div class="identity">
+    <template v-if="pubkey">you are <code>{{ shortHash(pubkey, 20) }}</code></template>
+    <template v-else>loading identity…</template>
+  </div>
+  <button type="button" class="qr-toggle" @click="toggleQr($event, qrBaseUrl)">📱 Open on phone</button>
 </header>
 
 <nav id="tabs">
-  <button class="tab-btn active" data-tab="discover">Discover</button>
-  <button class="tab-btn" data-tab="host">Host</button>
-  <button class="tab-btn" data-tab="downloads">Downloads</button>
-  <button class="tab-btn" data-tab="identity-tab">Identity</button>
+  <button v-for="t in tabs" :key="t.id" class="tab-btn" :class="{active: activeTab === t.id}"
+          @click="activeTab = t.id">{{ t.label }}</button>
 </nav>
 
 <main>
-  <section id="discover" class="tab-panel active">
+  <section class="tab-panel" v-show="activeTab === 'discover'">
     <h2>Discover</h2>
-    <form id="discover-form" class="inline-form">
+    <form class="inline-form" @submit.prevent="refreshDiscover">
       <label>Relay(s), comma-separated
-        <input type="text" id="discover-relays" value="http://127.0.0.1:9101">
+        <input type="text" v-model="discoverRelays">
       </label>
       <button type="submit">Refresh</button>
     </form>
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
-      <tbody></tbody>
+      <tbody>
+        <tr v-if="!discoverResults.length">
+          <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
+        </tr>
+        <tr v-for="r in discoverResults" :key="r.content_hash"
+            :class="{'dl-progress-row': r._dl.downloading}"
+            :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
+          <td><div class="actions-row">
+            <template v-if="library.downloads[r.content_hash]">
+              <button type="button" class="play-btn"
+                      @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash))">▶ Play</button>
+              <button type="button" class="play-btn" v-if="!r._dl.downloading"
+                      @click="download(r)">Re-download</button>
+              <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
+                      @click="verify(r)">{{ r._verify.label }}</button>
+              <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
+            </template>
+            <button type="button" class="play-btn" v-else-if="!r._dl.downloading"
+                    @click="download(r)">Download</button>
+          </div></td>
+          <td><div class="title-row">
+            <span class="title-text">{{ r.title }}</span>
+            <span class="title-icons">
+              <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
+                      :disabled="library.likes.has(r.content_hash)"
+                      :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
+                      @click="like(r)">+1</button>
+              <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
+                      :disabled="library.subscriptions.has(r.signer_pubkey)"
+                      :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
+                      @click="subscribe(r)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+            </span>
+          </div></td>
+          <td><code>{{ shortHash(r.content_hash) }}</code></td>
+          <td>{{ r.host }}</td>
+          <td>{{ r.tunnel || '—' }}</td>
+          <td><code>{{ shortHash(r.signer_pubkey, 12) }}</code></td>
+          <td>
+            <button type="button" class="play-btn qr-btn" v-if="library.downloads[r.content_hash]"
+                    title="scan to open this video on your phone"
+                    @click="toggleQr($event, qrBaseUrl + 'api/stream/' + library.downloads[r.content_hash].job_id)">📱</button>
+          </td>
+        </tr>
+      </tbody>
     </table></div>
   </section>
 
-  <section id="host" class="tab-panel">
+  <section class="tab-panel" v-show="activeTab === 'host'">
     <h2>Host a file</h2>
-    <form id="host-form">
+    <form @submit.prevent="submitHost">
       <label>Archive directory (containing .ott/)
-        <input type="text" id="host-archive-dir" placeholder="real_archive" required>
+        <input type="text" v-model="hostForm.archiveDir" placeholder="real_archive" required>
       </label>
       <label>File name (optional, default: most recent)
-        <input type="text" id="host-file-name">
+        <input type="text" v-model="hostForm.fileName">
       </label>
       <label>Port
-        <input type="number" id="host-port" value="9201">
+        <input type="number" v-model="hostForm.port">
       </label>
       <label>Price (sats, 0 = free)
-        <input type="number" id="host-price" value="0">
+        <input type="number" v-model="hostForm.price">
       </label>
       <label>Relay(s), comma-separated
-        <input type="text" id="host-relays" value="http://127.0.0.1:9101">
+        <input type="text" v-model="hostForm.relays">
       </label>
       <label>Advertise host
-        <input type="text" id="host-advertise" value="127.0.0.1">
+        <input type="text" v-model="hostForm.advertiseHost">
       </label>
       <label class="checkbox">
-        <input type="checkbox" id="host-tunnel-enabled">
+        <input type="checkbox" v-model="hostForm.tunnelEnabled">
         Behind NAT — use a tunnel relay
       </label>
-      <label id="host-tunnel-addr-row" class="hidden">Tunnel relay (host:port)
-        <input type="text" id="host-tunnel-addr" placeholder="127.0.0.1:9199">
+      <label :class="{hidden: !hostForm.tunnelEnabled}">Tunnel relay (host:port)
+        <input type="text" v-model="hostForm.tunnelAddr" placeholder="127.0.0.1:9199">
       </label>
       <button type="submit">Start hosting</button>
     </form>
-    <div id="host-result"></div>
+    <div id="host-result">{{ hostResult }}</div>
     <h3>Active hosts (this session)</h3>
     <div class="table-wrap"><table id="hosts-table">
       <thead><tr><th>Name</th><th>Port</th><th>Price</th><th>Tunnel</th><th>Status</th></tr></thead>
-      <tbody></tbody>
+      <tbody>
+        <tr v-for="h in hosts" :key="h.id">
+          <td>{{ h.name || '(starting…)' }}</td>
+          <td>{{ h.port }}</td>
+          <td>{{ h.price ? h.price + ' sat' : 'free' }}</td>
+          <td>{{ h.tunnel || '—' }}</td>
+          <td :class="h.status === 'error' ? 'status-error' : (h.status === 'running' ? 'status-done' : 'status-running')">
+            {{ h.status === 'error' ? 'error: ' + h.error : h.status }}
+          </td>
+        </tr>
+      </tbody>
     </table></div>
   </section>
 
-  <section id="downloads" class="tab-panel">
+  <section class="tab-panel" v-show="activeTab === 'downloads'">
     <h2>Download</h2>
-    <form id="download-form">
+    <form @submit.prevent="submitDownload">
       <label>Content hash
-        <input type="text" id="download-hash" required>
+        <input type="text" v-model="downloadForm.hash" required>
       </label>
       <label>Relay(s), comma-separated
-        <input type="text" id="download-relays" value="http://127.0.0.1:9101">
+        <input type="text" v-model="downloadForm.relays">
       </label>
       <label>Output path (optional)
-        <input type="text" id="download-out">
+        <input type="text" v-model="downloadForm.out">
       </label>
       <label class="checkbox">
-        <input type="checkbox" id="download-lightning">
+        <input type="checkbox" v-model="downloadForm.lightning">
         Pay over Lightning if priced
       </label>
       <button type="submit">Download</button>
     </form>
     <div class="table-wrap"><table id="jobs-table">
       <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th><th>Result</th></tr></thead>
-      <tbody></tbody>
+      <tbody>
+        <tr v-for="j in jobs" :key="j.job_id">
+          <td><code>{{ j.job_id }}</code></td>
+          <td><code>{{ shortHash(j.content_hash) }}</code></td>
+          <td><div class="progress-bar"><div class="progress-fill" :style="{width: (j.status === 'done' ? 100 : j.pct) + '%'}"></div></div></td>
+          <td :class="j.status === 'done' ? 'status-done' : (j.status === 'error' ? 'status-error' : 'status-running')">{{ j.status }}</td>
+          <td>
+            <template v-if="j.status === 'done'">
+              {{ j.path }}
+              <button type="button" class="play-btn"
+                      @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash))">▶ Play</button>
+              <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
+                      @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
+              <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
+            </template>
+            <template v-else-if="j.status === 'error'">{{ j.error }}</template>
+            <template v-else>—</template>
+          </td>
+        </tr>
+      </tbody>
     </table></div>
   </section>
 
-  <section id="identity-tab" class="tab-panel">
+  <section class="tab-panel" v-show="activeTab === 'identity-tab'">
     <h2>Identity &amp; reputation</h2>
-    <p>Your pubkey: <code id="identity-pubkey">…</code></p>
-    <form id="reputation-form" class="inline-form">
+    <p>Your pubkey: <code>{{ pubkey }}</code></p>
+    <form class="inline-form" @submit.prevent="lookupReputation">
       <label>Look up reputation for pubkey
-        <input type="text" id="reputation-pubkey" placeholder="peer pubkey (hex)">
+        <input type="text" v-model="reputationPubkey" placeholder="peer pubkey (hex)">
       </label>
       <button type="submit">Check</button>
     </form>
-    <div id="reputation-result"></div>
+    <div id="reputation-result">{{ reputationResult }}</div>
   </section>
 </main>
 
-<script src="app.js"></script>
+<div id="player-backdrop" :class="{hidden: !(player.visible && player.mode === 'theater')}"
+     @click="setPlayerMode('pip')"></div>
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible}]">
+  <div class="player-header" @click="onPlayerHeaderClick">
+    <span class="player-title">{{ player.title }}</span>
+    <div class="player-controls">
+      <button type="button" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
+      <button type="button" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
+      <button type="button" title="Close" @click.stop="closePlayer">✕</button>
+    </div>
+  </div>
+  <video ref="playerVideo" controls></video>
+</div>
+
+<div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">
+  <img v-if="qr.url" :src="'/api/qr?data=' + encodeURIComponent(qr.url)" :alt="'QR code for ' + qr.url">
+  <div class="qr-url">{{ qr.url }}</div>
+</div>
+</div>
+
+<script src="vendor/vue.global.prod.js"></script>
+<script src="vue-app.js"></script>
 </body>
 </html>
