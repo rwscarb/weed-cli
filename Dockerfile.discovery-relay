@@ -11,4 +11,11 @@ WORKDIR /app
 COPY discovery_relay.py poc_reputation.py ./
 RUN pip install --no-cache-dir cryptography
 EXPOSE 9101
+# events are held in-memory and write-through to this path (see
+# discovery_relay.py's DATA_PATH) -- mount a Fly Volume at /data so a
+# restart (deploy, crash, or scaling to zero when idle) doesn't wipe
+# every event that's ever been posted. Without a volume mounted here,
+# this still works, it just writes into the container's own ephemeral
+# filesystem, which is exactly as durable as no persistence at all.
+ENV WEED_RELAY_DATA=/data/events.jsonl
 ENTRYPOINT ["python3", "discovery_relay.py", "9101"]

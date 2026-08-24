@@ -20,14 +20,46 @@ Ed25519 signing):
   subscribe  {target_pubkey}                        — a viewer follows a creator/signer
 """
 import json
+import os
 import sys
+import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
-sys.path.insert(0, __import__('os').path.dirname(__import__('os').path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from poc_reputation import verify_attestation, attestation_id
 
-_events = []  # in-memory store — a real relay would use a real DB; irrelevant to the design
+# Events are still held in-memory for serving (a real relay would use a
+# real DB; irrelevant to the design) -- but write-through to a JSONL file
+# too, so a restart (deploy, crash, or Fly scaling this to zero when
+# idle) doesn't silently wipe every event that's ever been posted. Point
+# WEED_RELAY_DATA at a mounted Fly Volume path (e.g. /data/events.jsonl)
+# to survive machine restarts; the local relative-path default is fine
+# for dev/shell.py use where nothing's actually being deployed.
+DATA_PATH = os.environ.get('WEED_RELAY_DATA',
+                            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'relay_events.jsonl'))
+_events = []
+_lock = threading.Lock()
+
+
+def _load_events():
+    if not os.path.exists(DATA_PATH):
+        return
+    with open(DATA_PATH) as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                _events.append(json.loads(line))
+            except json.JSONDecodeError:
+                pass  # tolerate a truncated last line from a killed-mid-write process
+
+
+def _append_event(event):
+    os.makedirs(os.path.dirname(DATA_PATH) or '.', exist_ok=True)
+    with open(DATA_PATH, 'a') as f:
+        f.write(json.dumps(event) + '\n')
 
 
 class RelayHandler(BaseHTTPRequestHandler):
@@ -50,8 +82,10 @@ class RelayHandler(BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({'ok': False, 'reason': reason}).encode())
             return
         eid = attestation_id(event)
-        if not any(attestation_id(e) == eid for e in _events):
-            _events.append(event)
+        with _lock:
+            if not any(attestation_id(e) == eid for e in _events):
+                _events.append(event)
+                _append_event(event)
         self.send_response(200)
         self.send_header('Content-Type', 'application/json')
         self.end_headers()
@@ -61,7 +95,8 @@ class RelayHandler(BaseHTTPRequestHandler):
         if self.path.split('?')[0] != '/events':
             self.send_response(404); self.end_headers(); return
         qs = parse_qs(urlparse(self.path).query)
-        out = _events
+        with _lock:
+            out = list(_events)
         if 'type' in qs:
             out = [e for e in out if e['payload'].get('type') == qs['type'][0]]
         self.send_response(200)
@@ -79,9 +114,11 @@ def run_relay_server(port, quiet=False):
     read, so the two interleave and the prompt looks like it "disappeared."
     The shell already prints its own equivalent confirmation line, so this
     fixes it at the source instead of patching the visual symptom."""
+    _load_events()
     srv = ThreadingHTTPServer(('0.0.0.0', port), RelayHandler)
     if not quiet:
-        print(f"[relay:{port}] up, no opinion on content, just store-and-forward", flush=True)
+        print(f"[relay:{port}] up, no opinion on content, just store-and-forward "
+              f"({len(_events)} event(s) loaded from {DATA_PATH})", flush=True)
     srv.serve_forever()
 
 

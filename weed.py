@@ -48,6 +48,26 @@ def run_make(target):
     sys.exit(result.returncode)
 
 
+# $WEED_RELAY/$WEED_TUNNEL let a real relay/tunnel deployment (not just
+# the loopback defaults everything below otherwise falls back to) be set
+# once per shell session instead of retyped on every host/discover/
+# download/like/subscribe invocation -- an explicit --relay/--tunnel
+# flag still always wins, this only changes what happens when neither is
+# given. shell.py's WeedShell reads the same two variables for the same
+# reason (see its own default_relay/default_tunnel).
+def _default_relay():
+    return os.environ.get('WEED_RELAY', 'http://127.0.0.1:9101')
+
+
+def _default_relay_list():
+    # --relay is action='append' on p_host specifically, which normally
+    # defaults to [] (empty = "don't announce anywhere" is a valid,
+    # deliberate choice there — see cmd_host) rather than falling back to
+    # loopback; only seed that list from $WEED_RELAY when it's actually set
+    relay = os.environ.get('WEED_RELAY')
+    return [relay] if relay else []
+
+
 def build_parser():
     import node
     parser = argparse.ArgumentParser(
@@ -73,21 +93,24 @@ def build_parser():
     p_host.add_argument('--file', help='which archived file, if more than one (default: most recent)')
     p_host.add_argument('--port', type=int, default=9201)
     p_host.add_argument('--price', type=int, default=0, help='sats to charge per download (default: free)')
-    p_host.add_argument('--relay', action='append', default=[], help='relay URL to announce on (repeatable)')
+    p_host.add_argument('--relay', action='append', default=_default_relay_list(),
+                         help='relay URL to announce on (repeatable; default: $WEED_RELAY if set)')
     p_host.add_argument('--advertise-host', default='127.0.0.1',
                          help='address to tell the relay to advertise (set this to your real '
                               'reachable IP if hosting off localhost — or use --tunnel if you '
                               'have no reachable address at all, e.g. behind NAT/CGNAT)')
-    p_host.add_argument('--tunnel', metavar='[tls://]RELAY_HOST:PORT',
+    p_host.add_argument('--tunnel', metavar='[tls://]RELAY_HOST:PORT', default=os.environ.get('WEED_TUNNEL'),
                          help='tunnel_relay.py address to register with instead of relying on a '
                               'reachable inbound port — see tunnel_relay.py. Downloaders connect '
                               'through the relay, not to you directly. Prefix with tls:// if the '
                               'relay terminates TLS at the edge (e.g. a Fly service with '
-                              'handlers = ["tls"]) — the relay process itself never needs to know')
+                              'handlers = ["tls"]) — the relay process itself never needs to know. '
+                              'Default: $WEED_TUNNEL if set.')
 
     p_discover = sub.add_parser('discover', help='list real content announced on one or more relays')
-    p_discover.add_argument('--relay', action='append', default=['http://127.0.0.1:9101'],
-                             help='relay URL to query (repeatable)')
+    p_discover.add_argument('--relay', action='append', default=[_default_relay()],
+                             help='relay URL to query (repeatable; default: $WEED_RELAY if set, '
+                                  'else http://127.0.0.1:9101)')
 
     p_download = sub.add_parser('download', aliases=['get'],
                                  help='discover, possession-challenge, auction, optionally pay, '
@@ -95,8 +118,9 @@ def build_parser():
     p_download.add_argument('content_hash', nargs='?', help='content hash to resolve via --relay')
     p_download.add_argument('--from', dest='from_addr', help='host:port to connect to directly, skipping '
                              'discovery/auction entirely (no possession challenge, no reputation, no payment)')
-    p_download.add_argument('--relay', action='append', default=['http://127.0.0.1:9101'],
-                             help='relay URL to resolve content_hash against (repeatable)')
+    p_download.add_argument('--relay', action='append', default=[_default_relay()],
+                             help='relay URL to resolve content_hash against (repeatable; '
+                                  'default: $WEED_RELAY if set, else http://127.0.0.1:9101)')
     p_download.add_argument('--out', help='output path (default: the advertised filename)')
     p_download.add_argument('--challenge-rounds', type=int, default=3,
                              help='chunks to sample-verify per candidate host before trusting it (default: 3)')
@@ -106,11 +130,13 @@ def build_parser():
 
     p_like = sub.add_parser('like', help='sign and post a real like event')
     p_like.add_argument('content_hash')
-    p_like.add_argument('--relay', default='http://127.0.0.1:9101')
+    p_like.add_argument('--relay', default=_default_relay(),
+                         help='default: $WEED_RELAY if set, else http://127.0.0.1:9101')
 
     p_subscribe = sub.add_parser('subscribe', help='sign and post a real subscribe event')
     p_subscribe.add_argument('target_pubkey')
-    p_subscribe.add_argument('--relay', default='http://127.0.0.1:9101')
+    p_subscribe.add_argument('--relay', default=_default_relay(),
+                              help='default: $WEED_RELAY if set, else http://127.0.0.1:9101')
 
     p_web = sub.add_parser('web', help='local web UI — discover/host/download/like/subscribe '
                                         'from a browser instead of the CLI')

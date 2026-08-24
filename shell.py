@@ -52,7 +52,15 @@ class WeedShell(cmd.Cmd):
         self.identity = node.load_or_create_identity()
         self._last_discovery = []   # cache of the last `discover` results, for tab completion
         self._host_threads = []     # background host() threads started this session
-        self.default_relay = 'http://127.0.0.1:9101'
+        # $WEED_RELAY/$WEED_TUNNEL seed the session's defaults, same as
+        # weed.py's own CLI subcommands (see its _default_relay) -- so a
+        # real relay/tunnel deployment can be set once per shell session
+        # (or once in your shell rc) instead of retyped on every `host`/
+        # `discover`/`download`/`like`/`subscribe`. Explicit --relay/
+        # --tunnel on any command still always wins; `set` (below) can
+        # also change either mid-session.
+        self.default_relay = os.environ.get('WEED_RELAY', 'http://127.0.0.1:9101')
+        self.default_tunnel = os.environ.get('WEED_TUNNEL')
         self.dht_node = None        # active dht.DHTNode, once `dht start` has run
 
     def preloop(self):
@@ -103,15 +111,18 @@ class WeedShell(cmd.Cmd):
         — serve every archived file in archive_dir in a background thread
         (shell stays usable), one port, downloaders SELECT which by content
         hash. Pass --file to restrict to a single file. Announces each file
-        on --relay (default: your session's default relay — see `relay`)
-        unless --no-announce is given. --price sets what download charges
-        (default free). --tunnel registers with a tunnel_relay.py instead of
-        relying on a reachable inbound port — for hosting behind NAT/CGNAT.
-        Registers one control connection per file (REGISTER's token is
-        each file's own content hash), so a whole tree tunnels fine, not
-        just a single file. Prefix tls:// if the relay terminates TLS at
-        the edge (e.g. a Fly service with handlers = ["tls"]) — the relay
-        process itself never needs to know."""
+        on --relay (default: your session's default relay — see `relay`,
+        `set relay`, or $WEED_RELAY) unless --no-announce is given. --price
+        sets what download charges (default free). --tunnel registers with
+        a tunnel_relay.py instead of relying on a reachable inbound port —
+        for hosting behind NAT/CGNAT (default: your session's default
+        tunnel — see `set tunnel` or $WEED_TUNNEL). Registers one control
+        connection per file (REGISTER's token is each file's own content
+        hash), so a whole tree tunnels fine, not just a single file. Prefix
+        tls:// if the relay terminates TLS at the edge (e.g. a Fly service
+        with handlers = ["tls"]) — the relay process itself never needs to
+        know. An explicit --relay/--tunnel here also becomes the new
+        session default, same as `discover` already does for --relay."""
         parts = shlex.split(arg)
         if not parts:
             print('  usage: host <archive_dir> [--file NAME] [--port N] [--price SAT] '
@@ -125,7 +136,7 @@ class WeedShell(cmd.Cmd):
         relay = self.default_relay
         no_announce = '--no-announce' in parts
         advertise_host = '127.0.0.1'
-        tunnel = None
+        tunnel = self.default_tunnel
         i = 1
         while i < len(parts):
             if parts[i] == '--file' and i + 1 < len(parts):
@@ -147,6 +158,11 @@ class WeedShell(cmd.Cmd):
                 i += 1
                 tunnel = parts[i]
             i += 1
+
+        # remember an explicit --relay/--tunnel for the rest of the
+        # session, same as `discover` already does for --relay
+        self.default_relay = relay
+        self.default_tunnel = tunnel
 
         entries = node.load_manifest_entries(archive_dir, file_name)
         # fail fast, before announcing anything — a manifest entry with no
@@ -200,6 +216,36 @@ class WeedShell(cmd.Cmd):
         self._host_threads.append(t)
         self.default_relay = f'http://127.0.0.1:{port}'
         print(f'  relay running on port {port} in the background — set as your default relay')
+
+    def complete_set(self, text, line, begidx, endidx):
+        parts = shlex.split(line[:begidx])
+        if len(parts) == 1:
+            return [s for s in ('relay', 'tunnel') if s.startswith(text)]
+        return []
+
+    def do_set(self, arg):
+        """set relay <URL>  — set the session's default relay directly,
+        without needing to start one (`relay`) or run `discover` first.
+        set tunnel <[tls://]HOST:PORT>  — same, for the default tunnel.
+        set  (no args)  — show both current defaults.
+        Either can also be set once via $WEED_RELAY/$WEED_TUNNEL before
+        launching the shell, and an explicit --relay/--tunnel on `host`
+        or `discover` updates the session default too."""
+        parts = shlex.split(arg)
+        if not parts:
+            print(f'  relay:  {self.default_relay or "(none)"}')
+            print(f'  tunnel: {self.default_tunnel or "(none)"}')
+            return
+        if len(parts) != 2 or parts[0] not in ('relay', 'tunnel'):
+            print('  usage: set relay <URL> | set tunnel <[tls://]HOST:PORT> | set')
+            return
+        what, value = parts
+        if what == 'relay':
+            self.default_relay = value
+            print(f'  default relay set to {value}')
+        else:
+            self.default_tunnel = value
+            print(f'  default tunnel set to {value}')
 
     def do_serve(self, arg):
         """serve [bind] [port]  — run the local web control UI in the background
@@ -297,7 +343,7 @@ class WeedShell(cmd.Cmd):
 
     def do_discover(self, arg):
         """discover [relay_url ...]  — list content announced on one or more relays
-        (default: the last relay used, or http://127.0.0.1:9101)."""
+        (default: the last relay used, $WEED_RELAY, or http://127.0.0.1:9101)."""
         relays = shlex.split(arg) or [self.default_relay]
         self.default_relay = relays[0]
         results = node.discover(relays)
