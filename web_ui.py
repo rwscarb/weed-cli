@@ -137,7 +137,7 @@ def _rehydrate_jobs_from_library():
             'status': 'done', 'idx': 0, 'n_chunks': None,
             'content_hash': content_hash, 'path': rec['path'],
             'title': rec.get('title'), 'size': rec.get('size'), 'bps': rec.get('bps'),
-            'error': None,
+            'signer_pubkey': rec.get('signer_pubkey'), 'error': None,
         }
 _lan_url = None   # set once in run_web_ui() -- the base URL a phone on the
                    # same LAN can actually reach this server at, or None if
@@ -211,7 +211,8 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             _hosts[host_id].update(status='error', error=f'{type(e).__name__}: {e}')
 
 
-def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None):
+def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
+                       signer_pubkey=None):
     def on_progress(idx, n_chunks):
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
@@ -229,6 +230,7 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _library['downloads'][content_hash] = {
                 'content_hash': content_hash, 'job_id': job_id, 'path': path,
                 'title': title, 'downloaded_at': time.time(), 'size': size, 'bps': bps,
+                'signer_pubkey': signer_pubkey,
             }
             _save_library()
     except SystemExit as e:
@@ -356,13 +358,16 @@ class Handler(BaseHTTPRequestHandler):
         k = int(body.get('k') or 3)
         use_lightning = bool(body.get('lightning'))
         title = body.get('title')
+        signer_pubkey = body.get('signer_pubkey')
 
         job_id = uuid.uuid4().hex[:12]
         with _lock:
             _jobs[job_id] = {'status': 'running', 'idx': 0, 'n_chunks': None,
-                              'content_hash': content_hash, 'path': None, 'title': title, 'error': None}
+                              'content_hash': content_hash, 'path': None, 'title': title,
+                              'signer_pubkey': signer_pubkey, 'error': None}
         threading.Thread(target=_run_download_job,
-                          args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title),
+                          args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title,
+                                signer_pubkey),
                           daemon=True).start()
         self._json({'job_id': job_id})
 

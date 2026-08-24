@@ -171,6 +171,14 @@ td button {
   color: var(--muted);
 }
 
+/* keyboard nav in the search box (Up/Down to move, Enter/Space to act) --
+   a left accent bar reads clearly without fighting .dl-progress-row's own
+   background animation if both ever land on the same row */
+.row-highlighted {
+  box-shadow: inset 3px 0 0 var(--accent);
+  background: rgba(110, 231, 183, 0.08);
+}
+
 /* the flex layout lives on this inner wrapper, not the <td> itself --
    display:flex directly on a td overrides its display:table-cell,
    pulling it out of normal table row layout and misaligning it against

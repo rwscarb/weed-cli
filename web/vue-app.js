@@ -40,6 +40,11 @@ const app = createApp({
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
       discoverSearch: '',
+      // content_hash of the row the search box's arrow-key navigation is
+      // currently sitting on, or null -- tracked by hash rather than a
+      // raw index so it survives the filtered list reshuffling under it
+      // as search/filter state changes
+      searchHighlightHash: null,
       // 'any' | 'yes' | 'no' -- a checkbox can only say "must be true or
       // don't care", not "must be false", so these are a tri-state
       // toggle instead (see the filter-toggle component below)
@@ -107,6 +112,10 @@ const app = createApp({
         if (!matchesTriState(this.filterSubscribed, this.library.subscriptions.has(r.signer_pubkey))) return false;
         return true;
       });
+    },
+    highlightedIndex() {
+      if (!this.searchHighlightHash) return -1;
+      return this.filteredDiscoverResults.findIndex(r => r.content_hash === this.searchHighlightHash);
     },
     // The server's idea of "your phone's own address" beats the browser's:
     // location.origin only reflects whatever address *this* browser used
@@ -268,6 +277,44 @@ const app = createApp({
         _dl: { downloading: false, pct: 0 },
         _verify: { busy: false, label: 'Verify', title: '' },
       }));
+      this.searchHighlightHash = null;
+    },
+
+    // Up/Down move a highlight through the currently-filtered rows;
+    // Enter/Space act on whichever one is highlighted -- Play if it's
+    // already downloaded, otherwise Download (there's nothing to "play"
+    // yet, so this is the closest equivalent to hitting that row's own
+    // primary button)
+    onSearchKeydown(e) {
+      const list = this.filteredDiscoverResults;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!list.length) return;
+        let idx = this.highlightedIndex;
+        if (e.key === 'ArrowDown') idx = idx < 0 ? 0 : Math.min(idx + 1, list.length - 1);
+        else idx = idx < 0 ? list.length - 1 : Math.max(idx - 1, 0);
+        this.searchHighlightHash = list[idx].content_hash;
+        this.$nextTick(() => {
+          // this.$el doesn't reliably point at a container with a
+          // querySelector here -- the app's root template has several
+          // top-level sibling nodes (header/nav/main/player/popup), not
+          // one single wrapping element, so $el resolves to just the
+          // first of those instead of something we can search under
+          const el = document.querySelector(`tr[data-hash="${CSS.escape(this.searchHighlightHash)}"]`);
+          if (el) el.scrollIntoView({ block: 'nearest' });
+        });
+      } else if (e.key === 'Enter' || e.key === ' ') {
+        const r = list[this.highlightedIndex];
+        if (!r) return;
+        e.preventDefault();
+        const rec = this.library.downloads[r.content_hash];
+        if (rec) {
+          this.openPlayer(rec.job_id, r.title || rec.title || this.shortHash(r.content_hash),
+            r.content_hash, r.signer_pubkey || rec.signer_pubkey);
+        } else if (!r._dl.downloading) {
+          this.download(r);
+        }
+      }
     },
 
     // Handles both the first Download and any later Re-download click for

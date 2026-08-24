@@ -34,7 +34,8 @@
     </form>
     <form class="inline-form" @submit.prevent>
       <label>Search
-        <input type="text" v-model="discoverSearch" placeholder="title or content hash">
+        <input type="text" v-model="discoverSearch" placeholder="title or content hash"
+               @keydown="onSearchKeydown">
       </label>
       <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
       <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
@@ -49,8 +50,8 @@
         <tr v-else-if="!filteredDiscoverResults.length">
           <td colspan="7">no results match your search/filters</td>
         </tr>
-        <tr v-for="r in filteredDiscoverResults" :key="r.content_hash"
-            :class="{'dl-progress-row': r._dl.downloading}"
+        <tr v-for="r in filteredDiscoverResults" :key="r.content_hash" :data-hash="r.content_hash"
+            :class="{'dl-progress-row': r._dl.downloading, 'row-highlighted': r.content_hash === searchHighlightHash}"
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
           <td><div class="actions-row">
             <template v-if="library.downloads[r.content_hash]">
