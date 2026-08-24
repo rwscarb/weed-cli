@@ -28,6 +28,30 @@ function shortHash(h, n = 10) {
   return h ? h.slice(0, n) + '…' : '';
 }
 
+function formatBytes(n) {
+  if (n == null) return '';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
+  return (i === 0 ? n : n.toFixed(1)) + ' ' + units[i];
+}
+
+// shown once a download finishes -- size always, speed only if it took
+// long enough to measure (see web_ui.py's elapsed > 0 guard)
+function formatDownloadStats(job) {
+  if (job.size == null) return '';
+  return formatBytes(job.size) + (job.bps != null ? ' · ' + formatBytes(job.bps) + '/s' : '');
+}
+
+function mkStatsSpan(job) {
+  const stats = formatDownloadStats(job);
+  if (!stats) return null;
+  const el = document.createElement('span');
+  el.className = 'dl-stats';
+  el.textContent = stats;
+  return el;
+}
+
 // ── QR popup, shared by the header "open on phone" button and each
 // downloaded video's per-item scan button ─────────────────────────────────
 
@@ -252,7 +276,10 @@ function renderPersistedDownloads() {
       '<td><div class="progress-bar"><div class="progress-fill" style="width:100%"></div></div></td>' +
       '<td class="status-done">done</td>' +
       '<td>' + d.path + ' </td>';
-    tr.lastElementChild.appendChild(mkPlayControls(d.job_id, d.title || shortHash(d.content_hash)));
+    const resultCell = tr.lastElementChild;
+    resultCell.appendChild(mkPlayControls(d.job_id, d.title || shortHash(d.content_hash)));
+    const stats = mkStatsSpan(d);
+    if (stats) resultCell.appendChild(stats);
     tbody.appendChild(tr);
   }
 }
@@ -282,6 +309,8 @@ async function refreshDiscover() {
     const already = downloadsByHash.get(r.content_hash);
     if (already) {
       actions.appendChild(mkPlayControls(already.job_id, r.title || already.title || shortHash(r.content_hash)));
+      const stats = mkStatsSpan(already);
+      if (stats) actions.appendChild(stats);
     } else {
       const dlBtn = document.createElement('button');
       dlBtn.textContent = 'Download';
@@ -306,9 +335,13 @@ async function refreshDiscover() {
           onDone(job) {
             tr.classList.remove('dl-progress-row');
             tr.style.removeProperty('--pct');
-            downloadsByHash.set(r.content_hash,
-              { content_hash: r.content_hash, job_id: job.job_id, path: job.path, title: r.title });
+            downloadsByHash.set(r.content_hash, {
+              content_hash: r.content_hash, job_id: job.job_id, path: job.path, title: r.title,
+              size: job.size, bps: job.bps,
+            });
             actions.prepend(mkPlayControls(job.job_id, r.title || shortHash(r.content_hash)));
+            const stats = mkStatsSpan(job);
+            if (stats) actions.appendChild(stats);
           },
           onError(err) {
             reset();
@@ -489,6 +522,8 @@ function addJobRow(jobId, contentHash) {
       statusCell.className = 'status-done';
       resultCell.textContent = job.path + ' ';
       resultCell.appendChild(mkPlayControls(jobId, shortHash(contentHash)));
+      const stats = mkStatsSpan(job);
+      if (stats) resultCell.appendChild(stats);
     },
     onError(err) {
       statusCell.textContent = 'error';

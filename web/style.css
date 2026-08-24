@@ -167,6 +167,12 @@ td button {
   100% { background-position: 0 0, -200% 0; }
 }
 
+.dl-stats {
+  margin-left: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
 .status-done { color: var(--accent); }
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }
