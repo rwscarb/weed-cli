@@ -502,6 +502,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header('Content-Type', ctype or 'application/octet-stream')
         self.send_header('Content-Length', str(len(body)))
+        # this UI's still under active iteration -- every static file is
+        # re-read from disk fresh on every request (no server-side
+        # caching at all), so the only thing that can ever be stale is a
+        # browser hanging onto an old copy of index.html/vue-app.js from
+        # its own heuristics. No new dependency needed to fix that, just
+        # telling it not to.
+        self.send_header('Cache-Control', 'no-store')
         self.end_headers()
         self.wfile.write(body)
 

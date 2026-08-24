@@ -468,7 +468,11 @@ code {
     padding: 0.25rem 0.45rem;
     font-size: 0.72rem;
   }
-  .actions-row { gap: 0.25rem; }
+  /* now that actions-row spans the tr's full width (see the card-stack
+     rule below) instead of a slim column, spread the buttons/stats
+     across that width edge-to-edge rather than leaving them packed at
+     the left with empty space trailing off to the right */
+  .actions-row { gap: 0.25rem; justify-content: space-between; }
 
   /* Shrinking the buttons alone doesn't fix the real problem: the
      actions column only ever gets a sliver of the row's width, so
