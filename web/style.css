@@ -374,6 +374,15 @@ td button {
   border: 1px solid var(--border);
 }
 
+/* Re-download: same idea as .qr-btn -- a single glyph doesn't need
+   .play-btn's label-width min-width, that just centers it in a lot of
+   empty pill */
+.icon-only {
+  min-width: auto;
+  padding-left: 0.55rem;
+  padding-right: 0.55rem;
+}
+
 .qr-popup {
   position: absolute;
   z-index: 50;

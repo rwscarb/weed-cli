@@ -45,8 +45,8 @@
             <template v-if="library.downloads[r.content_hash]">
               <button type="button" class="play-btn"
                       @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash))">▶ Play</button>
-              <button type="button" class="play-btn" v-if="!r._dl.downloading"
-                      @click="download(r)">Re-download</button>
+              <button type="button" class="play-btn icon-only" v-if="!r._dl.downloading" title="Re-download"
+                      @click="download(r)">↻</button>
               <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
                       @click="verify(r)">{{ r._verify.label }}</button>
               <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
