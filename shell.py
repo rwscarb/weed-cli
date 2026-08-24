@@ -42,7 +42,7 @@ def _bg(fn, *args, **kwargs):
 
 class WeedShell(cmd.Cmd):
     intro = (
-        '\n  weed — censorship-resistant video PoC node\n'
+        f'\n  {node.weed_banner()}\n'
         '  Type help or ? for commands. Tab completes. Ctrl-D or q to exit.\n'
     )
     prompt = 'weed> '

@@ -134,8 +134,48 @@ td button {
 
 .progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim));
+  background-size: 200% 100%;
+  animation: progress-shimmer 1.2s linear infinite;
   transition: width 0.3s ease;
+}
+
+@keyframes progress-shimmer {
+  0% { background-position: 0% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* same shimmering gradient, but as the whole Discover row's own
+   background instead of a separate bar -- the row IS the progress
+   indicator, filling left to right behind its own text, growing with
+   --pct as it downloads. tr/td have no background of their own (see
+   `table`/`th, td` above), so this paints straight onto the page
+   background (var(--bg)) with nothing else to mask against. Two
+   layers: a hard transparent→var(--bg) cutoff at --pct on top, masking
+   an oversized shimmer gradient underneath so only the filled portion
+   ever shows it, and only that portion moves. */
+.dl-progress-row {
+  --pct: 0%;
+  background:
+    linear-gradient(90deg, transparent var(--pct), var(--bg) var(--pct)) top left / 100% 100% no-repeat,
+    linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)) top left / 200% 100%;
+  animation: row-progress-shimmer 1.2s linear infinite;
+}
+
+@keyframes row-progress-shimmer {
+  0%   { background-position: 0 0, 0% 0; }
+  100% { background-position: 0 0, -200% 0; }
+}
+
+/* replaces the Download button while its row is filling in as its own
+   progress bar (.dl-progress-row) -- plain centered text instead of
+   another button, since the row itself is already the indicator */
+.dl-pct {
+  display: block;
+  width: 100%;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text);
 }
 
 .status-done { color: var(--accent); }
@@ -152,15 +192,103 @@ td button {
   cursor: pointer;
 }
 
-#player-container {
-  margin-top: 1rem;
+/* one global player, shared by every "▶ Play" button anywhere in the app
+   (Discover rows, Downloads jobs table) -- starts docked PIP-style in the
+   corner, can grow to a centered theater modal, or go true native
+   fullscreen. Never tied to whichever tab/row started it, so switching
+   tabs doesn't stop or hide playback. */
+
+#player-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 90;
 }
 
-#player-container video {
+#global-player {
+  position: fixed;
+  z-index: 100;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  transition: width 0.18s ease, height 0.18s ease, top 0.18s ease,
+              left 0.18s ease, right 0.18s ease, bottom 0.18s ease,
+              transform 0.18s ease;
+}
+
+#global-player.mode-pip {
+  width: min(360px, 90vw);
+  right: 3rem;
+  bottom: 4rem;
+  left: auto;
+  top: auto;
+  transform: none;
+}
+
+#global-player.mode-theater {
+  width: min(900px, 92vw);
+  top: 50%;
+  left: 50%;
+  right: auto;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+
+.player-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.35rem 0.5rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+
+.player-title {
+  font-size: 0.78rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.player-controls {
+  display: flex;
+  gap: 0.25rem;
+  flex: none;
+}
+
+.player-controls button {
+  width: auto;
+  padding: 0.15rem 0.45rem;
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+#global-player video {
+  display: block;
   width: 100%;
-  max-width: 720px;
-  border-radius: 6px;
   background: #000;
+}
+
+#global-player:fullscreen,
+#global-player:-webkit-full-screen {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  transform: none;
+}
+
+#global-player:fullscreen video,
+#global-player:-webkit-full-screen video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .qr-toggle {

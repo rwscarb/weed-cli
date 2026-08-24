@@ -39,6 +39,26 @@ IDENTITY_PATH = os.path.expanduser('~/.weed_identity.key')
 IDENTITY_ARMOR_HEADER = '-----BEGIN WEED IDENTITY KEY-----'
 IDENTITY_ARMOR_FOOTER = '-----END WEED IDENTITY KEY-----'
 
+TAGLINE = 'we do in 4 what others do in 5'
+
+
+def weed_version():
+    """Installed package version (pyproject.toml's source of truth), with a
+    fallback for running straight from source without `pip install -e .`."""
+    try:
+        from importlib.metadata import version, PackageNotFoundError
+        try:
+            return version('weed-cli')
+        except PackageNotFoundError:
+            pass
+    except ImportError:
+        pass
+    return '0.0.0-dev'
+
+
+def weed_banner():
+    return f'weed v{weed_version()} — {TAGLINE}'
+
 
 def _armor_identity(raw_bytes):
     """Base64 text with a header/footer — NOT real OpenPGP armor (no

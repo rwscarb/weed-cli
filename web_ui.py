@@ -20,6 +20,7 @@ import mimetypes
 import os
 import sys
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -35,6 +36,7 @@ except ImportError:
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 DEFAULT_RELAY = 'http://127.0.0.1:9101'
+LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
 
 
 class _JobStdout:
@@ -82,6 +84,52 @@ def _quiet():
 _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
 _lock = threading.Lock()
+
+# what's been downloaded/liked/subscribed, persisted to disk so a page
+# reload -- or a server restart -- doesn't forget any of it. Downloads
+# are keyed by content_hash (one record per piece of content, most
+# recent job wins); likes/subscriptions are just lists of hashes/pubkeys.
+# All access goes through _lock, same as _hosts/_jobs.
+_library = {'downloads': {}, 'likes': [], 'subscriptions': []}
+
+
+def _load_library():
+    global _library
+    try:
+        with open(LIBRARY_PATH) as f:
+            data = json.load(f)
+        _library = {
+            'downloads': data.get('downloads') or {},
+            'likes': data.get('likes') or [],
+            'subscriptions': data.get('subscriptions') or [],
+        }
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def _save_library():
+    """Caller must hold _lock. Written to a tmp file + os.replace so a
+    crash mid-write can't leave a half-written, unparseable JSON file
+    behind -- this runs on every like/subscribe/download-finish, not just
+    at shutdown."""
+    tmp = LIBRARY_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(_library, f)
+    os.replace(tmp, LIBRARY_PATH)
+
+
+def _rehydrate_jobs_from_library():
+    """Lets a restarted server's Downloads tab and Discover "already
+    downloaded" check keep working against the same job_ids as before --
+    _jobs is otherwise purely in-memory and would forget every finished
+    download on restart even though the files (and _library) are still
+    there."""
+    for content_hash, rec in _library['downloads'].items():
+        _jobs[rec['job_id']] = {
+            'status': 'done', 'idx': 0, 'n_chunks': None,
+            'content_hash': content_hash, 'path': rec['path'],
+            'title': rec.get('title'), 'error': None,
+        }
 _lan_url = None   # set once in run_web_ui() -- the base URL a phone on the
                    # same LAN can actually reach this server at, or None if
                    # it can't (bound to 127.0.0.1). The client can't compute
@@ -154,7 +202,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             _hosts[host_id].update(status='error', error=f'{type(e).__name__}: {e}')
 
 
-def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning):
+def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None):
     def on_progress(idx, n_chunks):
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
@@ -165,6 +213,11 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
                                                use_lightning=use_lightning, on_progress=on_progress)
         with _lock:
             _jobs[job_id].update(status='done', path=path)
+            _library['downloads'][content_hash] = {
+                'content_hash': content_hash, 'job_id': job_id, 'path': path,
+                'title': title, 'downloaded_at': time.time(),
+            }
+            _save_library()
     except SystemExit as e:
         with _lock:
             _jobs[job_id].update(status='error', error=str(e))
@@ -202,6 +255,13 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/hosts':
             with _lock:
                 return self._json({'hosts': list(_hosts.values())})
+        if path == '/api/library':
+            with _lock:
+                return self._json({
+                    'downloads': list(_library['downloads'].values()),
+                    'likes': list(_library['likes']),
+                    'subscriptions': list(_library['subscriptions']),
+                })
         if path.startswith('/api/download/'):
             with _lock:
                 job = _jobs.get(path[len('/api/download/'):])
@@ -268,13 +328,14 @@ class Handler(BaseHTTPRequestHandler):
         out_path = body.get('out_path') or f'download_{content_hash[:16]}'
         k = int(body.get('k') or 3)
         use_lightning = bool(body.get('lightning'))
+        title = body.get('title')
 
         job_id = uuid.uuid4().hex[:12]
         with _lock:
             _jobs[job_id] = {'status': 'running', 'idx': 0, 'n_chunks': None,
-                              'content_hash': content_hash, 'path': None, 'error': None}
+                              'content_hash': content_hash, 'path': None, 'title': title, 'error': None}
         threading.Thread(target=_run_download_job,
-                          args=(job_id, content_hash, relay_urls, out_path, k, use_lightning),
+                          args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title),
                           daemon=True).start()
         self._json({'job_id': job_id})
 
@@ -284,7 +345,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error': 'content_hash required'}, status=400)
         identity = _identity()
         event = identity.sign_event('like', content_hash=content_hash)
-        self._json({'result': node.post_event(body.get('relay') or DEFAULT_RELAY, event)})
+        result = node.post_event(body.get('relay') or DEFAULT_RELAY, event)
+        with _lock:
+            if content_hash not in _library['likes']:
+                _library['likes'].append(content_hash)
+                _save_library()
+        self._json({'result': result})
 
     def _handle_subscribe(self, body):
         target_pubkey = body.get('target_pubkey')
@@ -292,7 +358,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error': 'target_pubkey required'}, status=400)
         identity = _identity()
         event = identity.sign_event('subscribe', target_pubkey=target_pubkey)
-        self._json({'result': node.post_event(body.get('relay') or DEFAULT_RELAY, event)})
+        result = node.post_event(body.get('relay') or DEFAULT_RELAY, event)
+        with _lock:
+            if target_pubkey not in _library['subscriptions']:
+                _library['subscriptions'].append(target_pubkey)
+                _save_library()
+        self._json({'result': result})
 
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range
@@ -398,6 +469,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False):
     global _lan_url
+    _load_library()
+    _rehydrate_jobs_from_library()
     srv = ThreadingHTTPServer((bind_host, port), Handler)
 
     reachable_host = _detect_lan_ip() if bind_host == '0.0.0.0' else bind_host

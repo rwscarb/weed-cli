@@ -49,9 +49,11 @@ def run_make(target):
 
 
 def build_parser():
+    import node
     parser = argparse.ArgumentParser(
         prog='weed',
-        description='Censorship-resistant video PoC — real mechanisms behind the #all-pdx brainstorm.')
+        description=f'{node.weed_banner()} — real mechanisms behind the #all-pdx brainstorm.')
+    parser.add_argument('--version', action='version', version=node.weed_banner())
     sub = parser.add_subparsers(dest='command', required=False)
 
     sub.add_parser('shell', help='interactive shell with tab completion (also the default with no command)')
