@@ -1,0 +1,14 @@
+# Discovery relay for weed -- see discovery_relay.py's own docstring for
+# the publish/like/subscribe event protocol it stores and serves back.
+# Needs `cryptography` for Ed25519 signature verification
+# (poc_reputation.py's verify_attestation); everything else here is
+# stdlib. Separate from the repo's tunnel-relay image on purpose: this
+# one really is a plain HTTP service (POST /event, GET /events), so
+# unlike Dockerfile.tunnel-relay it doesn't need to fight Fly's
+# auto-detected [http_service] block -- that detection is correct here.
+FROM python:3.13-slim
+WORKDIR /app
+COPY discovery_relay.py poc_reputation.py ./
+RUN pip install --no-cache-dir cryptography
+EXPOSE 9101
+ENTRYPOINT ["python3", "discovery_relay.py", "9101"]
