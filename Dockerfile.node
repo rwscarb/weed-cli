@@ -1,0 +1,43 @@
+# A weed node with its local control UI: host/discover/download from a
+# browser instead of memorizing weed.py's CLI flags (see web_ui.py's own
+# docstring). This bundles node.py's real protocol logic plus the static
+# web/ frontend — same code the CLI and shell.py call, no separate
+# reimplementation.
+#
+# Separate from the repo's other Dockerfiles on purpose: Dockerfile is
+# poc_network_challenge.py's holder/relay/verifier demo, and
+# Dockerfile.discovery-relay / Dockerfile.tunnel-relay are the two dumb
+# store-and-forward relays. This one is the actual node a person runs.
+FROM python:3.13-slim
+WORKDIR /app
+COPY node.py web_ui.py poc_reputation.py ./
+COPY web/ ./web/
+RUN pip install --no-cache-dir btcvm cryptography qrcode
+
+# Identity key, reputation store, and library manifest are all read/written
+# via os.path.expanduser('~/...') (see node.py's IDENTITY_PATH and
+# web_ui.py's LIBRARY_PATH) -- pointing $HOME at the mounted volume means
+# one `-v weed-node-data:/data` covers all three, so this container's
+# identity (and everything vouching for it) survives a restart instead of
+# generating a fresh throwaway pubkey every time. DOWNLOADS_DIR is
+# script-relative instead (/app/downloads), so it gets its own symlink into
+# the same volume.
+ENV HOME=/data
+RUN ln -s /data/downloads /app/downloads
+VOLUME /data
+
+# 127.0.0.1 is web_ui.py's own default bind (see its docstring: no auth
+# built, so it refuses to face the network unless told to) -- --bind 0.0.0.0
+# here is what makes that safe *inside* a container, since the container's
+# network namespace is already the isolation boundary; nothing external
+# reaches this port unless you publish it yourself.
+EXPOSE 8080
+# A named volume mounts *empty* at /data, which leaves /app/downloads (the
+# symlink above) dangling until something creates its real target -- and
+# web_ui.py's own os.makedirs(DOWNLOADS_DIR, exist_ok=True) can't recover
+# from that itself (exist_ok's fallback check is os.path.isdir(), which is
+# False for a broken symlink, so it raises FileExistsError anyway instead of
+# treating it as already there). mkdir -p the real target before Python
+# ever imports web_ui.py, once per container start, not once per image
+# build, since the volume's contents don't exist until runtime.
+ENTRYPOINT ["sh", "-c", "mkdir -p /data/downloads && exec python3 web_ui.py --bind 0.0.0.0 \"$@\"", "--"]

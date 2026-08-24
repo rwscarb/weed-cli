@@ -1,0 +1,45 @@
+# A weed node + its local control UI (see Dockerfile.node). Separate file
+# from docker-compose.yml on purpose -- that one is the holder/relay/
+# verifier network-challenge demo, unrelated services with unrelated
+# lifecycles.
+#
+# Run:
+#   docker compose -f docker-compose.node.yml up --build
+#   open http://127.0.0.1:8080
+#
+# node-data is a named volume, not a bind mount, so identity/reputation/
+# library/downloads (see Dockerfile.node's HOME=/data comment) survive
+# `docker compose down` and only go away on an explicit `docker volume rm`
+# or `down -v`.
+#
+# /share is a bind mount, not a named volume, on purpose -- you want the
+# actual .ott archives you're hosting to be real files on the host you can
+# see/add/remove directly, not hidden inside Docker's volume storage. It's
+# optional: WEED_SHARE_DIR defaults to ./share (created empty on first run
+# if missing), or point it at wherever your archives already live, e.g.
+#   WEED_SHARE_DIR=~/Movies docker compose -f docker-compose.node.yml up
+# Then in the web UI's host form, use /share (or a subdirectory of it) as
+# the archive dir -- that's this same host directory, from inside the
+# container.
+
+services:
+  node:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    ports:
+      - "8080:8080"
+    volumes:
+      - node-data:/data
+      - ${WEED_SHARE_DIR:-./share}:/share
+    environment:
+      # point these at your real deployed infra -- defaults inside
+      # web_ui.py fall back to http://127.0.0.1:9101 / no tunnel, which
+      # only make sense if a discovery_relay.py is also running on this
+      # same host.
+      WEED_RELAY: "https://r.hak4.org"
+      WEED_TUNNEL: "tls://t.hak4.org:9199"
+    restart: unless-stopped
+
+volumes:
+  node-data:
