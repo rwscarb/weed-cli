@@ -167,17 +167,6 @@ td button {
   100% { background-position: 0 0, -200% 0; }
 }
 
-/* replaces the Download button while its row is filling in as its own
-   progress bar (.dl-progress-row) -- plain centered text instead of
-   another button, since the row itself is already the indicator */
-.dl-pct {
-  display: block;
-  width: 100%;
-  text-align: center;
-  font-weight: 600;
-  color: var(--text);
-}
-
 .status-done { color: var(--accent); }
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }
