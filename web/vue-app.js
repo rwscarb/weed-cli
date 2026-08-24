@@ -2,7 +2,28 @@
 
 const { createApp } = Vue;
 
-createApp({
+// three-way "Any / <label> / Not <label>" segmented toggle, standing in
+// for a plain checkbox anywhere a filter needs to say "must be false",
+// not just "must be true or don't care" -- v-model works on it via the
+// standard modelValue/update:modelValue convention, same as a native
+// input would
+const FilterToggle = {
+  props: { modelValue: String, label: String },
+  emits: ['update:modelValue'],
+  template: `
+    <div class="filter-toggle">
+      <span class="filter-toggle-label">{{ label }}</span>
+      <button type="button" :class="{active: modelValue === 'any'}"
+              @click="$emit('update:modelValue', 'any')">Any</button>
+      <button type="button" :class="{active: modelValue === 'yes'}"
+              @click="$emit('update:modelValue', 'yes')">{{ label }}</button>
+      <button type="button" :class="{active: modelValue === 'no'}"
+              @click="$emit('update:modelValue', 'no')">Not {{ label }}</button>
+    </div>
+  `,
+};
+
+const app = createApp({
   data() {
     return {
       pubkey: '',
@@ -19,9 +40,12 @@ createApp({
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
       discoverSearch: '',
-      filterDownloaded: false,
-      filterLiked: false,
-      filterSubscribed: false,
+      // 'any' | 'yes' | 'no' -- a checkbox can only say "must be true or
+      // don't care", not "must be false", so these are a tri-state
+      // toggle instead (see the filter-toggle component below)
+      filterDownloaded: 'any',
+      filterLiked: 'any',
+      filterSubscribed: 'any',
 
       // server-persisted memory of what's been downloaded/liked/subscribed,
       // so a page reload (or a server restart) doesn't forget any of it --
@@ -64,17 +88,20 @@ createApp({
     discoverRelaysList() {
       return this.splitRelays(this.discoverRelays);
     },
-    // search + the "only" checkboxes all narrow the same list together
-    // (AND, not OR) -- each one that's on must hold for a row to show
+    // search + the three tri-state toggles all narrow the same list
+    // together (AND, not OR) -- each one set away from 'any' must hold
+    // for a row to show
     filteredDiscoverResults() {
       const q = this.discoverSearch.trim().toLowerCase();
+      const matchesTriState = (state, isTrue) =>
+        state === 'any' || (state === 'yes') === isTrue;
       return this.discoverResults.filter(r => {
         if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)) {
           return false;
         }
-        if (this.filterDownloaded && !this.library.downloads[r.content_hash]) return false;
-        if (this.filterLiked && !this.library.likes.has(r.content_hash)) return false;
-        if (this.filterSubscribed && !this.library.subscriptions.has(r.signer_pubkey)) return false;
+        if (!matchesTriState(this.filterDownloaded, !!this.library.downloads[r.content_hash])) return false;
+        if (!matchesTriState(this.filterLiked, this.library.likes.has(r.content_hash))) return false;
+        if (!matchesTriState(this.filterSubscribed, this.library.subscriptions.has(r.signer_pubkey))) return false;
         return true;
       });
     },
@@ -413,4 +440,7 @@ createApp({
       this.reputationResult = 'score ' + data.score.toFixed(2) + ' — ' + data.why;
     },
   },
-}).mount('#app');
+});
+
+app.component('filter-toggle', FilterToggle);
+app.mount('#app');

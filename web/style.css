@@ -230,6 +230,42 @@ td button {
 .icon-btn.active { border-color: var(--accent); color: var(--accent); }
 .icon-btn:disabled { cursor: default; }
 
+/* Any / <label> / Not <label> segmented toggle -- three buttons sharing
+   borders like one merged control, same active-state language as the
+   rest of this page (accent border + text once selected) */
+.filter-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-toggle-label {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.filter-toggle button {
+  padding: 0.3rem 0.6rem;
+  font-size: 0.8rem;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  cursor: pointer;
+  align-self: auto;
+}
+
+.filter-toggle button + button { margin-left: -1px; }
+.filter-toggle button:first-of-type { border-radius: 4px 0 0 4px; }
+.filter-toggle button:last-of-type { border-radius: 0 4px 4px 0; }
+.filter-toggle button:hover:not(.active) { color: var(--text); }
+.filter-toggle button.active {
+  background: var(--accent-dim);
+  color: var(--text);
+  border-color: var(--accent);
+  position: relative;
+  z-index: 1;
+}
+
 .status-done { color: var(--accent); }
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }

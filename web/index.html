@@ -36,9 +36,9 @@
       <label>Search
         <input type="text" v-model="discoverSearch" placeholder="title or content hash">
       </label>
-      <label class="checkbox"><input type="checkbox" v-model="filterDownloaded"> Downloaded only</label>
-      <label class="checkbox"><input type="checkbox" v-model="filterLiked"> Liked only</label>
-      <label class="checkbox"><input type="checkbox" v-model="filterSubscribed"> Subscribed only</label>
+      <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
+      <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
+      <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
     </form>
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
