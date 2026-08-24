@@ -9,6 +9,7 @@ real_archive/
 *.egg-info/
 *.pyc
 __pycache__/
+relay_events.jsonl
 real_archive/*.mp4
 real_archive/.ott/objects/
 .ruff_cache/
