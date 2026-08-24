@@ -67,10 +67,10 @@
                       @click="subscribe(r)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
             </span>
           </div></td>
-          <td><code>{{ shortHash(r.content_hash) }}</code></td>
+          <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
           <td>{{ r.host }}</td>
           <td>{{ r.tunnel || '—' }}</td>
-          <td><code>{{ shortHash(r.signer_pubkey, 12) }}</code></td>
+          <td><code>{{ shortHash(r.signer_pubkey, 8) }}</code></td>
           <td>
             <button type="button" class="play-btn qr-btn" v-if="library.downloads[r.content_hash]"
                     title="scan to open this video on your phone"

@@ -423,6 +423,19 @@ code {
   overflow-wrap: anywhere;
 }
 
+/* overflow-wrap:anywhere above is right for arbitrary-length text (QR
+   popup URLs, etc.), but it's what let table auto-layout starve the
+   Content hash/By columns down to nothing -- since the browser assumes
+   it can always wrap, it never gives them real width, and a short,
+   already-truncated hash ends up stacked one character per line. These
+   are short and fixed-length after shortHash(); refusing to wrap forces
+   the table to give them real width instead, and .table-wrap's existing
+   horizontal scroll is the fallback if it still doesn't fit. */
+#discover-table td code {
+  white-space: nowrap;
+  overflow-wrap: normal;
+}
+
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
