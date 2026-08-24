@@ -825,7 +825,26 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
 
 # ── discovery + social signals ──────────────────────────────────────────
 
+def _relay_url_hint(relay_url):
+    """Relays are plain HTTP(S) endpoints, hit via urllib -- tls:// is a
+    completely different, unrelated convention that only means something
+    to --tunnel (a hand-rolled raw-TCP-plus-TLS protocol, see
+    _connect_tunnel_socket/connect_via_tunnel). Easy to mix up since both
+    flags take a host:port-shaped value and this same tool uses tls://
+    for the other one; without this check the failure is just urllib's
+    raw 'unknown url type: tls' with no hint about why."""
+    if relay_url.startswith('tls://'):
+        return (f"{relay_url!r} looks like a --tunnel address, not a relay URL — "
+                f"relays are plain HTTP(S) endpoints, try "
+                f"'https://{relay_url[len('tls://'):]}' for --relay instead "
+                f"(tls:// only means something to --tunnel)")
+    return None
+
+
 def post_event(relay_url, event):
+    hint = _relay_url_hint(relay_url)
+    if hint:
+        return {'ok': False, 'error': hint}
     req = urllib.request.Request(
         f'{relay_url}/event', data=json.dumps(event).encode(),
         headers={'Content-Type': 'application/json'}, method='POST')
@@ -845,6 +864,10 @@ def post_event(relay_url, event):
 
 
 def fetch_events(relay_url, event_type=None):
+    hint = _relay_url_hint(relay_url)
+    if hint:
+        print(f"  {relay_url}: {hint}")
+        return None
     url = f'{relay_url}/events' + (f'?type={event_type}' if event_type else '')
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:
