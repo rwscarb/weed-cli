@@ -1,7 +1,7 @@
 build/
 dist/
 download_*
-dura.egg-info/
+weed.egg-info/
 *.egg-info/
 *.pyc
 __pycache__/

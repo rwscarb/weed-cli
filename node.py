@@ -35,9 +35,9 @@ from poc_reputation import Identity, verify_attestation, attestation_id
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from cryptography.hazmat.primitives import serialization
 
-IDENTITY_PATH = os.path.expanduser('~/.dura_identity.key')
-IDENTITY_ARMOR_HEADER = '-----BEGIN DURA IDENTITY KEY-----'
-IDENTITY_ARMOR_FOOTER = '-----END DURA IDENTITY KEY-----'
+IDENTITY_PATH = os.path.expanduser('~/.weed_identity.key')
+IDENTITY_ARMOR_HEADER = '-----BEGIN WEED IDENTITY KEY-----'
+IDENTITY_ARMOR_FOOTER = '-----END WEED IDENTITY KEY-----'
 
 
 def _armor_identity(raw_bytes):
@@ -45,7 +45,7 @@ def _armor_identity(raw_bytes):
     CRC24, no packet framing), and not encryption: this only changes how
     the same private key bytes are encoded on disk, from opaque binary
     (`file` calls it "data") to something readable/diffable/copy-
-    pasteable. A dura-specific label on purpose, not a PGP one — this
+    pasteable. A weed-specific label on purpose, not a PGP one — this
     repo already decided against adopting the real OpenPGP format (see
     README's "Transitive trust" section), so nothing here should look
     like it's actually PGP-compatible."""
@@ -58,7 +58,7 @@ def _dearmor_identity(text):
     lines = text.strip().splitlines()
     if len(lines) < 2 or lines[0].strip() != IDENTITY_ARMOR_HEADER \
             or lines[-1].strip() != IDENTITY_ARMOR_FOOTER:
-        raise ValueError('not a dura-armored identity key')
+        raise ValueError('not a weed-armored identity key')
     return base64.b64decode(''.join(lines[1:-1]))
 
 
@@ -680,7 +680,7 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
     print(f"trust graph: {len(trust_graph)} pubkey(s) reachable within {trust_hops} hop(s) "
           f"of your own subscribes")
 
-    reputation = ReputationStore(os.path.expanduser('~/.dura_reputation.json'))
+    reputation = ReputationStore(os.path.expanduser('~/.weed_reputation.json'))
     attestation_events = fetch_verified(relay_urls, 'attestation')
     added = 0
     for e in attestation_events:
@@ -718,7 +718,7 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
                               avg_latency_ms=winner['avg_latency_ms'])
     reputation.save()
     print(f"recorded this download in local reputation store "
-          f"(~/.dura_reputation.json) for {c['signer_pubkey'][:12]}...")
+          f"(~/.weed_reputation.json) for {c['signer_pubkey'][:12]}...")
 
     attestation = identity.sign_event('attestation', peer_pubkey=c['signer_pubkey'],
                                        passes=1, fails=0, avg_latency_ms=winner['avg_latency_ms'], k=k)

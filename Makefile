@@ -34,8 +34,8 @@ help:
 	@echo ""
 	@echo "  make clean          remove __pycache__, generated chart, tmp reputation stores"
 	@echo ""
-	@echo "  make install        symlink dura.py to $(BINDIR)/dura (override with PREFIX=...)"
-	@echo "  make uninstall      remove $(BINDIR)/dura"
+	@echo "  make install        symlink weed.py to $(BINDIR)/weed (override with PREFIX=...)"
+	@echo "  make uninstall      remove $(BINDIR)/weed"
 
 demo:
 	$(PYTHON) poc_challenge_auction.py
@@ -84,12 +84,12 @@ clean:
 
 install:
 	mkdir -p $(BINDIR)
-	ln -sf $(CURDIR)/dura.py $(BINDIR)/dura
-	@echo "installed: $(BINDIR)/dura -> $(CURDIR)/dura.py"
+	ln -sf $(CURDIR)/weed.py $(BINDIR)/weed
+	@echo "installed: $(BINDIR)/weed -> $(CURDIR)/weed.py"
 	@case ":$$PATH:" in \
 		*":$(BINDIR):"*) ;; \
 		*) echo "note: $(BINDIR) is not on your PATH" ;; \
 	esac
 
 uninstall:
-	rm -f $(BINDIR)/dura
+	rm -f $(BINDIR)/weed

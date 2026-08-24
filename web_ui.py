@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Local control UI for dura: a small stdlib JSON API (same tool
+Local control UI for weed: a small stdlib JSON API (same tool
 discovery_relay.py already uses — ThreadingHTTPServer, no new dependency)
 plus a static frontend (web/), so hosting/discovering/downloading/
-liking/subscribing don't require memorizing dura.py's CLI flags. Every
+liking/subscribing don't require memorizing weed.py's CLI flags. Every
 endpoint is a thin wrapper over the real node.py functions the CLI
 already calls — no reimplementation of any protocol logic.
 
@@ -41,7 +41,7 @@ class _JobStdout:
     """Replaces sys.stdout for this whole process so a background job
     thread (host/download) can be muted without touching a single print()
     in node.py -- those are correct and wanted when the same functions
-    run from dura.py or the interactive shell, where a human is actually
+    run from weed.py or the interactive shell, where a human is actually
     watching the terminal. They're just noise here: nothing reads this
     process's stdout, and a job's real status already goes through
     _jobs[job_id]/_hosts[host_id], which the API/frontend actually poll.
@@ -209,7 +209,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/reputation/'):
             from poc_reputation import ReputationStore
             pubkey = path[len('/api/reputation/'):]
-            reputation = ReputationStore(os.path.expanduser('~/.dura_reputation.json'))
+            reputation = ReputationStore(os.path.expanduser('~/.weed_reputation.json'))
             score, why = reputation.trust_score(pubkey)
             return self._json({'pubkey': pubkey, 'score': score, 'why': why})
         if path.startswith('/api/stream/'):
@@ -405,7 +405,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False):
         _lan_url = f'http://{reachable_host}:{port}/'
 
     if not quiet:
-        print(f"[web:{port}] dura control UI at http://{bind_host}:{port}/", flush=True)
+        print(f"[web:{port}] weed control UI at http://{bind_host}:{port}/", flush=True)
         if bind_host == '127.0.0.1':
             print("  bound to localhost only -- pass --bind 0.0.0.0 to reach this from your "
                   "phone (and get a scan-to-open QR here)", flush=True)
@@ -427,7 +427,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False):
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description='dura local control UI')
+    parser = argparse.ArgumentParser(description='weed local control UI')
     parser.add_argument('port', nargs='?', type=int, default=8080,
                          help='port to listen on (default: 8080)')
     parser.add_argument('--port', dest='port_flag', type=int,

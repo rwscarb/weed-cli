@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Interactive shell for dura.py, same pattern as btcvm/ott.py's OttShell:
+Interactive shell for weed.py, same pattern as btcvm/ott.py's OttShell:
 cmd.Cmd, readline tab completion, short aliases, Ctrl-D/q to exit. `host`
 runs the server in a background thread instead of blocking the shell, so
 you can host and discover/download/like in the same session — ott doesn't
@@ -17,7 +17,6 @@ import os
 import shlex
 import threading
 
-import dht
 import discovery_relay
 import node
 import web_ui
@@ -41,12 +40,12 @@ def _bg(fn, *args, **kwargs):
         print(f'\n  ✗ {type(e).__name__}: {e}')
 
 
-class DuraShell(cmd.Cmd):
+class WeedShell(cmd.Cmd):
     intro = (
-        '\n  dura — censorship-resistant video PoC node\n'
+        '\n  weed — censorship-resistant video PoC node\n'
         '  Type help or ? for commands. Tab completes. Ctrl-D or q to exit.\n'
     )
-    prompt = 'dura> '
+    prompt = 'weed> '
 
     def __init__(self, *a, **kw):
         super().__init__(*a, **kw)
@@ -70,7 +69,7 @@ class DuraShell(cmd.Cmd):
         """ott's do_* methods each catch their own expected errors (OttError,
         OttNotFoundError) locally rather than needing a shell-wide net —
         that works there because ott's operations are all local/filesystem.
-        dura's commands do real network I/O, depend on packages that might
+        weed's commands do real network I/O, depend on packages that might
         not be installed, and several node.py functions call sys.exit() on
         expected failures (missing archive, hash mismatch, unreachable
         host) — correct for the one-shot CLI, where sys.exit() ending the
@@ -95,7 +94,7 @@ class DuraShell(cmd.Cmd):
     # ── commands ─────────────────────────────────────────────────────────
 
     def do_whoami(self, arg):
-        """whoami  — print your persistent node pubkey (~/.dura_identity.key)."""
+        """whoami  — print your persistent node pubkey (~/.weed_identity.key)."""
         print(f'  {self.identity.pubkey_hex()}')
 
     def do_host(self, arg):
@@ -233,6 +232,11 @@ class DuraShell(cmd.Cmd):
         hosting content, on the active node (from the last `dht start`).
         dht lookup <content_hash>  — look up who's hosting content, via
         the active node."""
+        try:
+            import dht
+        except ImportError:
+            print('  ✗ dht requires the kademlia package — pip install kademlia')
+            return
         parts = shlex.split(arg)
         if not parts:
             print('  Usage: dht <start|announce|lookup> ...')

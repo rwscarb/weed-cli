@@ -302,7 +302,7 @@ python3 poc_discovery.py
 ### `node.py` — the integration piece: host, discover, download, for real
 
 Everything above is a demo of one mechanism at a time. `node.py` (via
-`dura.py host/discover/download/like/subscribe/whoami`) is the actual
+`weed.py host/discover/download/like/subscribe/whoami`) is the actual
 integration: a real node that hosts a real archived file over the real
 wire protocol from `poc_network_challenge.py` (extended with `INFO` and
 `LEAVES` so a downloader can learn the archive's shape first), announces
@@ -310,7 +310,7 @@ itself on a real relay, and — new, not just wired from existing pieces —
 actually downloads a file from a peer and reassembles it on disk, which
 nothing before this verified chunk-by-chunk *and* wrote a real file.
 
-A persistent identity now lives at `~/.dura_identity.key` — every other
+A persistent identity now lives at `~/.weed_identity.key` — every other
 script tonight generated a fresh Ed25519 keypair per run, which is fine for
 a demo but means nobody could ever accumulate reputation or be subscribed
 to across invocations. A real node needs a stable pubkey.
@@ -339,14 +339,14 @@ bandwidth on it.
 python3 discovery_relay.py 9101
 
 # terminal 2 — host the video from item 6
-python3 dura.py host real_archive --port 9201 --relay http://127.0.0.1:9101
+python3 weed.py host real_archive --port 9201 --relay http://127.0.0.1:9101
 
 # terminal 3
-python3 dura.py whoami
-python3 dura.py discover --relay http://127.0.0.1:9101
-python3 dura.py download <content_hash_prefix> --relay http://127.0.0.1:9101 --out downloaded.mp4
-python3 dura.py like <content_hash> --relay http://127.0.0.1:9101
-python3 dura.py subscribe <target_pubkey> --relay http://127.0.0.1:9101
+python3 weed.py whoami
+python3 weed.py discover --relay http://127.0.0.1:9101
+python3 weed.py download <content_hash_prefix> --relay http://127.0.0.1:9101 --out downloaded.mp4
+python3 weed.py like <content_hash> --relay http://127.0.0.1:9101
+python3 weed.py subscribe <target_pubkey> --relay http://127.0.0.1:9101
 ```
 
 `--advertise-host` on `host` matters if you're not on localhost — no NAT
@@ -389,7 +389,7 @@ from a real download. Now they are:
    real BOLT11 invoices, which isn't built.
 5. **Download and record** — same chunk-verified `download()` as before,
    then the outcome (pass/fail, latency) gets written to
-   `~/.dura_reputation.json` via `ReputationStore.record_direct`, so the
+   `~/.weed_reputation.json` via `ReputationStore.record_direct`, so the
    next auction for this host starts from real history instead of 0.0.
 
 Real test, two independent hosts (separate identities, separate `HOME`s so
@@ -421,7 +421,7 @@ independently re-verified against the invoice's own `r_hash` via
 proceeded, byte-identical against the source via `cmp`.
 
 ```bash
-python3 dura.py download <content_hash> --relay http://127.0.0.1:9101 \
+python3 weed.py download <content_hash> --relay http://127.0.0.1:9101 \
     --rounds 5 --lightning --out downloaded.mp4
 ```
 
@@ -546,10 +546,10 @@ python3 discovery_relay.py 9101
 # terminal 2
 python3 tunnel_relay.py 9199
 # terminal 3 — no reachable --advertise-host at all
-python3 dura.py host real_archive --port 9201 --tunnel 127.0.0.1:9199 \
+python3 weed.py host real_archive --port 9201 --tunnel 127.0.0.1:9199 \
     --relay http://127.0.0.1:9101 --advertise-host 10.255.255.1
 # terminal 4
-python3 dura.py download <content_hash> --relay http://127.0.0.1:9101 --out downloaded.mp4
+python3 weed.py download <content_hash> --relay http://127.0.0.1:9101 --out downloaded.mp4
 ```
 
 Additive, backward-compatible protocol change, same shape as the
@@ -625,7 +625,7 @@ Or from the shell: `dht start [port] [bootstrap_host:port]`,
 ### `web_ui.py` — local web UI
 
 Hosting/discovering/downloading/liking/subscribing all required
-memorizing `dura.py`'s CLI flags — real friction for anyone who isn't
+memorizing `weed.py`'s CLI flags — real friction for anyone who isn't
 already comfortable with argparse. `web_ui.py` is a small stdlib
 `http.server`/`ThreadingHTTPServer` JSON API — same tool
 `discovery_relay.py` already uses, no new dependency, still just the
@@ -649,7 +649,7 @@ default no-op, so CLI output is unaffected), `POST /api/like`,
 `GET /api/stream/<job_id>`, `GET /api/qr?data=...`, `GET /api/lan-url`.
 
 Real end-to-end proof, not just the API responding: hosted a file
-through the **Host** form, confirmed a second terminal's `dura discover`
+through the **Host** form, confirmed a second terminal's `weed discover`
 actually saw it (proves the API called the real `node.publish`, not a
 mock); downloaded through the **Downloads** form with a live-polling
 progress bar, `cmp`-verified byte-identical; liked and subscribed
@@ -679,14 +679,14 @@ the client fetch the server's own answer instead of trusting
 `location.origin`.
 
 ```bash
-python3 dura.py serve                # alias for `web`, positional args: serve [bind] [port]
-python3 dura.py serve 0.0.0.0 8080    # reachable from your phone; prints a scan-to-open QR
+python3 weed.py serve                # alias for `web`, positional args: serve [bind] [port]
+python3 weed.py serve 0.0.0.0 8080    # reachable from your phone; prints a scan-to-open QR
 # or, from the shell: `serve [bind] [port]`
 ```
 
 ### `shell.py` — interactive, tab-completing, same pattern as `ott`'s shell
 
-`python3 dura.py` with no arguments (or `dura.py shell`) drops into an
+`python3 weed.py` with no arguments (or `weed.py shell`) drops into an
 interactive shell — same `cmd.Cmd` + readline pattern as `ott`'s own shell,
 same conventions: short aliases (`w`/`h`/`r`/`disc`/`dl`/`l`/`sub`), `help`
 or `?` for commands, `Ctrl-D` or `q` to exit, tab completes.
@@ -719,15 +719,15 @@ and `like` tab-complete against content hashes actually seen in the last
 `discover`; `subscribe` completes against pubkeys actually seen:
 
 ```
-dura> relay
+weed> relay
   relay running on port 9101 in the background — set as your default relay
-dura> host real_archive --relay http://127.0.0.1:9101
+weed> host real_archive --relay http://127.0.0.1:9101
   hosting real_video.mp4 on port 9201 in the background — shell still usable
-dura> discover
+weed> discover
   'real_video.mp4'   hash=7f2477c7ea675004...  host=127.0.0.1:9201  by=409a15dcfc59...
-dura> download 7f24<TAB>
+weed> download 7f24<TAB>
 7f2477c7ea675004ad5dbab6dc7c44327c724b880cc389807df1965b77966acc
-dura> download 7f2477c7ea675004ad5dbab6dc7c44327c724b880cc389807df1965b77966acc
+weed> download 7f2477c7ea675004ad5dbab6dc7c44327c724b880cc389807df1965b77966acc
 3324 chunks downloaded and verified in 1.4s
 ```
 
@@ -741,7 +741,7 @@ the whole time.
 
 ## Running it
 
-`./dura.py --help` (or `dura.py lightning --help` for the nested ones) is
+`./weed.py --help` (or `weed.py lightning --help` for the nested ones) is
 the friendliest entry point — it's a thin argparse wrapper over the
 Makefile, same targets, real subcommands and `--help` text instead of
 needing to remember `make` target names. `make help` lists the same
@@ -759,7 +759,7 @@ python3 poc_challenge_auction.py --lightning    # same auction, real HTLC settle
 python3 poc_real_archive_challenge.py           # same challenge mechanism, real 3324-chunk video
 python3 poc_discovery.py                        # 3 real relays, personalized ranking, sybil test
 python3 tunnel_relay.py 9199                    # NAT-traversal relay — see host --tunnel below
-python3 dura.py serve --bind 0.0.0.0 --port 8080  # local web UI, reachable from your phone
+python3 weed.py serve --bind 0.0.0.0 --port 8080  # local web UI, reachable from your phone
 python3 dht.py 8468                             # real Kademlia DHT node — see dht.py above
 ```
 
@@ -776,7 +776,7 @@ needed for the container-network test and for `--lightning` (real
 bitcoind + LND, see `lightning/README.md`).
 
 Or, packaged: `pip install -e .` (see `pyproject.toml`) installs a real
-`dura` command on your `PATH` instead of `python3 dura.py`.
+`weed` command on your `PATH` instead of `python3 weed.py`.
 
 ## Next steps
 

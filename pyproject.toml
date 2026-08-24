@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dura"
+name = "weed"
 version = "0.1.0"
 description = "Censorship-resistant video PoC — discovery/hosting/download over signed relay events, a real Kademlia DHT, or a TLS-capable NAT-traversal tunnel"
 readme = "README.md"
@@ -29,7 +29,7 @@ dependencies = [
 ]
 
 [project.scripts]
-dura = "dura:main"
+weed = "weed:main"
 
 [project.optional-dependencies]
 dev = [
@@ -48,14 +48,14 @@ viz = [
 ]
 
 [tool.setuptools]
-# Flat modules, not a package -- matches how dura.py/shell.py/node.py
-# already import each other (`import node`, not `from dura import node`).
+# Flat modules, not a package -- matches how weed.py/shell.py/node.py
+# already import each other (`import node`, not `from weed import node`).
 # poc_reputation is a real runtime dependency (node.py, discovery_relay.py,
 # and web_ui.py all import from it), not just a standalone demo script --
 # the other poc_*.py/viz_*.py files are, and stay repo-local, run via
 # `make`/`python3 poc_x.py` directly rather than installed.
 py-modules = [
-  "dura", "node", "shell", "discovery_relay", "tunnel_relay", "web_ui",
+  "weed", "node", "shell", "discovery_relay", "tunnel_relay", "web_ui",
   "dht", "lightning_settle", "poc_reputation",
 ]
 

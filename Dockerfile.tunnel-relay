@@ -1,4 +1,4 @@
-# Tunnel relay for dura's NAT-traversal path — see tunnel_relay.py's own
+# Tunnel relay for weed's NAT-traversal path — see tunnel_relay.py's own
 # docstring for the rendezvous protocol. Zero external dependencies
 # (secrets/socket/socketserver/sys/threading are all stdlib), so this
 # image doesn't need requirements.txt at all — just the one file.

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dura — single CLI entry point for this repo's PoC mechanisms.
+weed — single CLI entry point for this repo's PoC mechanisms.
 
 Two kinds of subcommand:
 
@@ -50,7 +50,7 @@ def run_make(target):
 
 def build_parser():
     parser = argparse.ArgumentParser(
-        prog='dura',
+        prog='weed',
         description='Censorship-resistant video PoC — real mechanisms behind the #all-pdx brainstorm.')
     sub = parser.add_subparsers(dest='command', required=False)
 
@@ -64,7 +64,7 @@ def build_parser():
     for name, (_target, help_text) in LIGHTNING_COMMANDS.items():
         lightning_sub.add_parser(name, help=help_text)
 
-    p_whoami = sub.add_parser('whoami', help='print your persistent node pubkey (~/.dura_identity.key)')
+    p_whoami = sub.add_parser('whoami', help='print your persistent node pubkey (~/.weed_identity.key)')
 
     p_host = sub.add_parser('host', help='actually serve a real archived file to the real network')
     p_host.add_argument('archive_dir', help='directory containing .ott/ (e.g. real_archive)')
@@ -220,7 +220,7 @@ def main():
     if args.command is None or args.command == 'shell':
         import shell
         try:
-            shell.DuraShell().cmdloop()
+            shell.WeedShell().cmdloop()
         except KeyboardInterrupt:
             print()
         return
