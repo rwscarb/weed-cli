@@ -327,6 +327,12 @@ async function refreshDiscover() {
       if (stats) actions.appendChild(stats);
     } else {
       const dlBtn = document.createElement('button');
+      dlBtn.type = 'button';
+      // same visual family as .play-btn (no border, solid accent fill) so
+      // Download/Play don't read as two different button styles in the
+      // same actions column -- the generic <button> rule (bordered,
+      // dimmer fill, from style.css) is for actual forms, not this row
+      dlBtn.className = 'play-btn';
       dlBtn.textContent = 'Download';
 
       // While a download's in flight the row itself is the progress bar
