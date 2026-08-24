@@ -209,6 +209,10 @@ td button {
 /* same language as .play-btn: faint dark outline at rest, only lights up
    on hover -- and a shared min-width so the "+1" badge and the star
    render as the same size instead of each hugging its own glyph */
+.player-controls button {
+  min-height: 34px;
+  min-width: 34px;
+}
 .icon-btn {
   min-width: 2.1rem;
   margin: 0;
@@ -224,6 +228,7 @@ td button {
 
 .icon-btn.like-icon {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-height: 34px;
   font-size: 0.9rem;
   font-weight: 700;
   letter-spacing: 0.02em;
