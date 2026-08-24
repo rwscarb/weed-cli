@@ -207,24 +207,34 @@ function closePlayer() {
   document.getElementById('player-backdrop').classList.add('hidden');
 }
 
-// appends a "▶ Play" + "📱" pair wired to openPlayer/toggleQr for jobId --
-// shared by the Downloads jobs table and each Discover row so a finished
-// download looks and behaves the same wherever it's watched from
-function mkPlayControls(jobId, title) {
-  const frag = document.createDocumentFragment();
+// wired to openPlayer for jobId -- shared by the Downloads jobs table and
+// each Discover row so a finished download looks and behaves the same
+// wherever it's watched from
+function mkPlayBtn(jobId, title) {
   const playBtn = document.createElement('button');
   playBtn.type = 'button';
   playBtn.className = 'play-btn';
   playBtn.textContent = '▶ Play';
   playBtn.addEventListener('click', () => openPlayer(jobId, title));
+  return playBtn;
+}
+
+function mkQrBtn(jobId) {
   const qrBtn = document.createElement('button');
   qrBtn.type = 'button';
   qrBtn.className = 'play-btn qr-btn';
   qrBtn.textContent = '📱';
   qrBtn.title = 'scan to open this video on your phone';
   qrBtn.addEventListener('click', () => toggleQr(qrBtn, qrBaseUrl() + 'api/stream/' + jobId));
-  frag.appendChild(playBtn);
-  frag.appendChild(qrBtn);
+  return qrBtn;
+}
+
+// Downloads jobs table has no "By" column to put the phone icon after,
+// so it keeps Play+QR together; Discover splits them (see refreshDiscover)
+function mkPlayControls(jobId, title) {
+  const frag = document.createDocumentFragment();
+  frag.appendChild(mkPlayBtn(jobId, title));
+  frag.appendChild(mkQrBtn(jobId));
   return frag;
 }
 
@@ -292,7 +302,7 @@ async function refreshDiscover() {
   const tbody = document.querySelector('#discover-table tbody');
   tbody.innerHTML = '';
   if (!results || !results.length) {
-    tbody.innerHTML = '<tr><td colspan="6">nothing found — relay(s) unreachable, or nothing published yet</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td></tr>';
     return;
   }
   for (const r of results) {
@@ -303,13 +313,16 @@ async function refreshDiscover() {
       '<td><code>' + shortHash(r.content_hash) + '</code></td>' +
       '<td>' + (r.host || '') + '</td>' +
       '<td>' + (r.tunnel || '—') + '</td>' +
-      '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>';
+      '<td><code>' + shortHash(r.signer_pubkey, 12) + '</code></td>' +
+      '<td></td>';
     const actions = tr.firstElementChild;
     const titleCell = tr.children[1];
+    const shareCell = tr.lastElementChild;
 
     const already = downloadsByHash.get(r.content_hash);
     if (already) {
-      actions.appendChild(mkPlayControls(already.job_id, r.title || already.title || shortHash(r.content_hash)));
+      actions.appendChild(mkPlayBtn(already.job_id, r.title || already.title || shortHash(r.content_hash)));
+      shareCell.appendChild(mkQrBtn(already.job_id));
       const stats = mkStatsSpan(already);
       if (stats) actions.appendChild(stats);
     } else {
@@ -340,7 +353,8 @@ async function refreshDiscover() {
               content_hash: r.content_hash, job_id: job.job_id, path: job.path, title: r.title,
               size: job.size, bps: job.bps,
             });
-            actions.prepend(mkPlayControls(job.job_id, r.title || shortHash(r.content_hash)));
+            actions.prepend(mkPlayBtn(job.job_id, r.title || shortHash(r.content_hash)));
+            shareCell.appendChild(mkQrBtn(job.job_id));
             const stats = mkStatsSpan(job);
             if (stats) actions.appendChild(stats);
           },
