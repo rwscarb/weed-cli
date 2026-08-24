@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "weed"
+name = "weed-cli"
 version = "0.1.0"
 description = "Censorship-resistant video PoC — discovery/hosting/download over signed relay events, a real Kademlia DHT, or a TLS-capable NAT-traversal tunnel"
 readme = "README.md"

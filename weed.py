@@ -139,9 +139,6 @@ def cmd_host(args):
     import node
     identity = node.load_or_create_identity()
     entries = node.load_manifest_entries(args.archive_dir, args.file)
-    if args.tunnel and len(entries) > 1:
-        sys.exit(f"{len(entries)} files in {args.archive_dir} but --tunnel only serves one at a "
-                 f"time — pass --file NAME to pick one")
     # fail fast, before announcing anything — a manifest entry with no
     # matching chunk data would otherwise get announced to the relay and
     # only fail later, in the background server thread
@@ -153,14 +150,19 @@ def cmd_host(args):
                                    tunnel=args.tunnel)
             print(f"announced {entry['name']} on {relay_url}: {result}")
     if args.tunnel:
-        entry = entries[0]
+        # REGISTER's token is the file's own content hash (see
+        # run_host_tunnel/connect_via_tunnel), so a whole tree just means
+        # one control connection per file, each registered under its own
+        # hash — no protocol change needed, CONNECT already looks a
+        # downloader's requested hash up the same way.
         relay_host, relay_port, use_tls = node._parse_tunnel(args.tunnel)
         archive_dir = os.path.expanduser(args.archive_dir)
-        file_path = entry.get('last_path') or os.path.join(archive_dir, entry['name'])
-        threading.Thread(target=node.run_host_tunnel,
-                          args=(relay_host, relay_port, entry['sha256'], entry,
-                                all_leaves[entry['sha256']], file_path, args.price),
-                          kwargs={'use_tls': use_tls}, daemon=True).start()
+        for entry in entries:
+            file_path = entry.get('last_path') or os.path.join(archive_dir, entry['name'])
+            threading.Thread(target=node.run_host_tunnel,
+                              args=(relay_host, relay_port, entry['sha256'], entry,
+                                    all_leaves[entry['sha256']], file_path, args.price),
+                              kwargs={'use_tls': use_tls}, daemon=True).start()
     node.run_host_server(args.archive_dir, args.file, args.port, price=args.price)
 
 

@@ -106,11 +106,12 @@ class WeedShell(cmd.Cmd):
         on --relay (default: your session's default relay — see `relay`)
         unless --no-announce is given. --price sets what download charges
         (default free). --tunnel registers with a tunnel_relay.py instead of
-        relying on a reachable inbound port — for hosting behind NAT/CGNAT,
-        and only supports one file at a time, so requires --file if
-        archive_dir has more than one. Prefix tls:// if the relay
-        terminates TLS at the edge (e.g. a Fly service with handlers =
-        ["tls"]) — the relay process itself never needs to know."""
+        relying on a reachable inbound port — for hosting behind NAT/CGNAT.
+        Registers one control connection per file (REGISTER's token is
+        each file's own content hash), so a whole tree tunnels fine, not
+        just a single file. Prefix tls:// if the relay terminates TLS at
+        the edge (e.g. a Fly service with handlers = ["tls"]) — the relay
+        process itself never needs to know."""
         parts = shlex.split(arg)
         if not parts:
             print('  usage: host <archive_dir> [--file NAME] [--port N] [--price SAT] '
@@ -148,10 +149,6 @@ class WeedShell(cmd.Cmd):
             i += 1
 
         entries = node.load_manifest_entries(archive_dir, file_name)
-        if tunnel and len(entries) > 1:
-            print(f'  {len(entries)} files in {archive_dir} but --tunnel only serves one at a time '
-                  f'— pass --file NAME to pick one')
-            return
         # fail fast, before announcing anything — a manifest entry with no
         # matching chunk data would otherwise get announced to the relay
         # and only fail later, in the background server thread (onecmd's
@@ -165,17 +162,19 @@ class WeedShell(cmd.Cmd):
         elif not relay:
             print('  no relay set (run `relay` first, or pass --relay) — hosting without announcing')
         if tunnel:
-            entry = entries[0]
+            # one control connection per file, each registered under its
+            # own content hash — see do_host's docstring
             relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
             expanded_dir = os.path.expanduser(archive_dir)
-            file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
-            tt = threading.Thread(target=_bg,
-                                   args=(node.run_host_tunnel, relay_host, relay_port,
-                                         entry['sha256'], entry, all_leaves[entry['sha256']],
-                                         file_path, price),
-                                   kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True)
-            tt.start()
-            self._host_threads.append(tt)
+            for entry in entries:
+                file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
+                tt = threading.Thread(target=_bg,
+                                       args=(node.run_host_tunnel, relay_host, relay_port,
+                                             entry['sha256'], entry, all_leaves[entry['sha256']],
+                                             file_path, price),
+                                       kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True)
+                tt.start()
+                self._host_threads.append(tt)
         t = threading.Thread(target=_bg,
                               args=(node.run_host_server, archive_dir, file_name, port),
                               kwargs={'quiet': True, 'price': price}, daemon=True)
