@@ -190,29 +190,40 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
     try:
         with _quiet():
             identity = _identity()
-            entry = node.find_manifest_entry(archive_dir, file_name)
+            # every distinct file in the archive, not just the last-added one
+            # — see load_manifest_entries' own docstring for why
+            # find_manifest_entry (singular) silently dropped every file but
+            # one out of a multi-file archive_dir, same bug shell.py's
+            # do_host already had fixed
+            entries = node.load_manifest_entries(archive_dir, file_name)
             # fail fast, before announcing anything — a manifest entry with no
             # matching chunk data would otherwise get announced to the relay
             # and only fail later, deep in a background thread with no way
             # for the UI to ever find out
-            leaves = node.load_leaves(archive_dir, entry['sha256'])
+            all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
             announced = []
-            for relay_url in relay_urls:
-                host_addr = f'{advertise_host}:{port}'
-                node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                              tunnel=tunnel)
-                announced.append(relay_url)
+            for entry in entries:
+                for relay_url in relay_urls:
+                    host_addr = f'{advertise_host}:{port}'
+                    node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
+                                  tunnel=tunnel)
+                announced = relay_urls
+            files = [{'name': e['name'], 'content_hash': e['sha256']} for e in entries]
             with _lock:
-                _hosts[host_id].update(name=entry['name'], content_hash=entry['sha256'],
+                _hosts[host_id].update(files=files, name=files[0]['name'],
+                                        content_hash=files[0]['content_hash'],
                                         announced_on=announced, status='running')
             if tunnel:
+                # one control connection per file, each registered under its
+                # own content hash — see shell.py do_host's docstring
                 relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
                 expanded_dir = os.path.expanduser(archive_dir)
-                file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
-                threading.Thread(target=node.run_host_tunnel,
-                                  args=(relay_host, relay_port, entry['sha256'], entry, leaves,
-                                        file_path, price),
-                                  kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True).start()
+                for entry in entries:
+                    file_path = entry.get('last_path') or os.path.join(expanded_dir, entry['name'])
+                    threading.Thread(target=node.run_host_tunnel,
+                                      args=(relay_host, relay_port, entry['sha256'], entry,
+                                            all_leaves[entry['sha256']], file_path, price),
+                                      kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True).start()
             node.run_host_server(archive_dir, file_name, port, quiet=True, price=price)
     except SystemExit as e:
         with _lock:

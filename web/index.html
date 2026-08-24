@@ -129,7 +129,7 @@
       <thead><tr><th>Name</th><th>Port</th><th>Price</th><th>Tunnel</th><th>Status</th></tr></thead>
       <tbody>
         <tr v-for="h in hosts" :key="h.id">
-          <td>{{ h.name || '(starting…)' }}</td>
+          <td>{{ !h.name ? '(starting…)' : (h.files && h.files.length > 1 ? h.files.length + ' files' : h.name) }}</td>
           <td>{{ h.port }}</td>
           <td>{{ h.price ? h.price + ' sat' : 'free' }}</td>
           <td>{{ h.tunnel || '—' }}</td>
