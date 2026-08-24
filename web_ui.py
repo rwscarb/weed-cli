@@ -38,6 +38,14 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 DEFAULT_RELAY = 'http://127.0.0.1:9101'
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
 
+# script-relative, not CWD-relative -- same reasoning as WEB_DIR above, so
+# downloads land in the same place regardless of the directory this was
+# launched from (previously defaulted to a bare filename, which meant
+# download_<hash> files scattered directly into whatever the CWD happened
+# to be when web_ui.py was started)
+DOWNLOADS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'downloads')
+os.makedirs(DOWNLOADS_DIR, exist_ok=True)
+
 
 class _JobStdout:
     """Replaces sys.stdout for this whole process so a background job
@@ -344,7 +352,7 @@ class Handler(BaseHTTPRequestHandler):
         if not content_hash:
             return self._json({'error': 'content_hash required'}, status=400)
         relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
-        out_path = body.get('out_path') or f'download_{content_hash[:16]}'
+        out_path = body.get('out_path') or os.path.join(DOWNLOADS_DIR, f'download_{content_hash[:16]}')
         k = int(body.get('k') or 3)
         use_lightning = bool(body.get('lightning'))
         title = body.get('title')

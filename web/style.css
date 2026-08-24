@@ -469,10 +469,25 @@ code {
     font-size: 0.72rem;
   }
   /* now that actions-row spans the tr's full width (see the card-stack
-     rule below) instead of a slim column, spread the buttons/stats
-     across that width edge-to-edge rather than leaving them packed at
-     the left with empty space trailing off to the right */
-  .actions-row { gap: 0.25rem; justify-content: space-between; }
+     rule below) instead of a slim column, the buttons grow to actually
+     fill that width -- space-between alone only spaces out the *gaps*
+     between buttons, which still leaves a lone "Download" (or any row
+     with fewer buttons) stranded at the left with dead space trailing
+     off to the right. Letting the buttons themselves flex-grow means
+     one button fills the whole row and three share it evenly, so
+     there's never empty space regardless of how many are present. */
+  .actions-row { gap: 0.25rem; }
+  .actions-row .play-btn { flex: 1 1 0; }
+
+  /* the header row still lays out as normal table cells (only tbody
+     rows below get turned into cards -- see the rule after this one),
+     but with tbody no longer contributing to the table's shared column
+     math, the browser sizes the header's columns against nothing else
+     and leaves a stranded gap in front of "Title"/"Content hash". Each
+     card already makes its own content self-evident (a title, then a
+     monospace hash right under it), so the header isn't pulling its
+     weight here -- drop it instead of trying to patch its column math. */
+  #discover-table thead { display: none; }
 
   /* Shrinking the buttons alone doesn't fix the real problem: the
      actions column only ever gets a sliver of the row's width, so

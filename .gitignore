@@ -1,6 +1,7 @@
 build/
 dist/
 download_*
+downloads/
 weed.egg-info/
 real_archive/
 *.egg-info/
