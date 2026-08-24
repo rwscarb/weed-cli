@@ -18,6 +18,10 @@ createApp({
 
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
+      discoverSearch: '',
+      filterDownloaded: false,
+      filterLiked: false,
+      filterSubscribed: false,
 
       // server-persisted memory of what's been downloaded/liked/subscribed,
       // so a page reload (or a server restart) doesn't forget any of it --
@@ -59,6 +63,20 @@ createApp({
   computed: {
     discoverRelaysList() {
       return this.splitRelays(this.discoverRelays);
+    },
+    // search + the "only" checkboxes all narrow the same list together
+    // (AND, not OR) -- each one that's on must hold for a row to show
+    filteredDiscoverResults() {
+      const q = this.discoverSearch.trim().toLowerCase();
+      return this.discoverResults.filter(r => {
+        if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)) {
+          return false;
+        }
+        if (this.filterDownloaded && !this.library.downloads[r.content_hash]) return false;
+        if (this.filterLiked && !this.library.likes.has(r.content_hash)) return false;
+        if (this.filterSubscribed && !this.library.subscriptions.has(r.signer_pubkey)) return false;
+        return true;
+      });
     },
     // The server's idea of "your phone's own address" beats the browser's:
     // location.origin only reflects whatever address *this* browser used

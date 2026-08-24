@@ -32,13 +32,24 @@
       </label>
       <button type="submit">Refresh</button>
     </form>
+    <div class="inline-form">
+      <label>Search
+        <input type="text" v-model="discoverSearch" placeholder="title or content hash">
+      </label>
+      <label class="checkbox"><input type="checkbox" v-model="filterDownloaded"> Downloaded only</label>
+      <label class="checkbox"><input type="checkbox" v-model="filterLiked"> Liked only</label>
+      <label class="checkbox"><input type="checkbox" v-model="filterSubscribed"> Subscribed only</label>
+    </div>
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
       <tbody>
         <tr v-if="!discoverResults.length">
           <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
         </tr>
-        <tr v-for="r in discoverResults" :key="r.content_hash"
+        <tr v-else-if="!filteredDiscoverResults.length">
+          <td colspan="7">no results match your search/filters</td>
+        </tr>
+        <tr v-for="r in filteredDiscoverResults" :key="r.content_hash"
             :class="{'dl-progress-row': r._dl.downloading}"
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
           <td><div class="actions-row">
