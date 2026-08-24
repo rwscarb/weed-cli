@@ -583,10 +583,7 @@ code {
   #discover-table tbody td:nth-child(2) { order: 1; }
   #discover-table tbody td:nth-child(3) { order: 2; }
 
-  /* space-between shoves +1/★ all the way to the title column's far
-     edge, leaving an odd gap next to a short title -- follow the text
-     directly instead */
-  .title-row { justify-content: flex-start; }
+  .title-row { justify-content: space-between; }
 
   /* the popup's top/left are set inline from the trigger button's
      position -- on a narrow screen that math can push a 200px-wide box
