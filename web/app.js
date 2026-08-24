@@ -73,7 +73,19 @@ function toggleQr(anchorEl, url) {
     '<div class="qr-url">' + url + '</div>';
   const rect = anchorEl.getBoundingClientRect();
   popup.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-  popup.style.left = (rect.left + window.scrollX) + 'px';
+  // grows from the button's left edge normally, but that overflows off
+  // the viewport for the Discover table's phone/share column (the
+  // rightmost thing on the page) -- flip to growing from the right edge
+  // whenever there isn't room, e.g. the header's own phone button (near
+  // the left edge) is unaffected and keeps growing rightward
+  const popupWidth = 232; // ~200px QR image + popup padding/border
+  if (rect.left + popupWidth > window.innerWidth) {
+    popup.style.left = 'auto';
+    popup.style.right = (window.innerWidth - rect.right) + 'px';
+  } else {
+    popup.style.right = 'auto';
+    popup.style.left = (rect.left + window.scrollX) + 'px';
+  }
   popup.classList.remove('hidden');
 }
 
