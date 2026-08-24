@@ -37,6 +37,11 @@ except ImportError:
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 DEFAULT_RELAY = 'http://127.0.0.1:9101'
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
+# every real POST body here is a handful of JSON fields (hashes, URLs,
+# titles) -- no endpoint ever legitimately needs anywhere near this much,
+# it's purely a cap against a client claiming a huge Content-Length and
+# making the server read an unbounded amount into memory
+MAX_BODY_SIZE = 1024 * 1024
 
 # script-relative, not CWD-relative -- same reasoning as WEB_DIR above, so
 # downloads land in the same place regardless of the directory this was
@@ -268,6 +273,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def _read_json_body(self):
         length = int(self.headers.get('Content-Length', 0))
+        if length > MAX_BODY_SIZE:
+            raise ValueError(f'body too large ({length} bytes, max {MAX_BODY_SIZE})')
         return json.loads(self.rfile.read(length)) if length else {}
 
     def do_GET(self):
@@ -309,8 +316,30 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_qr(data)
         self._serve_static(path)
 
+    def _check_origin(self):
+        """This server has no auth at all (see module docstring) -- the
+        only thing stopping any webpage you happen to have open in the
+        same browser from POSTing here (start hosting an arbitrary local
+        directory, download attacker-chosen content to an
+        attacker-chosen path, like/subscribe as you) is confirming the
+        request actually came from this UI, not some other origin your
+        browser also has open. Browsers always set Origin on cross-origin
+        fetch/XHR and can't be told by page JS to fake it, so a mismatch
+        here means a real cross-site request; a request with no Origin at
+        all (curl, direct API use, older browsers on a same-origin form
+        post) is let through since it isn't the CSRF-from-another-tab
+        shape this defends against."""
+        origin = self.headers.get('Origin')
+        if not origin:
+            return True
+        host = self.headers.get('Host', '')
+        return origin in (f'http://{host}', f'https://{host}')
+
     def do_POST(self):
         path = urlparse(self.path).path
+        if not self._check_origin():
+            return self._json({'error': 'rejected: request Origin does not match this server — '
+                                         'looks like a cross-site request, not this UI'}, status=403)
         try:
             body = self._read_json_body()
         except Exception as e:
@@ -506,7 +535,12 @@ class Handler(BaseHTTPRequestHandler):
             path = '/index.html'
         safe_path = os.path.normpath(path).lstrip('/')
         full_path = os.path.join(WEB_DIR, safe_path)
-        if not os.path.abspath(full_path).startswith(os.path.abspath(WEB_DIR)) \
+        # the trailing os.sep matters: without it, a sibling directory
+        # that happens to share WEB_DIR's name as a string prefix (e.g.
+        # "web-private") would also pass this check -- str.startswith
+        # doesn't know about path boundaries, only os.path.join does
+        web_dir_abs = os.path.abspath(WEB_DIR)
+        if not os.path.abspath(full_path).startswith(web_dir_abs + os.sep) \
                 or not os.path.isfile(full_path):
             return self._json({'error': 'not found'}, status=404)
         ctype, _ = mimetypes.guess_type(full_path)

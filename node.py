@@ -347,18 +347,43 @@ def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, pri
     DATA connection, dialed back to the relay on demand (NEWSTREAM), so
     concurrent tunneled downloads don't block each other.
 
-    The control connection sends nothing at all between REGISTER and the
-    first real NEWSTREAM — which can be minutes or hours if no one
-    downloads in the meantime. Real-world proxies in the middle (observed:
-    Fly's own edge) reset TCP connections that go idle for a few minutes,
-    which silently unregisters the host with no error on this end until
-    the next download attempt fails. A small periodic heartbeat keeps the
+    REGISTER gets one immediate OK/ERR reply (see below), then the
+    control connection sends nothing at all until the first real
+    NEWSTREAM — which can be minutes or hours if no one downloads in the
+    meantime. Real-world proxies in the middle (observed: Fly's own
+    edge) reset TCP connections that go idle for a few minutes, which
+    silently unregisters the host with no error on this end until the
+    next download attempt fails. A small periodic heartbeat keeps the
     connection looking active; tunnel_relay.py's REGISTER loop already
     discards anything it receives that isn't relevant to it (it only ever
-    checks for EOF), so this needs zero changes on the relay side."""
+    checks for EOF), so this needs zero changes on the relay side.
+
+    The OK/ERR reply exists so a REGISTER for a token someone else
+    already holds an active registration for can be refused instead of
+    silently overwriting it — content_hash tokens are public (announced
+    via discover), so without this anyone could squat/hijack another
+    host's rendezvous slot for content they didn't actually publish."""
     entries_by_hash = {entry['sha256']: (entry, leaves, file_path)}
     ctrl = _connect_tunnel_socket(relay_host, relay_port, use_tls)
     ctrl.sendall(f'REGISTER {token}\n'.encode())
+    # one LineReader for the whole connection, created before the first
+    # read and reused for the NEWSTREAM loop below -- creating a second
+    # one later would lose whatever extra bytes this first recv() also
+    # happened to pick up (LineReader buffers internally; a fresh
+    # instance starts with an empty buffer, discarding anything already
+    # read into the old one)
+    reader = LineReader(ctrl)
+    ack = reader.readline()
+    if ack != 'OK':
+        ctrl.close()
+        # tunnel_relay.py now refuses a REGISTER for a token someone
+        # else already holds an active registration for, instead of
+        # silently letting the new one steal it -- content_hash tokens
+        # are public (announced via discover), so this stops anyone from
+        # squatting/hijacking another host's rendezvous slot for content
+        # they didn't actually publish
+        sys.exit(f"tunnel relay at {relay_host}:{relay_port} rejected REGISTER for "
+                  f"{token[:16]}...: {ack or '(connection closed)'}")
     if not quiet:
         tls_note = ' (tls)' if use_tls else ''
         print(f"[tunnel] registered {token[:16]}... with relay {relay_host}:{relay_port}{tls_note}")
@@ -375,7 +400,6 @@ def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, pri
     threading.Thread(target=send_heartbeats, daemon=True).start()
 
     try:
-        reader = LineReader(ctrl)
         while True:
             line = reader.readline()
             if not line:
