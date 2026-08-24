@@ -35,7 +35,13 @@ except ImportError:
     _HAS_QR = False
 
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
-DEFAULT_RELAY = 'http://127.0.0.1:9101'
+# same $WEED_RELAY/$WEED_TUNNEL convention weed.py's CLI subcommands and
+# shell.py's WeedShell already read (see weed.py's _default_relay) --
+# without this, running web_ui.py directly ignored them entirely and
+# silently fell back to the loopback default, even with a real relay
+# configured for every other way of running this tool
+DEFAULT_RELAY = os.environ.get('WEED_RELAY', 'http://127.0.0.1:9101')
+DEFAULT_TUNNEL = os.environ.get('WEED_TUNNEL')
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
 # every real POST body here is a handful of JSON fields (hashes, URLs,
 # titles) -- no endpoint ever legitimately needs anywhere near this much,
