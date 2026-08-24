@@ -76,7 +76,10 @@ const app = createApp({
       // PIP-style in the corner, can grow to a centered theater modal, or
       // go true native fullscreen. Never tied to whichever tab/row started
       // it, so switching tabs doesn't stop or hide playback.
-      player: { visible: false, mode: 'pip', jobId: null, title: '' },
+      player: {
+        visible: false, mode: 'pip', jobId: null, title: '',
+        contentHash: null, signerPubkey: null,
+      },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
@@ -139,6 +142,7 @@ const app = createApp({
       this.jobs.push({
         job_id: d.job_id, content_hash: d.content_hash, pct: 0, status: 'done',
         path: d.path, error: null, size: d.size, bps: d.bps, title: d.title,
+        signer_pubkey: d.signer_pubkey,
       });
     }
 
@@ -218,9 +222,11 @@ const app = createApp({
     // :fullscreen is handled entirely in CSS, so Esc-to-exit (which
     // bypasses our own button) still lands back in whichever of
     // pip/theater it was in before, with no extra JS bookkeeping.
-    openPlayer(jobId, title) {
+    openPlayer(jobId, title, contentHash, signerPubkey) {
       this.player.jobId = jobId;
       this.player.title = title || jobId;
+      this.player.contentHash = contentHash || null;
+      this.player.signerPubkey = signerPubkey || null;
       this.player.mode = 'pip';
       this.player.visible = true;
       this.$nextTick(() => {
@@ -271,20 +277,23 @@ const app = createApp({
     async download(r) {
       r._dl.downloading = true;
       r._dl.pct = 0;
-      const resp = await this.startDownload(r.content_hash, this.discoverRelaysList, null, false, r.title, {
-        onProgress: pct => { r._dl.pct = pct; },
-        onDone: job => {
-          r._dl.downloading = false;
-          this.library.downloads[r.content_hash] = {
-            content_hash: r.content_hash, job_id: job.job_id, path: job.path,
-            title: r.title, size: job.size, bps: job.bps,
-          };
+      const resp = await this.startDownload(
+        r.content_hash, this.discoverRelaysList, null, false, r.title, r.signer_pubkey,
+        {
+          onProgress: pct => { r._dl.pct = pct; },
+          onDone: job => {
+            r._dl.downloading = false;
+            this.library.downloads[r.content_hash] = {
+              content_hash: r.content_hash, job_id: job.job_id, path: job.path,
+              title: r.title, size: job.size, bps: job.bps, signer_pubkey: r.signer_pubkey,
+            };
+          },
+          onError: err => {
+            r._dl.downloading = false;
+            alert('error: ' + err);
+          },
         },
-        onError: err => {
-          r._dl.downloading = false;
-          alert('error: ' + err);
-        },
-      });
+      );
       if (resp.error) {
         r._dl.downloading = false;
         alert('error: ' + resp.error);
@@ -316,16 +325,20 @@ const app = createApp({
       }, 3000);
     },
 
-    async like(r) {
-      await this.apiPost('/api/like', { content_hash: r.content_hash, relay: this.discoverRelaysList[0] });
-      this.library.likes.add(r.content_hash);
+    // takes a plain content_hash rather than a whole Discover row object
+    // so the player header (which only ever knows content_hash/
+    // signer_pubkey, not a full discover result) can call the exact same
+    // logic instead of a separate copy
+    async like(contentHash) {
+      await this.apiPost('/api/like', { content_hash: contentHash, relay: this.discoverRelaysList[0] });
+      this.library.likes.add(contentHash);
     },
 
     // outline -> filled star on subscribe, same toggle language as
     // GitHub/Twitter follow stars
-    async subscribe(r) {
-      await this.apiPost('/api/subscribe', { target_pubkey: r.signer_pubkey, relay: this.discoverRelaysList[0] });
-      this.library.subscriptions.add(r.signer_pubkey);
+    async subscribe(signerPubkey) {
+      await this.apiPost('/api/subscribe', { target_pubkey: signerPubkey, relay: this.discoverRelaysList[0] });
+      this.library.subscriptions.add(signerPubkey);
     },
 
     // ── host ──────────────────────────────────────────────────────────
@@ -384,16 +397,16 @@ const app = createApp({
       }, 500);
     },
 
-    async startDownload(contentHash, relays, outPath, lightning, title, extra) {
+    async startDownload(contentHash, relays, outPath, lightning, title, signerPubkey, extra) {
       const resp = await this.apiPost('/api/download', {
         content_hash: contentHash, relay: relays, out_path: outPath,
-        lightning: lightning, title: title || null,
+        lightning: lightning, title: title || null, signer_pubkey: signerPubkey || null,
       });
       if (resp.error) return resp;
 
       const job = {
         job_id: resp.job_id, content_hash: contentHash, pct: 0, status: 'running',
-        path: null, error: null, size: null, bps: null, title,
+        path: null, error: null, size: null, bps: null, title, signer_pubkey: signerPubkey || null,
       };
       this.jobs.push(job);
 
@@ -419,11 +432,15 @@ const app = createApp({
     },
 
     async submitDownload() {
+      // no signer_pubkey here -- a manually-entered content_hash has no
+      // associated Discover row to pull one from, so Subscribe just
+      // won't be available from the player for this download
       const resp = await this.startDownload(
         this.downloadForm.hash,
         this.splitRelays(this.downloadForm.relays),
         this.downloadForm.out || null,
         this.downloadForm.lightning,
+        null,
         null,
       );
       if (resp.error) alert('error: ' + resp.error);
