@@ -216,7 +216,8 @@
       <button type="button" title="Close" @click.stop="closePlayer">✕</button>
     </div>
   </div>
-  <video ref="playerVideo" controls></video>
+  <video ref="playerVideo" controls
+         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="player.isPlaying = false"></video>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">

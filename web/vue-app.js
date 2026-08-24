@@ -83,7 +83,7 @@ const app = createApp({
       // it, so switching tabs doesn't stop or hide playback.
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
-        contentHash: null, signerPubkey: null,
+        contentHash: null, signerPubkey: null, isPlaying: false,
       },
 
       // one shared QR popup, repositioned/retargeted by whichever button
@@ -132,6 +132,28 @@ const app = createApp({
         left: this.qr.left != null ? this.qr.left + 'px' : 'auto',
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
+    },
+    // what the browser tab shows -- a playing video wins over an active
+    // download (you're far more likely to be glancing at the tab to
+    // check playback than to time a download), which wins over the
+    // static default. jobs (not r._dl) is the single source of truth
+    // for "is anything downloading" -- every download, whether started
+    // from a Discover row or the Downloads tab form, always lands there.
+    pageTitle() {
+      if (this.player.visible) {
+        return (this.player.isPlaying ? '▶ ' : '⏸ ') + this.player.title + ' — weed';
+      }
+      const running = this.jobs.filter(j => j.status === 'running');
+      if (running.length === 1) return `⬇ ${running[0].pct}% — weed`;
+      if (running.length > 1) return `⬇ ${running.length} downloading — weed`;
+      return 'weed';
+    },
+  },
+
+  watch: {
+    pageTitle: {
+      immediate: true,
+      handler(title) { document.title = title; },
     },
   },
 
@@ -251,6 +273,7 @@ const app = createApp({
       video.removeAttribute('src');
       video.load();
       this.player.visible = false;
+      this.player.isPlaying = false;
     },
     setPlayerMode(mode) {
       this.player.mode = mode;
@@ -451,27 +474,42 @@ const app = createApp({
       });
       if (resp.error) return resp;
 
-      const job = {
+      this.jobs.push({
         job_id: resp.job_id, content_hash: contentHash, pct: 0, status: 'running',
         path: null, error: null, size: null, bps: null, title, signer_pubkey: signerPubkey || null,
-      };
-      this.jobs.push(job);
+      });
+      // Vue 3's reactivity is proxy-based: mutating the plain object
+      // literal above through a closure-held reference (as this used to
+      // do) writes the right data but never passes through the proxy's
+      // set trap, so nothing ever gets told to re-render -- the jobs
+      // table (and pageTitle's download-progress text) would silently
+      // freeze at whatever it first rendered. Re-finding the job via
+      // this.jobs on every update instead means every mutation goes
+      // through the reactive array itself.
+      const findJob = () => this.jobs.find(j => j.job_id === resp.job_id);
 
       this.pollJob(resp.job_id, {
         onProgress: pct => {
-          job.pct = pct;
+          const job = findJob();
+          if (job) job.pct = pct;
           if (extra && extra.onProgress) extra.onProgress(pct);
         },
         onDone: j => {
-          job.status = 'done';
-          job.path = j.path;
-          job.size = j.size;
-          job.bps = j.bps;
+          const job = findJob();
+          if (job) {
+            job.status = 'done';
+            job.path = j.path;
+            job.size = j.size;
+            job.bps = j.bps;
+          }
           if (extra && extra.onDone) extra.onDone(j);
         },
         onError: err => {
-          job.status = 'error';
-          job.error = err;
+          const job = findJob();
+          if (job) {
+            job.status = 'error';
+            job.error = err;
+          }
           if (extra && extra.onError) extra.onError(err);
         },
       });
