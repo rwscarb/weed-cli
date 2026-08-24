@@ -684,6 +684,56 @@ python3 weed.py serve 0.0.0.0 8080    # reachable from your phone; prints a scan
 # or, from the shell: `serve [bind] [port]`
 ```
 
+### `Dockerfile.node` + `docker-compose.node.yml` — a node in a container
+
+Same `web_ui.py`, packaged to run somewhere other than a laptop — a
+always-on box, a VPS, anywhere you'd rather not keep a terminal open.
+Separate from the repo's other Dockerfiles on purpose: `Dockerfile` is
+`poc_network_challenge.py`'s holder/relay/verifier demo, and
+`Dockerfile.discovery-relay` / `Dockerfile.tunnel-relay` are the two
+dumb store-and-forward relays; this one is the actual node a person
+runs, `node.py` + `web_ui.py` + the static `web/` frontend.
+
+Identity key, reputation store, and library manifest all persist across
+restarts — `$HOME` is pointed at a named volume (`node-data`) inside the
+container, and all three are read/written via `os.path.expanduser`
+(`node.py`'s `IDENTITY_PATH`, `web_ui.py`'s `LIBRARY_PATH`/reputation
+store), so one volume covers all three instead of generating a fresh
+throwaway pubkey every restart. `downloads/` gets its own symlink into
+the same volume for the same reason.
+
+`/share` is a separate, optional *bind* mount rather than another named
+volume, on purpose: the `.ott` archives you're hosting should be real
+files on the host you can see/add/remove directly, not hidden inside
+Docker's volume storage. Defaults to `./share` next to the compose file
+(created empty on first run if missing); override with `WEED_SHARE_DIR`.
+In the web UI's Host form, point the archive dir at `/share` — that's
+this same host directory, from inside the container.
+
+Hosting a directory with more than one archived file needed its own
+fix here: `_run_host_job` originally used `find_manifest_entry`
+(singular — collapses to the single most-recently-added file), the
+exact same bug `load_manifest_entries` (plural) was already written to
+fix for `shell.py`'s `do_host`. Ported the same loop — every file in
+the directory now gets announced to the relay and, if `--tunnel` is in
+use, its own tunnel registration (one control connection per file,
+same as `do_host`). A second, unrelated bug surfaced testing this for
+real: `last_path` in a manifest entry is an absolute path recorded at
+`ott add` time, on whatever machine ran it — trusted unconditionally,
+it broke the instant the same content was mounted somewhere else (e.g.
+`/share` in the container vs. `/home/user/share` where it was
+originally archived), since a stale-but-non-empty `last_path` still
+short-circuited past a perfectly valid `archive_dir` fallback. Fixed
+with `node.resolve_file_path(entry, archive_dir)`, used by
+`run_host_server`, `web_ui.py`'s host job, and `shell.py`'s `do_host`
+alike: trust `last_path` only if it actually exists on disk.
+
+```bash
+make node               # build + run, http://127.0.0.1:8080, data persists in a named volume
+make node-down          # stop it (data survives)
+WEED_SHARE_DIR=~/Movies make node   # mount a real directory of .ott archives at /share
+```
+
 ### `shell.py` — interactive, tab-completing, same pattern as `ott`'s shell
 
 `python3 weed.py` with no arguments (or `weed.py shell`) drops into an
@@ -760,6 +810,7 @@ python3 poc_real_archive_challenge.py           # same challenge mechanism, real
 python3 poc_discovery.py                        # 3 real relays, personalized ranking, sybil test
 python3 tunnel_relay.py 9199                    # NAT-traversal relay — see host --tunnel below
 python3 weed.py serve --bind 0.0.0.0 --port 8080  # local web UI, reachable from your phone
+make node                                       # same web UI, containerized, data persists — see Dockerfile.node
 python3 dht.py 8468                             # real Kademlia DHT node — see dht.py above
 ```
 

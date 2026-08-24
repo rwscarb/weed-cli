@@ -1,5 +1,5 @@
 .PHONY: help demo network stats chart reputation discovery real-archive \
-        containers lightning-up lightning-down lightning-demo lightning-smoke \
+        containers node node-down lightning-up lightning-down lightning-demo lightning-smoke \
         all-stdlib clean install uninstall
 
 PYTHON ?= python3
@@ -22,6 +22,8 @@ help:
 	@echo ""
 	@echo "Needs docker/podman compose:"
 	@echo "  make containers     same challenge test, real containers instead of loopback"
+	@echo "  make node           web_ui.py in a container, port 8080 — host/discover/download from a browser"
+	@echo "  make node-down      stop the node container (data survives — see docker-compose.node.yml)"
 	@echo ""
 	@echo "Needs the lightning/ stack up (see lightning/README.md for one-time channel setup):"
 	@echo "  make lightning-up    start bitcoind + 2 LND nodes on regtest"
@@ -60,6 +62,12 @@ chart:
 containers:
 	docker compose up --build --abort-on-container-exit verifier
 	docker compose down
+
+node:
+	docker compose -f docker-compose.node.yml up --build
+
+node-down:
+	docker compose -f docker-compose.node.yml down
 
 lightning-up:
 	cd lightning && docker compose up -d
