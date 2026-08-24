@@ -94,7 +94,6 @@ button {
   padding: 0.5rem 1rem;
   cursor: pointer;
   font-size: 0.9rem;
-  align-self: flex-start;
 }
 
 button:hover { background: var(--accent); color: #05130d; }
