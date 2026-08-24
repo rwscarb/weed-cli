@@ -163,7 +163,23 @@ const app = createApp({
     const { pubkey } = await this.apiGet('/api/whoami');
     this.pubkey = pubkey;
 
-    this.apiGet('/api/lan-url').then(d => { this.lanUrlBase = d.url; }).catch(() => {});
+    // must be awaited (not fire-and-forget) *before* refreshDiscover()
+    // below -- otherwise the very first auto-discover on load races this
+    // and fires against the hardcoded loopback default regardless of
+    // $WEED_RELAY, which is exactly the bug this fixes: running
+    // web_ui.py directly used to ignore $WEED_RELAY/$WEED_TUNNEL
+    // entirely even though weed.py's CLI/shell already honored them
+    const config = await this.apiGet('/api/config');
+    this.lanUrlBase = config.lan_url;
+    if (config.default_relay) {
+      this.discoverRelays = config.default_relay;
+      this.hostForm.relays = config.default_relay;
+      this.downloadForm.relays = config.default_relay;
+    }
+    if (config.default_tunnel) {
+      this.hostForm.tunnelEnabled = true;
+      this.hostForm.tunnelAddr = config.default_tunnel;
+    }
 
     const lib = await this.apiGet('/api/library');
     for (const d of lib.downloads || []) this.library.downloads[d.content_hash] = d;
