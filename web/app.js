@@ -286,31 +286,26 @@ async function refreshDiscover() {
       const dlBtn = document.createElement('button');
       dlBtn.textContent = 'Download';
 
-      // While a download's in flight the row itself already fills in as
-      // a progress bar (.dl-progress-row, driven by --pct below) -- a
-      // separate button just doubling as a percent readout is redundant
-      // chrome on top of that, so the button is swapped out for a plain
-      // centered label instead of morphing its own text.
+      // While a download's in flight the row itself is the progress bar
+      // (.dl-progress-row, filled via --pct) -- no separate readout, so
+      // the button just disappears for the duration rather than turning
+      // into one.
       dlBtn.addEventListener('click', async () => {
         tr.classList.add('dl-progress-row');
         tr.style.setProperty('--pct', '0%');
-        const pctLabel = document.createElement('span');
-        pctLabel.className = 'dl-pct';
-        pctLabel.textContent = '0%';
-        dlBtn.replaceWith(pctLabel);
+        dlBtn.remove();
 
         function reset() {
           tr.classList.remove('dl-progress-row');
           tr.style.removeProperty('--pct');
-          pctLabel.replaceWith(dlBtn);
+          actions.appendChild(dlBtn);
         }
 
         const resp = await startDownload(r.content_hash, relays, null, false, {
-          onProgress(pct) { tr.style.setProperty('--pct', pct + '%'); pctLabel.textContent = pct + '%'; },
+          onProgress(pct) { tr.style.setProperty('--pct', pct + '%'); },
           onDone(job) {
             tr.classList.remove('dl-progress-row');
             tr.style.removeProperty('--pct');
-            pctLabel.remove();
             downloadsByHash.set(r.content_hash,
               { content_hash: r.content_hash, job_id: job.job_id, path: job.path, title: r.title });
             actions.prepend(mkPlayControls(job.job_id, r.title || shortHash(r.content_hash)));
