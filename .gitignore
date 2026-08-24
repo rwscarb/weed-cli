@@ -2,6 +2,7 @@
 .idea/
 build/
 dist/
+share/
 download_*
 downloads/
 weed.egg-info/
