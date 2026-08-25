@@ -254,10 +254,6 @@ td button {
   letter-spacing: 0.02em;
 }
 
-.icon-btn.sub-icon {
-  font-size: 1.1rem;
-}
-
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
 .icon-btn.active { border-color: var(--accent); color: var(--accent); }
 .icon-btn:disabled { cursor: default; }
