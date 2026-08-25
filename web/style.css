@@ -145,6 +145,32 @@ td button {
   100% { background-position: -200% 0; }
 }
 
+/* placeholder rows shown while discoverLoading is true (see
+   discoverLoading in vue-app.js) -- a plain "discovering…" text row
+   made the table snap abruptly from that one line into a full grid of
+   real rows the instant results arrived, and just as abruptly back to
+   "nothing found" text if the search came back empty. Shapes roughly
+   matching real row content (a button-sized block, a wider title bar,
+   short hash-sized bars) reads as "content is arriving" both before and
+   after, instead of the layout jumping between two very different
+   shapes. Same shimmer gradient as .progress-fill above, just applied
+   to a static block instead of a growing fill. */
+.skeleton {
+  display: inline-block;
+  height: 0.85rem;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--border), var(--panel), var(--border));
+  background-size: 200% 100%;
+  animation: progress-shimmer 2.8s linear infinite;
+}
+.skeleton-btn { width: 4.5rem; height: 1.7rem; }
+.skeleton-title { width: 8rem; }
+.skeleton-hash { width: 4.5rem; }
+.skeleton-host { width: 5.5rem; }
+.skeleton-tunnel { width: 3rem; }
+.skeleton-row:nth-child(2) .skeleton-title { width: 6rem; }
+.skeleton-row:nth-child(3) .skeleton-title { width: 9.5rem; }
+
 /* same shimmering gradient, but as the whole Discover row's own
    background instead of a separate bar -- the row IS the progress
    indicator, filling left to right behind its own text, growing with
@@ -584,7 +610,7 @@ code {
    a big fraction of the viewport, 5-6 column tables have nowhere to go,
    and the QR popup's anchor-to-button positioning can push it half off
    the right edge. */
-@media (max-width: 420px) {
+@media (max-width: 460px) {
   body { padding: 0 0.75rem 2rem; }
 
   h1 { font-size: 1.3rem; }

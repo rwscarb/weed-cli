@@ -44,9 +44,17 @@
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
       <tbody>
-        <tr v-if="discoverLoading && !discoverResults.length">
-          <td colspan="7">discovering…</td>
-        </tr>
+        <template v-if="discoverLoading && !discoverResults.length">
+          <tr class="skeleton-row" v-for="n in 3" :key="'skeleton-' + n">
+            <td><span class="skeleton skeleton-btn"></span></td>
+            <td><span class="skeleton skeleton-title"></span></td>
+            <td><span class="skeleton skeleton-hash"></span></td>
+            <td><span class="skeleton skeleton-host"></span></td>
+            <td><span class="skeleton skeleton-tunnel"></span></td>
+            <td><span class="skeleton skeleton-hash"></span></td>
+            <td></td>
+          </tr>
+        </template>
         <tr v-else-if="!discoverResults.length">
           <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
         </tr>
