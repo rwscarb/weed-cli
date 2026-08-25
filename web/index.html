@@ -30,7 +30,7 @@
       <label>Relay(s), comma-separated
         <input type="text" v-model="discoverRelays">
       </label>
-      <button type="submit" class="refresh-btn">Refresh</button>
+      <button type="submit" class="refresh-btn" :disabled="discoverLoading">{{ discoverLoading ? 'Discovering…' : 'Refresh' }}</button>
     </form>
     <form class="inline-form" @submit.prevent>
       <label>Search
@@ -44,7 +44,10 @@
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
       <tbody>
-        <tr v-if="!discoverResults.length">
+        <tr v-if="discoverLoading && !discoverResults.length">
+          <td colspan="7">discovering…</td>
+        </tr>
+        <tr v-else-if="!discoverResults.length">
           <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
         </tr>
         <tr v-else-if="!filteredDiscoverResults.length">
