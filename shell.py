@@ -180,9 +180,10 @@ class WeedShell(cmd.Cmd):
         # exception net doesn't reach into background threads)
         all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
         if relay and not no_announce:
+            ott_status = node.ott_commit_status(archive_dir)
             for entry in entries:
                 result = node.publish(self.identity, relay, entry['sha256'], entry['name'],
-                                       f'{advertise_host}:{port}', tunnel=tunnel)
+                                       f'{advertise_host}:{port}', tunnel=tunnel, ott_status=ott_status)
                 print(f'  announced {entry["name"]} on {relay}: {result}')
         elif not relay:
             print('  no relay set (run `relay` first, or pass --relay) — hosting without announcing')

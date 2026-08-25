@@ -1014,13 +1014,51 @@ def fetch_events(relay_url, event_type=None):
         return None
 
 
-def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None):
+def ott_commit_status(archive_dir):
+    """Real Bitcoin-commitment status for archive_dir's .ott/ store, read
+    straight from its ledger — the same data `ott status`/`ott log` show
+    on the CLI. Embedded in publish() events (see below) so a downloader
+    browsing Discover can see "has this actually been recorded to
+    Bitcoin, and when" straight from the gossiped event, without
+    connecting to the host at all — a live per-host query would mean a
+    full CONNECT/NEWSTREAM/DATA round trip per row just to check this,
+    for hosts behind a tunnel. Cheap and fully local: just reads
+    ledger.jsonl + recomputes the current merkle root, no network call
+    (confirming the recorded block hash still matches a live block
+    explorer is `ott verify-chain --check-txs`'s job, not this). None on
+    any error (btcvm not installed, no .ott/ yet, archive_dir doesn't
+    exist) rather than blocking publish over a host that simply hasn't
+    committed anything yet."""
+    try:
+        from ott import OttStore
+        expanded = os.path.expanduser(archive_dir)
+        store = OttStore(os.path.join(expanded, '.ott'))
+        ledger = store.load_ledger()
+        if not ledger:
+            return {'committed': False}
+        last = ledger[-1]
+        return {
+            'committed': last.get('merkle_root') == store.current_root(),
+            'block_height': last.get('block_height'),
+            'ts': last.get('ts'),
+            'tx_hash': last.get('tx_hash'),
+            'network': last.get('network', 'mainnet'),
+        }
+    except Exception:
+        return None
+
+
+def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ott_status=None):
     """tunnel, if given, is 'relay_host:relay_port' for a tunnel_relay.py
     instance this host registered with — additive and backward compatible,
     same as the optional PRICE wire verb: an event without it just means
-    'connect directly to host_addr', same as before this field existed."""
+    'connect directly to host_addr', same as before this field existed.
+    ott_status (see ott_commit_status) is the same kind of additive,
+    optional field — an event without it just means the discovering
+    client doesn't get a BTC-commit answer for that listing, same as
+    before this existed."""
     event = identity.sign_event('publish', content_hash=content_hash, title=title,
-                                 host=host_addr, tunnel=tunnel)
+                                 host=host_addr, tunnel=tunnel, ott_status=ott_status)
     return post_event(relay_url, event)
 
 

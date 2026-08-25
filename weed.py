@@ -188,11 +188,14 @@ def cmd_host(args):
     # matching chunk data would otherwise get announced to the relay and
     # only fail later, in the background server thread
     all_leaves = {e['sha256']: node.load_leaves(args.archive_dir, e['sha256']) for e in entries}
+    # one archive_dir, one merkle root, one commit -- computed once outside
+    # the per-relay/per-entry loops below, not per file
+    ott_status = node.ott_commit_status(args.archive_dir)
     for relay_url in args.relay:
         host_addr = f'{args.advertise_host}:{args.port}'
         for entry in entries:
             result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                                   tunnel=args.tunnel)
+                                   tunnel=args.tunnel, ott_status=ott_status)
             print(f"announced {entry['name']} on {relay_url}: {result}")
     if args.tunnel:
         # REGISTER's token is the file's own content hash (see

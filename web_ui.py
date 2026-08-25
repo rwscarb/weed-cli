@@ -177,34 +177,12 @@ def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_h
 
 
 def _ott_status(archive_dir):
-    """Real Bitcoin-commitment status for archive_dir's .ott/ store, read
-    straight from its ledger -- the same data `ott status`/`ott log` show
-    on the CLI, surfaced here so "has this actually been recorded to
-    Bitcoin, and when" has an answer without a terminal. Cheap and fully
-    local: just reads ledger.jsonl + recomputes the current merkle root,
-    no network call (same as ott status's own default -- confirming the
-    recorded block hash still matches a live block explorer is `ott
-    verify-chain --check-txs`'s job, out of scope for a per-request web
-    UI read). None on any error (btcvm not installed, no .ott/ yet,
-    archive_dir doesn't exist) rather than breaking the whole hosts list
-    over one host's missing archive."""
-    try:
-        from ott import OttStore
-        expanded = os.path.expanduser(archive_dir)
-        store = OttStore(os.path.join(expanded, '.ott'))
-        ledger = store.load_ledger()
-        if not ledger:
-            return {'committed': False}
-        last = ledger[-1]
-        return {
-            'committed': last.get('merkle_root') == store.current_root(),
-            'block_height': last.get('block_height'),
-            'ts': last.get('ts'),
-            'tx_hash': last.get('tx_hash'),
-            'network': last.get('network', 'mainnet'),
-        }
-    except Exception:
-        return None
+    """Thin wrapper over node.ott_commit_status -- kept here as the name
+    the Hosts tab's own live re-read (current state, not a publish-time
+    snapshot) already calls; see node.py for the actual implementation,
+    shared with the ott_status now embedded in every publish() event for
+    Discover's benefit."""
+    return node.ott_commit_status(archive_dir)
 
 
 def _resume_persisted_hosts():
@@ -323,12 +301,13 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # and only fail later, deep in a background thread with no way
             # for the UI to ever find out
             all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
+            ott_status = node.ott_commit_status(archive_dir)
             announced = []
             for entry in entries:
                 for relay_url in relay_urls:
                     host_addr = f'{advertise_host}:{port}'
                     node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                                  tunnel=tunnel)
+                                  tunnel=tunnel, ott_status=ott_status)
                 announced = relay_urls
             files = [{'name': e['name'], 'content_hash': e['sha256']} for e in entries]
             with _lock:
