@@ -136,7 +136,7 @@ td button {
   height: 100%;
   background: linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim));
   background-size: 200% 100%;
-  animation: progress-shimmer 1.2s linear infinite;
+  animation: progress-shimmer 2.8s linear infinite;
   transition: width 0.3s ease;
 }
 

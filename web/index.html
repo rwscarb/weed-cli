@@ -76,6 +76,7 @@
             </template>
             <button type="button" class="play-btn" v-else-if="!r._dl.downloading"
                     @click="download(r)">Download</button>
+            <span class="dl-log" v-if="r._dl.downloading" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
           </div></td>
           <td><div class="title-row">
             <span class="title-text">{{ r.title }}</span>
