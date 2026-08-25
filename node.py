@@ -25,6 +25,7 @@ import os
 import random
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -56,8 +57,30 @@ def weed_version():
     return '0.0.0-dev'
 
 
+def _git_commit_hash():
+    """Short commit hash of whatever checkout this node.py is actually
+    running from, if any. A bare version number only changes on a
+    deliberate release/bump — it says nothing about which commit's fixes
+    are actually loaded between releases, which is exactly the ambiguity
+    behind a real debugging session: two checkouts reporting the same
+    version, one of them missing a fix the other had. None for anything
+    that isn't a git checkout at all (installed from a built wheel/sdist,
+    no .git present) — a version number is all there is to go on there."""
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo_dir,
+                                 capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
 def weed_banner():
-    return f'weed v{weed_version()} — {TAGLINE}'
+    commit = _git_commit_hash()
+    commit_note = f' ({commit})' if commit else ''
+    return f'weed v{weed_version()}{commit_note} — {TAGLINE}'
 
 
 def _armor_identity(raw_bytes):
