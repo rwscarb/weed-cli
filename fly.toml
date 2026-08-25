@@ -9,6 +9,10 @@ primary_region = 'sjc'
 [build]
   dockerfile = 'Dockerfile.discovery-relay'
 
+[mounts]
+  source = 'weed_relay_data'
+  destination = '/data'
+
 [http_service]
   internal_port = 9101
   force_https = true
