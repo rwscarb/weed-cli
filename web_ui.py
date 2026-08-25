@@ -186,7 +186,8 @@ def _detect_lan_ip():
         s.close()
 
 
-def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel):
+def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
+                   ln_node=None):
     try:
         with _quiet():
             identity = _identity()
@@ -223,8 +224,9 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                     threading.Thread(target=node.run_host_tunnel,
                                       args=(relay_host, relay_port, entry['sha256'], entry,
                                             all_leaves[entry['sha256']], file_path, price),
-                                      kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True).start()
-            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price)
+                                      kwargs={'use_tls': use_tls, 'quiet': True, 'ln_node': ln_node},
+                                      daemon=True).start()
+            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node)
     except SystemExit as e:
         with _lock:
             _hosts[host_id].update(status='error', error=str(e))
@@ -234,7 +236,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
 
 
 def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
-                       signer_pubkey=None):
+                       signer_pubkey=None, lightning_node=None):
     def on_progress(idx, n_chunks):
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
@@ -243,7 +245,8 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
         t0 = time.time()
         with _quiet():
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
-                                               use_lightning=use_lightning, on_progress=on_progress)
+                                               use_lightning=use_lightning, lightning_node=lightning_node,
+                                               on_progress=on_progress)
         elapsed = time.time() - t0
         size = os.path.getsize(path)
         bps = size / elapsed if elapsed > 0 else None
@@ -385,6 +388,7 @@ class Handler(BaseHTTPRequestHandler):
         relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
         advertise_host = body.get('advertise_host') or '127.0.0.1'
         tunnel = body.get('tunnel') or None
+        ln_node = body.get('lightning_node') or None
 
         host_id = uuid.uuid4().hex[:12]
         with _lock:
@@ -393,7 +397,7 @@ class Handler(BaseHTTPRequestHandler):
         threading.Thread(target=_run_host_job,
                           args=(host_id, archive_dir, body.get('file_name'), port, price,
                                 relay_urls, advertise_host, tunnel),
-                          daemon=True).start()
+                          kwargs={'ln_node': ln_node}, daemon=True).start()
         self._json({'host_id': host_id})
 
     def _handle_download(self, body):
@@ -404,6 +408,9 @@ class Handler(BaseHTTPRequestHandler):
         out_path = body.get('out_path') or os.path.join(DOWNLOADS_DIR, f'download_{content_hash[:16]}')
         k = int(body.get('k') or 3)
         use_lightning = bool(body.get('lightning'))
+        lightning_node = body.get('lightning_node') or None
+        if use_lightning and not lightning_node:
+            return self._json({'error': "lightning requires lightning_node (who's paying)"}, status=400)
         title = body.get('title')
         signer_pubkey = body.get('signer_pubkey')
 
@@ -415,6 +422,7 @@ class Handler(BaseHTTPRequestHandler):
         threading.Thread(target=_run_download_job,
                           args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title,
                                 signer_pubkey),
+                          kwargs={'lightning_node': lightning_node},
                           daemon=True).start()
         self._json({'job_id': job_id})
 

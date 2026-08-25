@@ -197,12 +197,17 @@ yet, and signer-scoped revocation (the revoked attestation stays on
 record rather than disappearing).
 
 **`lightning_settle.py`** + **`lightning/`** — real Lightning HTLC
-settlement: two real LND nodes on regtest, real bitcoind backing them,
-a real funded channel. `poc_challenge_auction.py --lightning` settles
-every winner with a genuine BOLT11 invoice + HTLC, independently
-re-verified against the invoice's own payment hash rather than trusting
-LND's status string. See `lightning/README.md` for one-time channel
-setup.
+settlement: two real LND nodes (`alice`, `bob`) on regtest, real
+bitcoind backing them, a real funded channel. `create_invoice(node,
+amount, memo)` and `pay_invoice(payer_node, bolt11, expected_hash)` are
+the pieces `node.py`'s real download path uses to pay *whichever* host
+actually wins the auction, as itself — not a fixed direction.
+`poc_challenge_auction.py --lightning` (a standalone demo with no real
+distinct host/downloader) still settles through a plain `settle()`
+wrapper, alice-pays-bob, unchanged. Every payment independently
+re-verifies the revealed preimage against the invoice's own payment
+hash rather than trusting LND's status string. See
+`lightning/README.md` for one-time channel setup.
 
 **`poc_real_archive_challenge.py`** — the same mechanism against a real
 217MB video archived with `ott` at a real 64KB chunk size (3324 real
@@ -243,7 +248,13 @@ every mechanism above together:
    (default 3), verified against Merkle-checked LEAVES.
 3. **Auction survivors** by local reputation first, then price.
 4. **Pay the winner** over a real Lightning HTLC if `--lightning` is
-   given and the price is nonzero.
+   given and the price is nonzero — the winning host's own `--lightning-node`
+   generates a real BOLT11 invoice (a new `INVOICE` wire verb) for the
+   agreed price, and `--lightning-node` on the downloader's side pays
+   that exact invoice, on the same session that then serves the file. A
+   host with no `--lightning-node` configured just answers `INVOICE`
+   with `ERR`, and `--lightning` against it fails loudly instead of
+   downloading unpaid.
 5. **Download and record** the outcome to `~/.weed_reputation.json`, and
    publish it as a signed attestation so the next downloader — even one
    with no direct history with that host — benefits transitively.
@@ -306,7 +317,9 @@ just designed:
 - Real-socket timing separation, loopback and real containers
 - Local reputation + signed, revocable attestations
 - Real WAN calibration against an actual second machine
-- Real Lightning HTLC settlement (regtest)
+- Real Lightning HTLC settlement, paid to whichever host actually wins
+  the auction, as itself (real BOLT11 invoice over an `INVOICE` wire
+  verb, not a fixed pair settled regardless of who hosted) — regtest
 - Real `.ott` archive at scale (217MB, 3324 chunks, O(log N) proofs)
 - Discovery with no canonical index, sybil-resistant, relay-death tested
 - Multi-file hosting (one port, `SELECT` by content hash)
@@ -325,10 +338,15 @@ mechanisms hold up:
   averaging repeated challenges is required.
 - Relay death loses anything posted exclusively there; redundancy
   across relays isn't automatic.
-- Lightning settlement is regtest-only, against fixed demo nodes — not
-  yet "pay this specific host's own Lightning node."
+- Lightning settlement is regtest-only, and both sides still have to
+  name which of exactly two demo LND identities (`alice`/`bob`) they
+  are — the protocol pays whoever really won, but the pool of real
+  nodes to test against is still the fixed two-node demo topology, not
+  an arbitrary host's own independently-run LND node.
 - The DHT covers host-discovery only, not the richer publish/like/
   subscribe/attestation event system.
 - The tunnel relay (even with TLS) is a single point of failure and
   bandwidth cost, with no redundancy story the way discovery relays have.
-- The web UI has no authentication; it's local-only by design.
+- The web UI has no authentication; it's local-only by design. It also
+  doesn't expose `--lightning-node` in its Host/Download forms yet,
+  even though the API accepts it.

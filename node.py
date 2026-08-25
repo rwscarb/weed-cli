@@ -236,7 +236,7 @@ def _graceful_close(sock):
     sock.close()
 
 
-def serve_session(conn, entries_by_hash, default_hash, price):
+def serve_session(conn, entries_by_hash, default_hash, price, ln_node=None):
     """Handle every command on one connection, not just one — a download
     needs INFO + LEAVES + one FETCH per chunk (thousands, for a real
     archive), and reconnecting per command is what makes a tunneled
@@ -250,7 +250,12 @@ def serve_session(conn, entries_by_hash, default_hash, price):
     file) means a single-file host never needs SELECT at all, so the
     `download --from host:port` discovery-skipping escape hatch and the
     tunnel path (already scoped to one file before this function runs)
-    keep working unchanged."""
+    keep working unchanged.
+
+    ln_node names which demo LND identity (see lightning_settle.NODES) this
+    host settles through — None means this host just never answers INVOICE
+    with anything payable, same graceful-degradation shape PRICE already
+    has for a host/client that doesn't know about it."""
     selected = default_hash
     try:
         while True:
@@ -295,11 +300,22 @@ def serve_session(conn, entries_by_hash, default_hash, price):
                 conn.sendall((f'DATA {base64.b64encode(data).decode()}\n').encode())
             elif parts[0] == 'PRICE':
                 conn.sendall(f'PRICE {price}\n'.encode())
+            elif parts[0] == 'INVOICE':
+                if not ln_node or price <= 0:
+                    conn.sendall(b'ERR no payable invoice for this host/price\n')
+                else:
+                    import lightning_settle
+                    try:
+                        invoice = lightning_settle.create_invoice(ln_node, price, entry['sha256'][:16])
+                        conn.sendall((json.dumps(invoice) + '\n').encode())
+                    except lightning_settle.SettlementError as e:
+                        conn.sendall(f'ERR invoice creation failed: {e}\n'.encode())
     finally:
         _graceful_close(conn)
 
 
-def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0):
+def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
+                     ln_node=None):
     archive_dir = os.path.expanduser(archive_dir)
     entries = load_manifest_entries(archive_dir, file_name)
     entries_by_hash = {}
@@ -334,7 +350,7 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
         # a whole download now lives on one connection (see serve_session) —
         # accept() must hand off to a thread per connection, or one session
         # would block every other downloader until it finished
-        threading.Thread(target=serve_session, args=(conn, entries_by_hash, default_hash, price),
+        threading.Thread(target=serve_session, args=(conn, entries_by_hash, default_hash, price, ln_node),
                           daemon=True).start()
 
 
@@ -355,7 +371,7 @@ def _connect_tunnel_socket(relay_host, relay_port, use_tls):
 
 
 def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, price,
-                     use_tls=False, quiet=False, heartbeat_interval=45):
+                     use_tls=False, quiet=False, heartbeat_interval=45, ln_node=None):
     """NAT-traversal path: instead of (or alongside) binding a locally
     reachable port, register with a tunnel_relay.py relay and serve every
     downloader it pairs us with. One persistent CONTROL connection stays
@@ -428,7 +444,7 @@ def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, pri
                 data_conn = _connect_tunnel_socket(relay_host, relay_port, use_tls)
                 data_conn.sendall(f'DATA {stream_id}\n'.encode())
                 threading.Thread(target=serve_session,
-                                  args=(data_conn, entries_by_hash, entry['sha256'], price),
+                                  args=(data_conn, entries_by_hash, entry['sha256'], price, ln_node),
                                   daemon=True).start()
             # anything else (notably our own echoed-back nothing -- PING
             # is one-directional, the relay never echoes it) is silently
@@ -520,7 +536,8 @@ def open_connection(host_addr, tunnel=None, content_hash=None, timeout=10):
     return HostConnection.connect_direct(host, int(port_s), timeout=timeout)
 
 
-def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=None):
+def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=None,
+             price=0, use_lightning=False, lightning_node=None):
     from ott import merkle_root  # pip install btcvm
 
     out_path = os.path.expanduser(out_path)
@@ -534,6 +551,23 @@ def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=No
             sel = conn.request(f'SELECT {content_hash}')
             if sel != 'OK':
                 sys.exit(f"host at {host_addr} rejected SELECT {content_hash[:16]}...: {sel}")
+        if use_lightning and price > 0:
+            # pay this specific host as itself, on this same session, before
+            # trusting it with a single byte -- INVOICE returns a real BOLT11
+            # from the host's own LND (see serve_session), not a fixed demo
+            # pair settled through a side channel regardless of who won
+            import lightning_settle
+            inv_resp = conn.request('INVOICE')
+            if inv_resp.startswith('ERR') or not inv_resp:
+                sys.exit(f"host at {via} can't produce a real Lightning invoice "
+                         f"({inv_resp or 'no response'}) — rerun without --lightning to "
+                         f"download unpaid, or ask the host to set --lightning-node")
+            invoice = json.loads(inv_resp)
+            payment = lightning_settle.pay_invoice(lightning_node, invoice['payment_request'],
+                                                    invoice['payment_hash'])
+            print(f"paid {via}'s own real Lightning invoice: {invoice['amount_sat']} sat, "
+                  f"preimage {payment['preimage'][:12]}... verified against "
+                  f"payment_hash {payment['payment_hash'][:12]}...")
         info = json.loads(conn.request('INFO'))
         print(f"downloading {info['name']} ({info['size']:,} bytes, {info['n_chunks']} chunks) "
               f"from {via}")
@@ -797,7 +831,7 @@ def fetch_verified(relay_urls, event_type):
 
 
 def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_lightning=False,
-                           trust_hops=3, trust_decay=0.5, on_progress=None):
+                           lightning_node=None, trust_hops=3, trust_decay=0.5, on_progress=None):
     """The real end-to-end path: resolve every host claiming to have this
     content, challenge-gate them, auction among survivors — weighted by
     reputation built from real transitive trust (your own subscribes, plus
@@ -838,20 +872,17 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
     print(f"selected {c['host']} — price {winner['price']} sat, "
           f"reputation {winner['reputation']:.2f}, {winner['avg_latency_ms']:.1f}ms avg")
 
-    if winner['price'] > 0:
-        if use_lightning:
-            import lightning_settle
-            result = lightning_settle.settle(
-                winner['price'], f"download {content_hash[:16]}... from {c['host']}")
-            print(f"paid via real Lightning HTLC: {result['amount_sat']} sat, "
-                  f"preimage {result['preimage'][:12]}... verified against "
-                  f"payment_hash {result['payment_hash'][:12]}...")
-        else:
-            print(f"  price is {winner['price']} sat but --lightning not given "
-                  f"— downloading anyway, unpaid (no enforcement in this demo)")
+    if winner['price'] > 0 and not use_lightning:
+        print(f"  price is {winner['price']} sat but --lightning not given "
+              f"— downloading anyway, unpaid (no enforcement in this demo)")
 
+    # payment (if any) happens inside download() itself, over the same
+    # session that then serves the bytes — see its own docstring for why:
+    # this host's own INVOICE, paid by lightning_node, not a fixed demo
+    # pair settled regardless of who actually won the auction
     path = download(c['host'], out_path or c['title'], tunnel=_parse_tunnel(c.get('tunnel')),
-                     content_hash=c['content_hash'], on_progress=on_progress)
+                     content_hash=c['content_hash'], on_progress=on_progress,
+                     price=winner['price'], use_lightning=use_lightning, lightning_node=lightning_node)
 
     reputation.record_direct(c['signer_pubkey'], passes=1, fails=0,
                               avg_latency_ms=winner['avg_latency_ms'])

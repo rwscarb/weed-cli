@@ -3,7 +3,7 @@
 Real Lightning HTLC settlement, replacing poc_challenge_auction.py's mock
 "settlement: mock Lightning HTLC held until delivery confirms" print.
 
-Talks to two real LND nodes (lnd-alice, lnd-bob — see lightning/docker-compose.yml)
+Talks to real LND nodes (lnd-alice, lnd-bob — see lightning/docker-compose.yml)
 over a real channel on regtest via `docker exec ... lncli`. Not simulated:
 real BOLT11 invoices, real onion-routed HTLCs, real preimage reveal on
 settlement — same protocol code LND runs on mainnet, just against a private
@@ -14,13 +14,24 @@ rather than a fabricated one).
 Requires the compose stack in lightning/ to be up with a funded, active
 channel between alice and bob (see lightning/README.md for the one-time
 setup: fund alice on-chain, open channel, confirm).
+
+create_invoice/pay_invoice are the pieces `node.py`'s real download path
+uses (INVOICE wire verb + download()'s --lightning step): whichever demo
+node a host names with --lightning-node creates its own invoice, whichever
+node the downloader names as --lightning-node pays that exact invoice —
+paying whoever actually won the auction, not a fixed direction. settle()
+stays as a plain alice-pays-bob convenience wrapper for
+poc_challenge_auction.py's standalone demo, which has no real host/
+downloader identities to plug in.
 """
 import hashlib
 import json
 import subprocess
 
-ALICE_CONTAINER = 'lightning-lnd-alice-1'  # payer — stands in for the requester/viewer
-BOB_CONTAINER = 'lightning-lnd-bob-1'      # payee — stands in for the auction winner
+NODES = {
+    'alice': 'lightning-lnd-alice-1',
+    'bob': 'lightning-lnd-bob-1',
+}
 LNDDIR = '/home/lnd/.lnd'
 
 
@@ -36,30 +47,41 @@ def _lncli(container, *args):
     return json.loads(result.stdout)
 
 
-def channel_active():
+def _container(node):
+    if node not in NODES:
+        raise SettlementError(f'unknown lightning node {node!r} — known nodes: {", ".join(NODES)}')
+    return NODES[node]
+
+
+def channel_active(node='alice'):
     try:
-        chans = _lncli(ALICE_CONTAINER, 'listchannels')
+        chans = _lncli(_container(node), 'listchannels')
     except (SettlementError, FileNotFoundError):
         return False
     return any(c.get('active') for c in chans.get('channels', []))
 
 
-def settle(amount_sat, memo):
-    """Real HTLC settlement for one auction round's winning bid.
-
-    Bob (payee/winner) creates a real BOLT11 invoice; Alice (payer/
-    requester) pays it over the real channel. Returns a dict with the real
-    payment_hash, the real revealed preimage, and independently re-verifies
-    sha256(preimage) == payment_hash locally rather than trusting LND's own
-    claim of success — same "verify, don't just trust the tool's own report"
-    standard the rest of this project has used throughout.
-    """
+def create_invoice(node, amount_sat, memo):
+    """A real BOLT11 invoice from `node`'s own LND — the piece a host needs
+    to actually get paid as itself, instead of settlement happening through
+    a side-channel-known fixed pair regardless of who really hosted."""
     amount_sat = max(1, int(round(amount_sat)))
-    invoice = _lncli(BOB_CONTAINER, 'addinvoice', f'--amt={amount_sat}', f'--memo={memo}')
-    payment_request = invoice['payment_request']
-    expected_hash = invoice['r_hash']
+    invoice = _lncli(_container(node), 'addinvoice', f'--amt={amount_sat}', f'--memo={memo}')
+    return {
+        'payment_request': invoice['payment_request'],
+        'payment_hash': invoice['r_hash'],
+        'amount_sat': amount_sat,
+    }
 
-    payment = _lncli(ALICE_CONTAINER, 'payinvoice', '--force', '--json', payment_request)
+
+def pay_invoice(payer_node, payment_request, expected_hash):
+    """Pay a specific BOLT11 invoice (as returned by create_invoice, possibly
+    on a different node) from `payer_node`'s own LND. Independently
+    re-verifies sha256(preimage) == payment_hash locally rather than
+    trusting LND's own claim of success — same "verify, don't just trust
+    the tool's own report" standard the rest of this project uses
+    throughout."""
+    payment = _lncli(_container(payer_node), 'payinvoice', '--force', '--json', payment_request)
     if payment.get('status') != 'SUCCEEDED':
         raise SettlementError(f'payment did not succeed: {payment.get("status")}')
 
@@ -71,12 +93,24 @@ def settle(amount_sat, memo):
             f'got {recomputed_hash}, expected {expected_hash}')
 
     return {
-        'amount_sat': amount_sat,
         'payment_hash': expected_hash,
         'preimage': preimage,
         'fee_sat': int(payment.get('fee_sat', 0)),
         'verified_locally': True,
     }
+
+
+def settle(amount_sat, memo, payee='bob', payer='alice'):
+    """Real HTLC settlement for one auction round's winning bid, fixed
+    payee/payer identities — used by poc_challenge_auction.py's standalone
+    demo, which never has a real distinct host/downloader to plug into
+    create_invoice/pay_invoice itself. Real node.py downloads use those two
+    functions directly instead, against whichever nodes --lightning-node
+    actually names on each side."""
+    amount_sat = max(1, int(round(amount_sat)))
+    invoice = create_invoice(payee, amount_sat, memo)
+    payment = pay_invoice(payer, invoice['payment_request'], invoice['payment_hash'])
+    return {**payment, 'amount_sat': amount_sat}
 
 
 if __name__ == '__main__':

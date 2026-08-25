@@ -14,9 +14,11 @@
 #
 # /share is a bind mount, not a named volume, on purpose -- you want the
 # actual .ott archives you're hosting to be real files on the host you can
-# see/add/remove directly, not hidden inside Docker's volume storage. It's
-# optional: WEED_SHARE_DIR defaults to ./share (created empty on first run
-# if missing), or point it at wherever your archives already live, e.g.
+# see/add/remove directly, not hidden inside Docker's volume storage.
+# Defaults to /share on the host itself (created empty on first run if
+# missing) so this just works with no env var if that's already where you
+# keep shared content; override with WEED_SHARE_DIR to point at anywhere
+# else, e.g.
 #   WEED_SHARE_DIR=~/Movies docker compose -f docker-compose.node.yml up
 # Then in the web UI's host form, use /share (or a subdirectory of it) as
 # the archive dir -- that's this same host directory, from inside the
@@ -31,7 +33,7 @@ services:
       - "8080:8080"
     volumes:
       - node-data:/data
-      - ${WEED_SHARE_DIR:-./share}:/share
+      - ${WEED_SHARE_DIR:-/share}:/share
     environment:
       # point these at your real deployed infra -- defaults inside
       # web_ui.py fall back to http://127.0.0.1:9101 / no tunnel, which

@@ -58,7 +58,7 @@ const app = createApp({
       library: { downloads: {}, likes: new Set(), subscriptions: new Set() },
 
       hostForm: {
-        archiveDir: '', fileName: '', port: 9201, price: 0,
+        archiveDir: '', fileName: '', port: 9201, price: 0, lightningNode: null,
         relays: 'http://127.0.0.1:9101', advertiseHost: '127.0.0.1',
         tunnelEnabled: false, tunnelAddr: '',
       },
@@ -66,7 +66,7 @@ const app = createApp({
       hosts: [],
 
       downloadForm: {
-        hash: '', relays: 'http://127.0.0.1:9101', out: '', lightning: false,
+        hash: '', relays: 'http://127.0.0.1:9101', out: '', lightning: false, lightningNode: null,
       },
       // both persisted-on-load downloads and ones started this session end
       // up here, in the same shape, so one template handles both instead
@@ -411,7 +411,7 @@ const app = createApp({
       r._dl.downloading = true;
       r._dl.pct = 0;
       const resp = await this.startDownload(
-        r.content_hash, this.discoverRelaysList, null, false, r.title, r.signer_pubkey,
+        r.content_hash, this.discoverRelaysList, null, false, null, r.title, r.signer_pubkey,
         {
           onProgress: pct => { r._dl.pct = pct; },
           onDone: job => {
@@ -485,6 +485,7 @@ const app = createApp({
         relay: this.splitRelays(this.hostForm.relays),
         advertise_host: this.hostForm.advertiseHost,
         tunnel: this.hostForm.tunnelEnabled ? this.hostForm.tunnelAddr : null,
+        lightning_node: this.hostForm.lightningNode || null,
       };
       const resp = await this.apiPost('/api/host', body);
       if (resp.error) {
@@ -530,10 +531,11 @@ const app = createApp({
       }, 500);
     },
 
-    async startDownload(contentHash, relays, outPath, lightning, title, signerPubkey, extra) {
+    async startDownload(contentHash, relays, outPath, lightning, lightningNode, title, signerPubkey, extra) {
       const resp = await this.apiPost('/api/download', {
         content_hash: contentHash, relay: relays, out_path: outPath,
-        lightning: lightning, title: title || null, signer_pubkey: signerPubkey || null,
+        lightning: lightning, lightning_node: lightning ? lightningNode : null,
+        title: title || null, signer_pubkey: signerPubkey || null,
       });
       if (resp.error) return resp;
 
@@ -587,6 +589,7 @@ const app = createApp({
         this.splitRelays(this.downloadForm.relays),
         this.downloadForm.out || null,
         this.downloadForm.lightning,
+        this.downloadForm.lightningNode,
         null,
         null,
       );

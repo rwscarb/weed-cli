@@ -108,6 +108,13 @@
       <label>Price (sats, 0 = free)
         <input type="number" v-model="hostForm.price">
       </label>
+      <label>Lightning node (optional — needed to answer a paid download's invoice)
+        <select v-model="hostForm.lightningNode">
+          <option :value="null">— none, can't be paid over Lightning —</option>
+          <option value="alice">alice</option>
+          <option value="bob">bob</option>
+        </select>
+      </label>
       <label>Relay(s), comma-separated
         <input type="text" v-model="hostForm.relays">
       </label>
@@ -156,6 +163,13 @@
       <label class="checkbox">
         <input type="checkbox" v-model="downloadForm.lightning">
         Pay over Lightning if priced
+      </label>
+      <label :class="{hidden: !downloadForm.lightning}">Pay as
+        <select v-model="downloadForm.lightningNode">
+          <option :value="null">— pick who's paying —</option>
+          <option value="alice">alice</option>
+          <option value="bob">bob</option>
+        </select>
       </label>
       <button type="submit">Download</button>
     </form>
