@@ -154,6 +154,7 @@
           <td>{{ h.tunnel || '—' }}</td>
           <td :class="h.status === 'error' ? 'status-error' : (h.status === 'running' ? 'status-done' : 'status-running')">
             {{ h.status === 'error' ? 'error: ' + h.error : h.status }}
+            <span class="dl-log" v-if="h.status === 'starting' && h.log" :title="h.log">{{ lastLogLine(h.log) }}</span>
           </td>
         </tr>
       </tbody>

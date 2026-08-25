@@ -116,7 +116,8 @@ def _with_captured_detail(msg, captured):
 
 _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
-_job_logs = {}  # job_id -> the live io.StringIO node.py's prints are captured into (see _quiet)
+_job_logs = {}   # job_id -> the live io.StringIO node.py's prints are captured into (see _quiet)
+_host_logs = {}  # host_id -> same, for a host job (announce progress, [host:PORT] serving, ...)
 _lock = threading.Lock()
 
 # what's been downloaded/liked/subscribed, persisted to disk so a page
@@ -278,6 +279,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
     captured = io.StringIO()
     try:
         with _quiet() as captured:
+            _host_logs[host_id] = captured
             identity = _identity()
             # every distinct file in the archive, not just the last-added one
             # — see load_manifest_entries' own docstring for why
@@ -407,7 +409,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'results': results})
         if path == '/api/hosts':
             with _lock:
-                return self._json({'hosts': list(_hosts.values())})
+                hosts = [dict(h) for h in _hosts.values()]
+            for h in hosts:
+                log_buf = _host_logs.get(h['id'])
+                if log_buf is not None:
+                    h['log'] = log_buf.getvalue()
+            return self._json({'hosts': hosts})
         if path == '/api/library':
             with _lock:
                 return self._json({
