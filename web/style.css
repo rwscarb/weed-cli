@@ -145,20 +145,23 @@ td button {
   100% { background-position: -200% 0; }
 }
 
-/* same shimmering gradient, but as the whole Discover row's own
-   background instead of a separate bar -- the row IS the progress
-   indicator, filling left to right behind its own text, growing with
-   --pct as it downloads. tr/td have no background of their own (see
-   `table`/`th, td` above), so this paints straight onto the page
-   background (var(--bg)) with nothing else to mask against. Two
-   layers: a hard transparent→var(--bg) cutoff at --pct on top, masking
-   an oversized shimmer gradient underneath so only the filled portion
-   ever shows it, and only that portion moves. */
+/* same shimmering gradient as before, but anchored to a thin strip along
+   the row's own bottom edge instead of filling its entire height --
+   covering the full row painted the accent color straight over the
+   Content Hash/Title/etc text underneath it, exactly while that text
+   matters most (mid-download, actively watching it). tr/td have no
+   background of their own (see `table`/`th, td` above), so this still
+   paints straight onto the page background (var(--bg)) with nothing
+   else to mask against. Two layers, no-repeat on both now that the
+   height is smaller than the row (without it they'd tile vertically and
+   refill the whole row anyway): a hard transparent→var(--bg) cutoff at
+   --pct on top, masking an oversized shimmer gradient underneath so
+   only the filled portion ever shows it, and only that portion moves. */
 .dl-progress-row {
   --pct: 0%;
   background:
-    linear-gradient(90deg, transparent var(--pct), var(--bg) var(--pct)) top left / 100% 100% no-repeat,
-    linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)) top left / 200% 100%;
+    linear-gradient(90deg, transparent var(--pct), var(--bg) var(--pct)) bottom left / 100% 3px no-repeat,
+    linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)) bottom left / 200% 3px no-repeat;
   animation: row-progress-shimmer 1.2s linear infinite;
 }
 
@@ -170,6 +173,25 @@ td button {
 .dl-stats {
   margin-left: 0.5rem;
   font-size: 0.8rem;
+  color: var(--muted);
+}
+
+/* the download button disappearing with nothing in its place (while
+   discovery/auction/challenge runs, before there's even a chunk count to
+   show a percentage for) used to look like it silently did nothing --
+   this is node.py's own real print() output, captured server-side (see
+   web_ui.py's _job_logs), so it's the actual reason a candidate host is
+   or isn't panning out, not a fake "loading" placeholder. Truncated with
+   an ellipsis (title attr carries the full text) since the actions
+   column is narrow and this can be a full log line's worth of detail. */
+.dl-log {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 0.78rem;
   color: var(--muted);
 }
 
