@@ -145,13 +145,14 @@
     <div id="host-result">{{ hostResult }}</div>
     <h3>Active hosts (this session)</h3>
     <div class="table-wrap"><table id="hosts-table">
-      <thead><tr><th>Name</th><th>Port</th><th>Price</th><th>Tunnel</th><th>Status</th></tr></thead>
+      <thead><tr><th>Name</th><th>Port</th><th>Price</th><th>Tunnel</th><th>BTC</th><th>Status</th></tr></thead>
       <tbody>
         <tr v-for="h in hosts" :key="h.id">
           <td>{{ !h.name ? '(starting…)' : (h.files && h.files.length > 1 ? h.files.length + ' files' : h.name) }}</td>
           <td>{{ h.port }}</td>
           <td>{{ h.price ? h.price + ' sat' : 'free' }}</td>
           <td>{{ h.tunnel || '—' }}</td>
+          <td :title="ottStatusTitle(h.ott_status)">{{ ottStatusText(h.ott_status) }}</td>
           <td :class="h.status === 'error' ? 'status-error' : (h.status === 'running' ? 'status-done' : 'status-running')">
             {{ h.status === 'error' ? 'error: ' + h.error : h.status }}
             <span class="dl-log" v-if="h.status === 'starting' && h.log" :title="h.log">{{ lastLogLine(h.log) }}</span>

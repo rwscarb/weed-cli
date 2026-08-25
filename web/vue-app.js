@@ -240,6 +240,23 @@ const app = createApp({
       const lines = log.trim().split('\n');
       return lines[lines.length - 1];
     },
+    // ott_status (see web_ui.py's _ott_status, sourced straight from the
+    // archive's own .ott/ledger.jsonl) answers "has this actually been
+    // recorded to Bitcoin, and when" -- null means no archive_dir yet or
+    // btcvm/ott isn't importable server-side, not "definitely not committed"
+    ottStatusText(status) {
+      if (!status) return '—';
+      if (!status.committed) return '⚠️ uncommitted';
+      return status.tx_hash ? '✅ block ' + status.block_height : '⏱ block ' + status.block_height;
+    },
+    ottStatusTitle(status) {
+      if (!status) return 'no .ott/ archive found, or btcvm not installed server-side';
+      if (!status.committed) return 'current archive state has not been committed (run `ott commit`)';
+      const when = status.ts ? ' at ' + status.ts : '';
+      return status.tx_hash
+        ? `committed to Bitcoin block ${status.block_height}${when}, broadcast as ${status.tx_hash} [${status.network}]`
+        : `timestamped against Bitcoin block ${status.block_height}${when}, not yet broadcast on-chain (run \`ott broadcast\`)`;
+    },
     formatBytes(n) {
       if (n == null) return '';
       const units = ['B', 'KB', 'MB', 'GB'];
