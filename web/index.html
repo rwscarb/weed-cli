@@ -211,9 +211,9 @@
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
-      <button type="button" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
-      <button type="button" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
-      <button type="button" title="Close" @click.stop="closePlayer">✕</button>
+      <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
+      <button type="button" class="icon-btn" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
+      <button type="button" class="icon-btn" title="Close" @click.stop="closePlayer">✕</button>
     </div>
   </div>
   <video ref="playerVideo" controls
