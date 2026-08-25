@@ -18,6 +18,7 @@ import io
 import json
 import mimetypes
 import os
+import signal
 import sys
 import threading
 import time
@@ -123,6 +124,78 @@ _lock = threading.Lock()
 # recent job wins); likes/subscriptions are just lists of hashes/pubkeys.
 # All access goes through _lock, same as _hosts/_jobs.
 _library = {'downloads': {}, 'likes': [], 'subscriptions': []}
+
+# what to (re-)host on startup -- _hosts above is pure in-memory runtime
+# state, so a restart (a fresh `make node`, a Docker container recreated
+# after `make node-down`) used to forget every active host entirely,
+# requiring the Host form to be manually re-submitted for each file every
+# single time. Keyed by (archive_dir, file_name, port) so resubmitting
+# the same host from the UI updates its entry instead of piling up
+# duplicates across restarts.
+HOSTS_PATH = os.path.expanduser('~/.weed_hosts.json')
+_persisted_hosts = {}
+
+
+def _load_persisted_hosts():
+    global _persisted_hosts
+    try:
+        with open(HOSTS_PATH) as f:
+            _persisted_hosts = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def _save_persisted_hosts():
+    tmp = HOSTS_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(_persisted_hosts, f)
+    os.replace(tmp, HOSTS_PATH)
+
+
+def _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
+    key = f'{archive_dir}|{file_name}|{port}'
+    _persisted_hosts[key] = {
+        'archive_dir': archive_dir, 'file_name': file_name, 'port': port, 'price': price,
+        'relay': relay_urls, 'advertise_host': advertise_host, 'tunnel': tunnel,
+        'lightning_node': ln_node,
+    }
+    _save_persisted_hosts()
+
+
+def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
+    host_id = uuid.uuid4().hex[:12]
+    with _lock:
+        _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
+                            'price': price, 'tunnel': tunnel, 'status': 'starting'}
+    threading.Thread(target=_run_host_job,
+                      args=(host_id, archive_dir, file_name, port, price, relay_urls,
+                            advertise_host, tunnel),
+                      kwargs={'ln_node': ln_node}, daemon=True).start()
+    return host_id
+
+
+def _resume_persisted_hosts():
+    for cfg in _persisted_hosts.values():
+        _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
+                         cfg['relay'], cfg['advertise_host'], cfg['tunnel'], cfg.get('lightning_node'))
+
+
+def _unpublish_all_hosts():
+    """Best-effort delisting on graceful shutdown (see the SIGTERM handler
+    in run_web_ui) -- doesn't touch _persisted_hosts, since the whole
+    point is that a *future* restart still auto-resumes the same hosts;
+    this only tells relays "not reachable right now" in the meantime,
+    same as unpublish()'s own docstring."""
+    identity = _identity()
+    with _lock:
+        hosts_snapshot = list(_hosts.values())
+    for h in hosts_snapshot:
+        for f in h.get('files') or []:
+            for relay_url in h.get('announced_on') or []:
+                try:
+                    node.unpublish(identity, relay_url, f['content_hash'])
+                except Exception:
+                    pass
 
 
 def _load_library():
@@ -408,14 +481,10 @@ class Handler(BaseHTTPRequestHandler):
         tunnel = body.get('tunnel') or None
         ln_node = body.get('lightning_node') or None
 
-        host_id = uuid.uuid4().hex[:12]
-        with _lock:
-            _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
-                                'price': price, 'tunnel': tunnel, 'status': 'starting'}
-        threading.Thread(target=_run_host_job,
-                          args=(host_id, archive_dir, body.get('file_name'), port, price,
-                                relay_urls, advertise_host, tunnel),
-                          kwargs={'ln_node': ln_node}, daemon=True).start()
+        file_name = body.get('file_name')
+        _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node)
+        host_id = _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host,
+                                   tunnel, ln_node)
         self._json({'host_id': host_id})
 
     def _handle_download(self, body):
@@ -608,7 +677,25 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
     global _lan_url
     _load_library()
     _rehydrate_jobs_from_library()
+    _load_persisted_hosts()
+    _resume_persisted_hosts()
     srv = WebUIServer((bind_host, port), Handler)
+
+    # `docker compose down` (and plain Ctrl-C) sends SIGTERM -- without
+    # this, a host that goes offline just leaves a stale, now-unreachable
+    # publish event sitting in discover results until a relay's per-signer
+    # cap happens to evict it (could be a long time). _persisted_hosts
+    # itself is untouched here on purpose: the whole point is that the
+    # *next* `make node` auto-resumes and re-announces the same hosts
+    # (see _resume_persisted_hosts above), this only delists them for
+    # however long this process happens to be down.
+    def _handle_sigterm(signum, frame):
+        if not quiet:
+            print("\n[web] shutting down — delisting active hosts", flush=True)
+        _unpublish_all_hosts()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # advertise_host is an escape hatch for _detect_lan_ip()'s UDP-route
     # trick guessing wrong (multiple interfaces/VPNs, sandboxed or
@@ -637,7 +724,15 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         else:
             print("  couldn't detect a LAN IP -- phone QR codes in the web UI won't work "
                   "until you restart with reachable networking", flush=True)
-    srv.serve_forever()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        # Ctrl-C raises this directly rather than delivering SIGTERM --
+        # same delisting on the way out, so a foreground `weed serve`
+        # gets the same graceful-shutdown behavior as `docker compose down`
+        if not quiet:
+            print("\n[web] shutting down — delisting active hosts", flush=True)
+        _unpublish_all_hosts()
 
 
 def main():

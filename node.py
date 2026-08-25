@@ -1001,6 +1001,21 @@ def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None):
     return post_event(relay_url, event)
 
 
+def unpublish(identity, relay_url, content_hash):
+    """Signs this signer's own delisting of content_hash — see discover()'s
+    handling: whichever event (publish or unpublish) is newest for a given
+    (content_hash, signer_pubkey) wins, so this only takes effect if it's
+    genuinely the latest word from this signer. Lets a host that's
+    shutting down gracefully (see web_ui.py's SIGTERM handler) remove
+    itself from discover results immediately, instead of leaving a
+    stale, now-unreachable entry sitting around until a relay's per-signer
+    cap happens to evict it. Doesn't affect a *different* signer's own
+    publish for the same content_hash — this is scoped to this signer's
+    own listing only, same as everything else keyed off signer_pubkey."""
+    event = identity.sign_event('unpublish', content_hash=content_hash)
+    return post_event(relay_url, event)
+
+
 def discover(relay_urls):
     """Deduped by (content_hash, signer_pubkey), keeping whichever event has
     the newest ts — not by attestation_id (a hash of the whole signed
@@ -1009,23 +1024,34 @@ def discover(relay_urls):
     fresh ts. Keyed on the pair rather than content_hash alone so two
     different signers hosting the same file still both show up (see
     discover_hosts_for) — only a single signer's own repeat
-    announcements collapse."""
+    announcements collapse.
+
+    Also fetches 'unpublish' events over the same relays and lets them win
+    the same newest-ts comparison — a signer's most recent word on a given
+    (content_hash, signer_pubkey) pair might be "I've stopped hosting
+    this," not another publish, and honoring that is what makes
+    unpublish() actually delist something instead of just adding more
+    unread noise to the relay."""
     seen = {}
+    unreachable_relays = set()
     for relay_url in relay_urls:
-        events = fetch_events(relay_url, 'publish')
-        if events is None:
-            print(f"  {relay_url}: unreachable, skipped")
-            continue
-        for e in events:
-            ok, _ = verify_attestation(e)
-            if not ok:
+        for event_type in ('publish', 'unpublish'):
+            events = fetch_events(relay_url, event_type)
+            if events is None:
+                unreachable_relays.add(relay_url)
                 continue
-            payload = e['payload']
-            key = (payload['content_hash'], payload['signer_pubkey'])
-            existing = seen.get(key)
-            if existing is None or payload['ts'] > existing['ts']:
-                seen[key] = payload
-    return list(seen.values())
+            for e in events:
+                ok, _ = verify_attestation(e)
+                if not ok:
+                    continue
+                payload = e['payload']
+                key = (payload['content_hash'], payload['signer_pubkey'])
+                existing = seen.get(key)
+                if existing is None or payload['ts'] > existing['ts']:
+                    seen[key] = payload
+    for relay_url in unreachable_relays:
+        print(f"  {relay_url}: unreachable, skipped")
+    return [p for p in seen.values() if p['type'] == 'publish']
 
 
 def group_discover_by_content(results):
