@@ -215,13 +215,14 @@ def cmd_host(args):
 
 def cmd_discover(args):
     import node
-    results = node.discover(args.relay)
+    results = node.group_discover_by_content(node.discover(args.relay))
     if not results:
         print("nothing found (relay(s) unreachable, or nothing published yet)")
         return
     for r in results:
+        hosts_note = f'  (+{r["host_count"] - 1} more host(s))' if r['host_count'] > 1 else ''
         print(f"  {r['title']!r:40s}  hash={r['content_hash'][:16]}...  host={r['host']}  "
-              f"by={r['signer_pubkey'][:12]}...")
+              f"by={r['signer_pubkey'][:12]}...{hosts_note}")
 
 
 def cmd_download(args):

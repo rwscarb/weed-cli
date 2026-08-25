@@ -307,7 +307,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
                                 'default_tunnel': DEFAULT_TUNNEL})
         if path == '/api/discover':
-            return self._json({'results': node.discover(qs.get('relay') or [DEFAULT_RELAY])})
+            results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
+            return self._json({'results': results})
         if path == '/api/hosts':
             with _lock:
                 return self._json({'hosts': list(_hosts.values())})

@@ -988,3 +988,28 @@ def discover(relay_urls):
             if existing is None or payload['ts'] > existing['ts']:
                 seen[key] = payload
     return list(seen.values())
+
+
+def group_discover_by_content(results):
+    """Collapse discover()'s one-row-per-publisher output to one row per
+    content_hash, for display only — real host resolution
+    (discover_hosts_for, the auction) still needs every distinct publisher
+    separate, since two different people hosting the same file is real,
+    useful redundancy, not noise. But a person scanning a list doesn't
+    want to see the identical title N times just because N different
+    signers happen to host it — that's the actual complaint this fixes,
+    distinct from discover()'s own per-signer re-announcement dedup.
+    Keeps the most recently announced publisher's fields as the
+    representative row, plus host_count/hosts so a UI can still surface
+    "N hosts" instead of hiding the redundancy entirely."""
+    by_hash = {}
+    for r in results:
+        by_hash.setdefault(r['content_hash'], []).append(r)
+    merged = []
+    for content_hash, group in by_hash.items():
+        group.sort(key=lambda r: r['ts'], reverse=True)
+        rep = dict(group[0])
+        rep['host_count'] = len(group)
+        rep['hosts'] = [g['host'] for g in group]
+        merged.append(rep)
+    return merged

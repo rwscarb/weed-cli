@@ -278,6 +278,12 @@ td button {
 .status-error { color: var(--danger); }
 .status-running { color: var(--muted); }
 
+/* how many other signers also publish this same content_hash -- see
+   group_discover_by_content's docstring for why the list itself only
+   shows one row per file, with this as the "redundancy exists, it's
+   just not spelled out as N duplicate rows" signal instead */
+.host-count { color: var(--muted); font-size: 0.85em; }
+
 /* faint outline at rest, filled/bright only on hover -- also a fixed
    min-width so "Play" and "Download" render the same size instead of
    each hugging its own label, keeping whatever follows (stats text,

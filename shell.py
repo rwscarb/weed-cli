@@ -356,14 +356,15 @@ class WeedShell(cmd.Cmd):
         (default: the last relay used, $WEED_RELAY, or http://127.0.0.1:9101)."""
         relays = shlex.split(arg) or [self.default_relay]
         self.default_relay = relays[0]
-        results = node.discover(relays)
+        results = node.group_discover_by_content(node.discover(relays))
         self._last_discovery = results
         if not results:
             print('  nothing found')
             return
         for r in results:
+            hosts_note = f'  (+{r["host_count"] - 1} more host(s))' if r['host_count'] > 1 else ''
             print(f'  {r["title"]!r:40s}  hash={r["content_hash"][:16]}...  '
-                  f'host={r["host"]}  by={r["signer_pubkey"][:12]}...')
+                  f'host={r["host"]}  by={r["signer_pubkey"][:12]}...{hosts_note}')
 
     def do_download(self, arg):
         """download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] [--lightning]
