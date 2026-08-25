@@ -1,4 +1,5 @@
 # weed-cli
+=======
 
 Brainstormed in #all-pdx 2026-08-22: a YouTube replacement indexed on Bitcoin,
 distributed over BitTorrent-style magnet links. This tracks what got built and
