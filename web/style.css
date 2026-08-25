@@ -636,16 +636,20 @@ code {
 
   /* least essential columns first -- keep whatever answers "what is this
      and can I act on it", drop the rest to a swipe-to-see-more table.
-     Host/Tunnel/By are server-address trivia, not actionable from a
-     phone; the phone/share column is actively pointless here too --
-     you're already ON the phone, there's nothing to scan */
+     Host/Tunnel/BTC/By are server-address/provenance trivia, not
+     actionable from a phone; the phone/share column is actively
+     pointless here too -- you're already ON the phone, there's nothing
+     to scan. 8 columns now (BTC inserted between Tunnel and By, see
+     ott_status), so this hides 4 through 8, not 4 through 7. */
   #discover-table th:nth-child(4), #discover-table td:nth-child(4),
   #discover-table th:nth-child(5), #discover-table td:nth-child(5),
   #discover-table th:nth-child(6), #discover-table td:nth-child(6),
-  #discover-table th:nth-child(7), #discover-table td:nth-child(7) {
+  #discover-table th:nth-child(7), #discover-table td:nth-child(7),
+  #discover-table th:nth-child(8), #discover-table td:nth-child(8) {
     display: none;
   }
-  #hosts-table th:nth-child(4), #hosts-table td:nth-child(4) {
+  #hosts-table th:nth-child(4), #hosts-table td:nth-child(4),
+  #hosts-table th:nth-child(5), #hosts-table td:nth-child(5) {
     display: none;
   }
   #jobs-table th:nth-child(1), #jobs-table td:nth-child(1) {

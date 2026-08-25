@@ -42,7 +42,7 @@
       <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
     </form>
     <div class="table-wrap"><table id="discover-table">
-      <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>By</th><th></th></tr></thead>
+      <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>BTC</th><th>By</th><th></th></tr></thead>
       <tbody>
         <template v-if="discoverLoading && !discoverResults.length">
           <tr class="skeleton-row" v-for="n in 3" :key="'skeleton-' + n">
@@ -51,15 +51,16 @@
             <td><span class="skeleton skeleton-hash"></span></td>
             <td><span class="skeleton skeleton-host"></span></td>
             <td><span class="skeleton skeleton-tunnel"></span></td>
+            <td><span class="skeleton skeleton-tunnel"></span></td>
             <td><span class="skeleton skeleton-hash"></span></td>
             <td></td>
           </tr>
         </template>
         <tr v-else-if="!discoverResults.length">
-          <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
+          <td colspan="8">nothing found — relay(s) unreachable, or nothing published yet</td>
         </tr>
         <tr v-else-if="!filteredDiscoverResults.length">
-          <td colspan="7">no results match your search/filters</td>
+          <td colspan="8">no results match your search/filters</td>
         </tr>
         <tr v-for="r in filteredDiscoverResults" :key="r.content_hash" :data-hash="r.content_hash"
             :class="{'dl-progress-row': r._dl.downloading, 'row-highlighted': r.content_hash === searchHighlightHash}"
@@ -93,6 +94,7 @@
           <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
           <td>{{ r.host }}<span v-if="r.host_count > 1" class="host-count" :title="r.hosts.join(', ')"> (+{{ r.host_count - 1 }})</span></td>
           <td>{{ r.tunnel || '—' }}</td>
+          <td :title="ottStatusTitle(r.ott_status)">{{ ottStatusText(r.ott_status) }}</td>
           <td><code>{{ shortHash(r.signer_pubkey, 8) }}</code></td>
           <td>
             <button type="button" class="play-btn qr-btn" v-if="library.downloads[r.content_hash]"
