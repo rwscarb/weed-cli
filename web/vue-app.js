@@ -89,6 +89,13 @@ const app = createApp({
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
       qr: { visible: false, url: '', top: 0, left: null, right: null },
+
+      // errors can now carry node.py's full captured diagnostic trace
+      // (see web_ui.py's _with_captured_detail), not just a one-line
+      // summary -- a native alert() can't be text-selected/copied in most
+      // browsers, which defeats the point once there's a real multi-line
+      // trace worth copying out. Plain in-page text instead.
+      errorDialog: { visible: false, message: '' },
     };
   },
 
@@ -265,6 +272,14 @@ const app = createApp({
       this.qr.visible = false;
     },
 
+    showError(message) {
+      this.errorDialog.message = message;
+      this.errorDialog.visible = true;
+    },
+    closeError() {
+      this.errorDialog.visible = false;
+    },
+
     // ── global video player: PIP ↔ theater ↔ fullscreen ─────────────────
     // :fullscreen is handled entirely in CSS, so Esc-to-exit (which
     // bypasses our own button) still lands back in whichever of
@@ -423,13 +438,13 @@ const app = createApp({
           },
           onError: err => {
             r._dl.downloading = false;
-            alert('error: ' + err);
+            this.showError('error: ' + err);
           },
         },
       );
       if (resp.error) {
         r._dl.downloading = false;
-        alert('error: ' + resp.error);
+        this.showError('error: ' + resp.error);
       }
     },
 
@@ -440,7 +455,7 @@ const app = createApp({
         content_hash: r.content_hash, relay: this.discoverRelaysList[0],
       });
       if (result.error) {
-        alert('verify error: ' + result.error);
+        this.showError('verify error: ' + result.error);
         r._verify.label = 'Verify';
         r._verify.busy = false;
         return;
@@ -593,7 +608,7 @@ const app = createApp({
         null,
         null,
       );
-      if (resp.error) alert('error: ' + resp.error);
+      if (resp.error) this.showError('error: ' + resp.error);
     },
 
     // ── identity / reputation ─────────────────────────────────────────

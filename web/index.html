@@ -238,6 +238,15 @@
   <img v-if="qr.url" :src="'/api/qr?data=' + encodeURIComponent(qr.url)" :alt="'QR code for ' + qr.url">
   <div class="qr-url">{{ qr.url }}</div>
 </div>
+
+<div id="error-dialog-backdrop" :class="{hidden: !errorDialog.visible}" @click="closeError"></div>
+<div id="error-dialog" :class="{hidden: !errorDialog.visible}" role="alertdialog">
+  <div class="error-dialog-header">
+    <span>Error</span>
+    <button type="button" class="icon-btn" title="Close" @click="closeError">✕</button>
+  </div>
+  <pre class="error-dialog-message">{{ errorDialog.message }}</pre>
+</div>
 </div>
 
 <script src="vendor/vue.global.prod.js"></script>

@@ -492,6 +492,65 @@ td button {
   word-break: break-all;
 }
 
+/* plain in-page dialog instead of alert() -- see vue-app.js's showError
+   docstring: a native alert() can't be text-selected/copied in most
+   browsers, which matters now that an error can carry node.py's full
+   captured diagnostic trace instead of a one-line summary. */
+#error-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+}
+
+#error-dialog-backdrop.hidden {
+  display: none;
+}
+
+#error-dialog {
+  position: fixed;
+  z-index: 201;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 2rem));
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#error-dialog.hidden {
+  display: none;
+}
+
+.error-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.error-dialog-message {
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  user-select: text;
+}
+
 #host-result, #reputation-result {
   margin-top: 0.75rem;
   font-size: 0.85rem;
