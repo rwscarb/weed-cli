@@ -12,7 +12,7 @@ FROM python:3.13-slim
 WORKDIR /app
 COPY node.py web_ui.py poc_reputation.py ./
 COPY web/ ./web/
-RUN pip install --no-cache-dir btcvm cryptography qrcode
+RUN pip install --no-cache-dir btcvm cryptography qrcode pillow
 
 # Identity key, reputation store, and library manifest are all read/written
 # via os.path.expanduser('~/...') (see node.py's IDENTITY_PATH and

@@ -64,7 +64,9 @@ form {
   max-width: 520px;
 }
 
-form.inline-form { flex-direction: row; align-items: end; max-width: none; flex-wrap: wrap; }
+form.inline-form { flex-direction: row; align-items: end; max-width: none; flex-wrap: wrap; margin-bottom: 1em; }
+
+button.refresh-btn { align-self: end; }
 
 label {
   display: flex;
@@ -231,7 +233,6 @@ td button {
 }
 
 .icon-btn.sub-icon {
-  font-size: 1.1rem;
 }
 
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
