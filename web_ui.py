@@ -18,6 +18,7 @@ import io
 import json
 import mimetypes
 import os
+import signal
 import sys
 import threading
 import time
@@ -92,13 +93,26 @@ sys.stdout = _JobStdout(sys.stdout)
 
 @contextlib.contextmanager
 def _quiet():
-    """Mute node.py's CLI-oriented prints for the current thread only,
-    for the duration of the with-block."""
-    sys.stdout._local.buf = io.StringIO()
+    """Mute node.py's CLI-oriented prints for the current thread only, for
+    the duration of the with-block -- yields the buffer they went into, so
+    a caller that hits an error can fold the captured detail into it
+    instead of only ever surfacing the final exception's one-line summary.
+    That gap was real: select_host's per-candidate "x <host>: unreachable
+    (...)" lines (exactly the detail that explains *why* a download
+    failed) used to get captured here and then thrown away unread, so the
+    web UI only ever showed "no candidate host passed the possession
+    challenge" with zero indication of which candidate failed how."""
+    buf = io.StringIO()
+    sys.stdout._local.buf = buf
     try:
-        yield
+        yield buf
     finally:
         sys.stdout._local.buf = None
+
+
+def _with_captured_detail(msg, captured):
+    detail = captured.getvalue().strip()
+    return f'{msg}\n{detail}' if detail else msg
 
 _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
@@ -110,6 +124,78 @@ _lock = threading.Lock()
 # recent job wins); likes/subscriptions are just lists of hashes/pubkeys.
 # All access goes through _lock, same as _hosts/_jobs.
 _library = {'downloads': {}, 'likes': [], 'subscriptions': []}
+
+# what to (re-)host on startup -- _hosts above is pure in-memory runtime
+# state, so a restart (a fresh `make node`, a Docker container recreated
+# after `make node-down`) used to forget every active host entirely,
+# requiring the Host form to be manually re-submitted for each file every
+# single time. Keyed by (archive_dir, file_name, port) so resubmitting
+# the same host from the UI updates its entry instead of piling up
+# duplicates across restarts.
+HOSTS_PATH = os.path.expanduser('~/.weed_hosts.json')
+_persisted_hosts = {}
+
+
+def _load_persisted_hosts():
+    global _persisted_hosts
+    try:
+        with open(HOSTS_PATH) as f:
+            _persisted_hosts = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        pass
+
+
+def _save_persisted_hosts():
+    tmp = HOSTS_PATH + '.tmp'
+    with open(tmp, 'w') as f:
+        json.dump(_persisted_hosts, f)
+    os.replace(tmp, HOSTS_PATH)
+
+
+def _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
+    key = f'{archive_dir}|{file_name}|{port}'
+    _persisted_hosts[key] = {
+        'archive_dir': archive_dir, 'file_name': file_name, 'port': port, 'price': price,
+        'relay': relay_urls, 'advertise_host': advertise_host, 'tunnel': tunnel,
+        'lightning_node': ln_node,
+    }
+    _save_persisted_hosts()
+
+
+def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
+    host_id = uuid.uuid4().hex[:12]
+    with _lock:
+        _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
+                            'price': price, 'tunnel': tunnel, 'status': 'starting'}
+    threading.Thread(target=_run_host_job,
+                      args=(host_id, archive_dir, file_name, port, price, relay_urls,
+                            advertise_host, tunnel),
+                      kwargs={'ln_node': ln_node}, daemon=True).start()
+    return host_id
+
+
+def _resume_persisted_hosts():
+    for cfg in _persisted_hosts.values():
+        _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
+                         cfg['relay'], cfg['advertise_host'], cfg['tunnel'], cfg.get('lightning_node'))
+
+
+def _unpublish_all_hosts():
+    """Best-effort delisting on graceful shutdown (see the SIGTERM handler
+    in run_web_ui) -- doesn't touch _persisted_hosts, since the whole
+    point is that a *future* restart still auto-resumes the same hosts;
+    this only tells relays "not reachable right now" in the meantime,
+    same as unpublish()'s own docstring."""
+    identity = _identity()
+    with _lock:
+        hosts_snapshot = list(_hosts.values())
+    for h in hosts_snapshot:
+        for f in h.get('files') or []:
+            for relay_url in h.get('announced_on') or []:
+                try:
+                    node.unpublish(identity, relay_url, f['content_hash'])
+                except Exception:
+                    pass
 
 
 def _load_library():
@@ -186,9 +272,11 @@ def _detect_lan_ip():
         s.close()
 
 
-def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel):
+def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
+                   ln_node=None):
+    captured = io.StringIO()
     try:
-        with _quiet():
+        with _quiet() as captured:
             identity = _identity()
             # every distinct file in the archive, not just the last-added one
             # — see load_manifest_entries' own docstring for why
@@ -223,27 +311,31 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                     threading.Thread(target=node.run_host_tunnel,
                                       args=(relay_host, relay_port, entry['sha256'], entry,
                                             all_leaves[entry['sha256']], file_path, price),
-                                      kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True).start()
-            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price)
+                                      kwargs={'use_tls': use_tls, 'quiet': True, 'ln_node': ln_node},
+                                      daemon=True).start()
+            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node)
     except SystemExit as e:
         with _lock:
-            _hosts[host_id].update(status='error', error=str(e))
+            _hosts[host_id].update(status='error', error=_with_captured_detail(str(e), captured))
     except Exception as e:
         with _lock:
-            _hosts[host_id].update(status='error', error=f'{type(e).__name__}: {e}')
+            _hosts[host_id].update(status='error',
+                                    error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
 
 
 def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
-                       signer_pubkey=None):
+                       signer_pubkey=None, lightning_node=None):
     def on_progress(idx, n_chunks):
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
 
+    captured = io.StringIO()
     try:
         t0 = time.time()
-        with _quiet():
+        with _quiet() as captured:
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
-                                               use_lightning=use_lightning, on_progress=on_progress)
+                                               use_lightning=use_lightning, lightning_node=lightning_node,
+                                               on_progress=on_progress)
         elapsed = time.time() - t0
         size = os.path.getsize(path)
         bps = size / elapsed if elapsed > 0 else None
@@ -257,10 +349,11 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _save_library()
     except SystemExit as e:
         with _lock:
-            _jobs[job_id].update(status='error', error=str(e))
+            _jobs[job_id].update(status='error', error=_with_captured_detail(str(e), captured))
     except Exception as e:
         with _lock:
-            _jobs[job_id].update(status='error', error=f'{type(e).__name__}: {e}')
+            _jobs[job_id].update(status='error',
+                                  error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
 
 
 class WebUIServer(ThreadingHTTPServer):
@@ -304,7 +397,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
                                 'default_tunnel': DEFAULT_TUNNEL})
         if path == '/api/discover':
-            return self._json({'results': node.discover(qs.get('relay') or [DEFAULT_RELAY])})
+            results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
+            return self._json({'results': results})
         if path == '/api/hosts':
             with _lock:
                 return self._json({'hosts': list(_hosts.values())})
@@ -385,15 +479,12 @@ class Handler(BaseHTTPRequestHandler):
         relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
         advertise_host = body.get('advertise_host') or '127.0.0.1'
         tunnel = body.get('tunnel') or None
+        ln_node = body.get('lightning_node') or None
 
-        host_id = uuid.uuid4().hex[:12]
-        with _lock:
-            _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
-                                'price': price, 'tunnel': tunnel, 'status': 'starting'}
-        threading.Thread(target=_run_host_job,
-                          args=(host_id, archive_dir, body.get('file_name'), port, price,
-                                relay_urls, advertise_host, tunnel),
-                          daemon=True).start()
+        file_name = body.get('file_name')
+        _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node)
+        host_id = _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host,
+                                   tunnel, ln_node)
         self._json({'host_id': host_id})
 
     def _handle_download(self, body):
@@ -404,6 +495,9 @@ class Handler(BaseHTTPRequestHandler):
         out_path = body.get('out_path') or os.path.join(DOWNLOADS_DIR, f'download_{content_hash[:16]}')
         k = int(body.get('k') or 3)
         use_lightning = bool(body.get('lightning'))
+        lightning_node = body.get('lightning_node') or None
+        if use_lightning and not lightning_node:
+            return self._json({'error': "lightning requires lightning_node (who's paying)"}, status=400)
         title = body.get('title')
         signer_pubkey = body.get('signer_pubkey')
 
@@ -415,6 +509,7 @@ class Handler(BaseHTTPRequestHandler):
         threading.Thread(target=_run_download_job,
                           args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title,
                                 signer_pubkey),
+                          kwargs={'lightning_node': lightning_node},
                           daemon=True).start()
         self._json({'job_id': job_id})
 
@@ -582,7 +677,25 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
     global _lan_url
     _load_library()
     _rehydrate_jobs_from_library()
+    _load_persisted_hosts()
+    _resume_persisted_hosts()
     srv = WebUIServer((bind_host, port), Handler)
+
+    # `docker compose down` (and plain Ctrl-C) sends SIGTERM -- without
+    # this, a host that goes offline just leaves a stale, now-unreachable
+    # publish event sitting in discover results until a relay's per-signer
+    # cap happens to evict it (could be a long time). _persisted_hosts
+    # itself is untouched here on purpose: the whole point is that the
+    # *next* `make node` auto-resumes and re-announces the same hosts
+    # (see _resume_persisted_hosts above), this only delists them for
+    # however long this process happens to be down.
+    def _handle_sigterm(signum, frame):
+        if not quiet:
+            print("\n[web] shutting down — delisting active hosts", flush=True)
+        _unpublish_all_hosts()
+        sys.exit(0)
+
+    signal.signal(signal.SIGTERM, _handle_sigterm)
 
     # advertise_host is an escape hatch for _detect_lan_ip()'s UDP-route
     # trick guessing wrong (multiple interfaces/VPNs, sandboxed or
@@ -611,7 +724,15 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         else:
             print("  couldn't detect a LAN IP -- phone QR codes in the web UI won't work "
                   "until you restart with reachable networking", flush=True)
-    srv.serve_forever()
+    try:
+        srv.serve_forever()
+    except KeyboardInterrupt:
+        # Ctrl-C raises this directly rather than delivering SIGTERM --
+        # same delisting on the way out, so a foreground `weed serve`
+        # gets the same graceful-shutdown behavior as `docker compose down`
+        if not quiet:
+            print("\n[web] shutting down — delisting active hosts", flush=True)
+        _unpublish_all_hosts()
 
 
 def main():

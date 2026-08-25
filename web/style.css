@@ -233,6 +233,7 @@ td button {
 }
 
 .icon-btn.sub-icon {
+  font-size: 1.1rem;
 }
 
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
@@ -276,8 +277,18 @@ td button {
 }
 
 .status-done { color: var(--accent); }
-.status-error { color: var(--danger); }
+/* pre-wrap, not the table's usual nowrap-collapse -- an error can now
+   carry node.py's full captured diagnostic trace (see web_ui.py's
+   _with_captured_detail), multiple real newlines, not just the final
+   one-line exception summary */
+.status-error { color: var(--danger); white-space: pre-wrap; }
 .status-running { color: var(--muted); }
+
+/* how many other signers also publish this same content_hash -- see
+   group_discover_by_content's docstring for why the list itself only
+   shows one row per file, with this as the "redundancy exists, it's
+   just not spelled out as N duplicate rows" signal instead */
+.host-count { color: var(--muted); font-size: 0.85em; }
 
 /* faint outline at rest, filled/bright only on hover -- also a fixed
    min-width so "Play" and "Download" render the same size instead of
@@ -481,6 +492,65 @@ td button {
   font-size: 0.7rem;
   color: var(--muted);
   word-break: break-all;
+}
+
+/* plain in-page dialog instead of alert() -- see vue-app.js's showError
+   docstring: a native alert() can't be text-selected/copied in most
+   browsers, which matters now that an error can carry node.py's full
+   captured diagnostic trace instead of a one-line summary. */
+#error-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+}
+
+#error-dialog-backdrop.hidden {
+  display: none;
+}
+
+#error-dialog {
+  position: fixed;
+  z-index: 201;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(560px, calc(100vw - 2rem));
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#error-dialog.hidden {
+  display: none;
+}
+
+.error-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.error-dialog-message {
+  margin: 0;
+  padding: 0.75rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--text);
+  user-select: text;
 }
 
 #host-result, #reputation-result {

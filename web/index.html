@@ -80,7 +80,7 @@
             </span>
           </div></td>
           <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
-          <td>{{ r.host }}</td>
+          <td>{{ r.host }}<span v-if="r.host_count > 1" class="host-count" :title="r.hosts.join(', ')"> (+{{ r.host_count - 1 }})</span></td>
           <td>{{ r.tunnel || '—' }}</td>
           <td><code>{{ shortHash(r.signer_pubkey, 8) }}</code></td>
           <td>
@@ -107,6 +107,13 @@
       </label>
       <label>Price (sats, 0 = free)
         <input type="number" v-model="hostForm.price">
+      </label>
+      <label>Lightning node (optional — needed to answer a paid download's invoice)
+        <select v-model="hostForm.lightningNode">
+          <option :value="null">— none, can't be paid over Lightning —</option>
+          <option value="alice">alice</option>
+          <option value="bob">bob</option>
+        </select>
       </label>
       <label>Relay(s), comma-separated
         <input type="text" v-model="hostForm.relays">
@@ -156,6 +163,13 @@
       <label class="checkbox">
         <input type="checkbox" v-model="downloadForm.lightning">
         Pay over Lightning if priced
+      </label>
+      <label :class="{hidden: !downloadForm.lightning}">Pay as
+        <select v-model="downloadForm.lightningNode">
+          <option :value="null">— pick who's paying —</option>
+          <option value="alice">alice</option>
+          <option value="bob">bob</option>
+        </select>
       </label>
       <button type="submit">Download</button>
     </form>
@@ -211,9 +225,9 @@
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
-      <button type="button" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
-      <button type="button" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
-      <button type="button" title="Close" @click.stop="closePlayer">✕</button>
+      <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
+      <button type="button" class="icon-btn" title="Fullscreen" @click.stop="toggleFullscreen">⛶</button>
+      <button type="button" class="icon-btn" title="Close" @click.stop="closePlayer">✕</button>
     </div>
   </div>
   <video ref="playerVideo" controls
@@ -223,6 +237,15 @@
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">
   <img v-if="qr.url" :src="'/api/qr?data=' + encodeURIComponent(qr.url)" :alt="'QR code for ' + qr.url">
   <div class="qr-url">{{ qr.url }}</div>
+</div>
+
+<div id="error-dialog-backdrop" :class="{hidden: !errorDialog.visible}" @click="closeError"></div>
+<div id="error-dialog" :class="{hidden: !errorDialog.visible}" role="alertdialog">
+  <div class="error-dialog-header">
+    <span>Error</span>
+    <button type="button" class="icon-btn" title="Close" @click="closeError">✕</button>
+  </div>
+  <pre class="error-dialog-message">{{ errorDialog.message }}</pre>
 </div>
 </div>
 

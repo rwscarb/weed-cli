@@ -14,9 +14,16 @@
 #
 # /share is a bind mount, not a named volume, on purpose -- you want the
 # actual .ott archives you're hosting to be real files on the host you can
-# see/add/remove directly, not hidden inside Docker's volume storage. It's
-# optional: WEED_SHARE_DIR defaults to ./share (created empty on first run
-# if missing), or point it at wherever your archives already live, e.g.
+# see/add/remove directly, not hidden inside Docker's volume storage.
+# Defaults to ./share, next to this compose file (created empty on first
+# run if missing) -- NOT /share on the host itself: an absolute host path
+# default silently bind-mounts whatever unrelated (usually empty)
+# directory happens to live at /share on your machine, which is exactly
+# the bug this comment used to have (real incident: archive_dir pointed
+# at /share in the container, but the actual .ott/ lived in this repo's
+# own ./share, and the container never saw it -- "no .ott/manifest.jsonl
+# in /share" despite the file genuinely existing on the host). Override
+# with WEED_SHARE_DIR to point at anywhere else, e.g.
 #   WEED_SHARE_DIR=~/Movies docker compose -f docker-compose.node.yml up
 # Then in the web UI's host form, use /share (or a subdirectory of it) as
 # the archive dir -- that's this same host directory, from inside the

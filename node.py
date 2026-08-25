@@ -25,6 +25,7 @@ import os
 import random
 import socket
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -56,8 +57,30 @@ def weed_version():
     return '0.0.0-dev'
 
 
+def _git_commit_hash():
+    """Short commit hash of whatever checkout this node.py is actually
+    running from, if any. A bare version number only changes on a
+    deliberate release/bump — it says nothing about which commit's fixes
+    are actually loaded between releases, which is exactly the ambiguity
+    behind a real debugging session: two checkouts reporting the same
+    version, one of them missing a fix the other had. None for anything
+    that isn't a git checkout at all (installed from a built wheel/sdist,
+    no .git present) — a version number is all there is to go on there."""
+    repo_dir = os.path.dirname(os.path.abspath(__file__))
+    try:
+        result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo_dir,
+                                 capture_output=True, text=True, timeout=2)
+        if result.returncode == 0:
+            return result.stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    return None
+
+
 def weed_banner():
-    return f'weed v{weed_version()} — {TAGLINE}'
+    commit = _git_commit_hash()
+    commit_note = f' ({commit})' if commit else ''
+    return f'weed v{weed_version()}{commit_note} — {TAGLINE}'
 
 
 def _armor_identity(raw_bytes):
@@ -236,7 +259,7 @@ def _graceful_close(sock):
     sock.close()
 
 
-def serve_session(conn, entries_by_hash, default_hash, price):
+def serve_session(conn, entries_by_hash, default_hash, price, ln_node=None):
     """Handle every command on one connection, not just one — a download
     needs INFO + LEAVES + one FETCH per chunk (thousands, for a real
     archive), and reconnecting per command is what makes a tunneled
@@ -250,7 +273,12 @@ def serve_session(conn, entries_by_hash, default_hash, price):
     file) means a single-file host never needs SELECT at all, so the
     `download --from host:port` discovery-skipping escape hatch and the
     tunnel path (already scoped to one file before this function runs)
-    keep working unchanged."""
+    keep working unchanged.
+
+    ln_node names which demo LND identity (see lightning_settle.NODES) this
+    host settles through — None means this host just never answers INVOICE
+    with anything payable, same graceful-degradation shape PRICE already
+    has for a host/client that doesn't know about it."""
     selected = default_hash
     try:
         while True:
@@ -295,11 +323,22 @@ def serve_session(conn, entries_by_hash, default_hash, price):
                 conn.sendall((f'DATA {base64.b64encode(data).decode()}\n').encode())
             elif parts[0] == 'PRICE':
                 conn.sendall(f'PRICE {price}\n'.encode())
+            elif parts[0] == 'INVOICE':
+                if not ln_node or price <= 0:
+                    conn.sendall(b'ERR no payable invoice for this host/price\n')
+                else:
+                    import lightning_settle
+                    try:
+                        invoice = lightning_settle.create_invoice(ln_node, price, entry['sha256'][:16])
+                        conn.sendall((json.dumps(invoice) + '\n').encode())
+                    except lightning_settle.SettlementError as e:
+                        conn.sendall(f'ERR invoice creation failed: {e}\n'.encode())
     finally:
         _graceful_close(conn)
 
 
-def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0):
+def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
+                     ln_node=None):
     archive_dir = os.path.expanduser(archive_dir)
     entries = load_manifest_entries(archive_dir, file_name)
     entries_by_hash = {}
@@ -334,7 +373,7 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
         # a whole download now lives on one connection (see serve_session) —
         # accept() must hand off to a thread per connection, or one session
         # would block every other downloader until it finished
-        threading.Thread(target=serve_session, args=(conn, entries_by_hash, default_hash, price),
+        threading.Thread(target=serve_session, args=(conn, entries_by_hash, default_hash, price, ln_node),
                           daemon=True).start()
 
 
@@ -355,7 +394,8 @@ def _connect_tunnel_socket(relay_host, relay_port, use_tls):
 
 
 def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, price,
-                     use_tls=False, quiet=False, heartbeat_interval=45):
+                     use_tls=False, quiet=False, heartbeat_interval=45, ln_node=None,
+                     max_backoff=60):
     """NAT-traversal path: instead of (or alongside) binding a locally
     reachable port, register with a tunnel_relay.py relay and serve every
     downloader it pairs us with. One persistent CONTROL connection stays
@@ -378,63 +418,100 @@ def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, pri
     already holds an active registration for can be refused instead of
     silently overwriting it — content_hash tokens are public (announced
     via discover), so without this anyone could squat/hijack another
-    host's rendezvous slot for content they didn't actually publish."""
+    host's rendezvous slot for content they didn't actually publish.
+
+    Runs forever, reconnecting with exponential backoff (1s, 2s, 4s, ...,
+    capped at max_backoff) on any connection failure, rejected REGISTER,
+    or the control connection just closing — this used to be one-shot
+    (sys.exit on a rejected REGISTER, plain return once the connection
+    dropped), which meant a tunnel relay restart for *any* reason (deploy,
+    crash, Fly host migration) silently and permanently dropped every
+    currently-hosting process until a human noticed and manually re-ran
+    `host --tunnel`. Not hypothetical: a real Fly Machine restart took
+    down every active registration on this relay at once in production
+    (see the tunnel_relay.py fly logs from 2026-08-25), and every one of
+    them stayed dead until manually restarted. This is the fix — the
+    relay coming back is enough, no human required."""
     entries_by_hash = {entry['sha256']: (entry, leaves, file_path)}
-    ctrl = _connect_tunnel_socket(relay_host, relay_port, use_tls)
-    ctrl.sendall(f'REGISTER {token}\n'.encode())
-    # one LineReader for the whole connection, created before the first
-    # read and reused for the NEWSTREAM loop below -- creating a second
-    # one later would lose whatever extra bytes this first recv() also
-    # happened to pick up (LineReader buffers internally; a fresh
-    # instance starts with an empty buffer, discarding anything already
-    # read into the old one)
-    reader = LineReader(ctrl)
-    ack = reader.readline()
-    if ack != 'OK':
-        ctrl.close()
-        # tunnel_relay.py now refuses a REGISTER for a token someone
-        # else already holds an active registration for, instead of
-        # silently letting the new one steal it -- content_hash tokens
-        # are public (announced via discover), so this stops anyone from
-        # squatting/hijacking another host's rendezvous slot for content
-        # they didn't actually publish
-        sys.exit(f"tunnel relay at {relay_host}:{relay_port} rejected REGISTER for "
-                  f"{token[:16]}...: {ack or '(connection closed)'}")
-    if not quiet:
-        tls_note = ' (tls)' if use_tls else ''
-        print(f"[tunnel] registered {token[:16]}... with relay {relay_host}:{relay_port}{tls_note}")
-
-    stop_heartbeat = threading.Event()
-
-    def send_heartbeats():
-        while not stop_heartbeat.wait(heartbeat_interval):
-            try:
-                ctrl.sendall(b'PING\n')
-            except OSError:
-                return
-
-    threading.Thread(target=send_heartbeats, daemon=True).start()
-
-    try:
-        while True:
-            line = reader.readline()
-            if not line:
+    backoff = 1
+    while True:
+        rejected, reject_reason = False, None
+        try:
+            ctrl = _connect_tunnel_socket(relay_host, relay_port, use_tls)
+            ctrl.sendall(f'REGISTER {token}\n'.encode())
+            # one LineReader for the whole connection, created before the
+            # first read and reused for the NEWSTREAM loop below --
+            # creating a second one later would lose whatever extra bytes
+            # this first recv() also happened to pick up (LineReader
+            # buffers internally; a fresh instance starts with an empty
+            # buffer, discarding anything already read into the old one)
+            reader = LineReader(ctrl)
+            ack = reader.readline()
+            if ack != 'OK':
+                rejected, reject_reason = True, ack or '(connection closed)'
+                ctrl.close()
+            else:
                 if not quiet:
-                    print(f"[tunnel] control connection to {relay_host}:{relay_port} closed")
-                return
-            parts = line.split()
-            if parts and parts[0] == 'NEWSTREAM':
-                stream_id = parts[1]
-                data_conn = _connect_tunnel_socket(relay_host, relay_port, use_tls)
-                data_conn.sendall(f'DATA {stream_id}\n'.encode())
-                threading.Thread(target=serve_session,
-                                  args=(data_conn, entries_by_hash, entry['sha256'], price),
-                                  daemon=True).start()
-            # anything else (notably our own echoed-back nothing -- PING
-            # is one-directional, the relay never echoes it) is silently
-            # ignored, same as it always was
-    finally:
-        stop_heartbeat.set()
+                    tls_note = ' (tls)' if use_tls else ''
+                    print(f"[tunnel] registered {token[:16]}... with relay "
+                          f"{relay_host}:{relay_port}{tls_note}")
+                backoff = 1  # a real registration succeeded — forget any earlier backoff
+
+                stop_heartbeat = threading.Event()
+
+                def send_heartbeats():
+                    while not stop_heartbeat.wait(heartbeat_interval):
+                        try:
+                            ctrl.sendall(b'PING\n')
+                        except OSError:
+                            return
+
+                threading.Thread(target=send_heartbeats, daemon=True).start()
+
+                try:
+                    while True:
+                        line = reader.readline()
+                        if not line:
+                            if not quiet:
+                                print(f"[tunnel] control connection to {relay_host}:{relay_port} "
+                                      f"closed for {token[:16]}... — reconnecting")
+                            break
+                        parts = line.split()
+                        if parts and parts[0] == 'NEWSTREAM':
+                            stream_id = parts[1]
+                            data_conn = _connect_tunnel_socket(relay_host, relay_port, use_tls)
+                            data_conn.sendall(f'DATA {stream_id}\n'.encode())
+                            threading.Thread(target=serve_session,
+                                              args=(data_conn, entries_by_hash, entry['sha256'],
+                                                    price, ln_node),
+                                              daemon=True).start()
+                        # anything else (notably our own echoed-back nothing --
+                        # PING is one-directional, the relay never echoes it)
+                        # is silently ignored, same as it always was
+                finally:
+                    stop_heartbeat.set()
+        except OSError as e:
+            if not quiet:
+                print(f"[tunnel] connection to relay {relay_host}:{relay_port} for "
+                      f"{token[:16]}... failed ({e}) — retrying in {backoff}s")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+            continue
+
+        if rejected:
+            if not quiet:
+                print(f"[tunnel] relay at {relay_host}:{relay_port} rejected REGISTER for "
+                      f"{token[:16]}...: {reject_reason} — retrying in {backoff}s")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+            continue
+
+        # control connection closed on its own after a previously-successful
+        # registration (relay restart, idle proxy reset, ...) -- reconnect
+        # right away rather than backing off; if the relay's actually still
+        # down this just falls into the OSError branch above on the very
+        # next iteration and starts backing off normally from there
+        backoff = 1
 
 
 # ── client side ──────────────────────────────────────────────────────────
@@ -520,7 +597,8 @@ def open_connection(host_addr, tunnel=None, content_hash=None, timeout=10):
     return HostConnection.connect_direct(host, int(port_s), timeout=timeout)
 
 
-def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=None):
+def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=None,
+             price=0, use_lightning=False, lightning_node=None):
     from ott import merkle_root  # pip install btcvm
 
     out_path = os.path.expanduser(out_path)
@@ -534,6 +612,23 @@ def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=No
             sel = conn.request(f'SELECT {content_hash}')
             if sel != 'OK':
                 sys.exit(f"host at {host_addr} rejected SELECT {content_hash[:16]}...: {sel}")
+        if use_lightning and price > 0:
+            # pay this specific host as itself, on this same session, before
+            # trusting it with a single byte -- INVOICE returns a real BOLT11
+            # from the host's own LND (see serve_session), not a fixed demo
+            # pair settled through a side channel regardless of who won
+            import lightning_settle
+            inv_resp = conn.request('INVOICE')
+            if inv_resp.startswith('ERR') or not inv_resp:
+                sys.exit(f"host at {via} can't produce a real Lightning invoice "
+                         f"({inv_resp or 'no response'}) — rerun without --lightning to "
+                         f"download unpaid, or ask the host to set --lightning-node")
+            invoice = json.loads(inv_resp)
+            payment = lightning_settle.pay_invoice(lightning_node, invoice['payment_request'],
+                                                    invoice['payment_hash'])
+            print(f"paid {via}'s own real Lightning invoice: {invoice['amount_sat']} sat, "
+                  f"preimage {payment['preimage'][:12]}... verified against "
+                  f"payment_hash {payment['payment_hash'][:12]}...")
         info = json.loads(conn.request('INFO'))
         print(f"downloading {info['name']} ({info['size']:,} bytes, {info['n_chunks']} chunks) "
               f"from {via}")
@@ -686,8 +781,8 @@ def get_price(conn):
 
 def discover_hosts_for(relay_urls, content_hash):
     """Every host that published a matching content_hash — real multi-host
-    resolution (discover() already dedupes by event, not by content, so
-    two publishers of the same file both show up here)."""
+    resolution (discover() dedupes per-signer, not across signers, so
+    two different publishers of the same file both show up here)."""
     return [p for p in discover(relay_urls) if p['content_hash'].startswith(content_hash)]
 
 
@@ -797,7 +892,7 @@ def fetch_verified(relay_urls, event_type):
 
 
 def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_lightning=False,
-                           trust_hops=3, trust_decay=0.5, on_progress=None):
+                           lightning_node=None, trust_hops=3, trust_decay=0.5, on_progress=None):
     """The real end-to-end path: resolve every host claiming to have this
     content, challenge-gate them, auction among survivors — weighted by
     reputation built from real transitive trust (your own subscribes, plus
@@ -838,20 +933,17 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
     print(f"selected {c['host']} — price {winner['price']} sat, "
           f"reputation {winner['reputation']:.2f}, {winner['avg_latency_ms']:.1f}ms avg")
 
-    if winner['price'] > 0:
-        if use_lightning:
-            import lightning_settle
-            result = lightning_settle.settle(
-                winner['price'], f"download {content_hash[:16]}... from {c['host']}")
-            print(f"paid via real Lightning HTLC: {result['amount_sat']} sat, "
-                  f"preimage {result['preimage'][:12]}... verified against "
-                  f"payment_hash {result['payment_hash'][:12]}...")
-        else:
-            print(f"  price is {winner['price']} sat but --lightning not given "
-                  f"— downloading anyway, unpaid (no enforcement in this demo)")
+    if winner['price'] > 0 and not use_lightning:
+        print(f"  price is {winner['price']} sat but --lightning not given "
+              f"— downloading anyway, unpaid (no enforcement in this demo)")
 
+    # payment (if any) happens inside download() itself, over the same
+    # session that then serves the bytes — see its own docstring for why:
+    # this host's own INVOICE, paid by lightning_node, not a fixed demo
+    # pair settled regardless of who actually won the auction
     path = download(c['host'], out_path or c['title'], tunnel=_parse_tunnel(c.get('tunnel')),
-                     content_hash=c['content_hash'], on_progress=on_progress)
+                     content_hash=c['content_hash'], on_progress=on_progress,
+                     price=winner['price'], use_lightning=use_lightning, lightning_node=lightning_node)
 
     reputation.record_direct(c['signer_pubkey'], passes=1, fails=0,
                               avg_latency_ms=winner['avg_latency_ms'])
@@ -932,15 +1024,79 @@ def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None):
     return post_event(relay_url, event)
 
 
+def unpublish(identity, relay_url, content_hash):
+    """Signs this signer's own delisting of content_hash — see discover()'s
+    handling: whichever event (publish or unpublish) is newest for a given
+    (content_hash, signer_pubkey) wins, so this only takes effect if it's
+    genuinely the latest word from this signer. Lets a host that's
+    shutting down gracefully (see web_ui.py's SIGTERM handler) remove
+    itself from discover results immediately, instead of leaving a
+    stale, now-unreachable entry sitting around until a relay's per-signer
+    cap happens to evict it. Doesn't affect a *different* signer's own
+    publish for the same content_hash — this is scoped to this signer's
+    own listing only, same as everything else keyed off signer_pubkey."""
+    event = identity.sign_event('unpublish', content_hash=content_hash)
+    return post_event(relay_url, event)
+
+
 def discover(relay_urls):
+    """Deduped by (content_hash, signer_pubkey), keeping whichever event has
+    the newest ts — not by attestation_id (a hash of the whole signed
+    payload, ts included), which made every re-announcement of the same
+    file a "new" event forever, since re-running `host` always signs a
+    fresh ts. Keyed on the pair rather than content_hash alone so two
+    different signers hosting the same file still both show up (see
+    discover_hosts_for) — only a single signer's own repeat
+    announcements collapse.
+
+    Also fetches 'unpublish' events over the same relays and lets them win
+    the same newest-ts comparison — a signer's most recent word on a given
+    (content_hash, signer_pubkey) pair might be "I've stopped hosting
+    this," not another publish, and honoring that is what makes
+    unpublish() actually delist something instead of just adding more
+    unread noise to the relay."""
     seen = {}
+    unreachable_relays = set()
     for relay_url in relay_urls:
-        events = fetch_events(relay_url, 'publish')
-        if events is None:
-            print(f"  {relay_url}: unreachable, skipped")
-            continue
-        for e in events:
-            ok, _ = verify_attestation(e)
-            if ok:
-                seen[attestation_id(e)] = e['payload']
-    return list(seen.values())
+        for event_type in ('publish', 'unpublish'):
+            events = fetch_events(relay_url, event_type)
+            if events is None:
+                unreachable_relays.add(relay_url)
+                continue
+            for e in events:
+                ok, _ = verify_attestation(e)
+                if not ok:
+                    continue
+                payload = e['payload']
+                key = (payload['content_hash'], payload['signer_pubkey'])
+                existing = seen.get(key)
+                if existing is None or payload['ts'] > existing['ts']:
+                    seen[key] = payload
+    for relay_url in unreachable_relays:
+        print(f"  {relay_url}: unreachable, skipped")
+    return [p for p in seen.values() if p['type'] == 'publish']
+
+
+def group_discover_by_content(results):
+    """Collapse discover()'s one-row-per-publisher output to one row per
+    content_hash, for display only — real host resolution
+    (discover_hosts_for, the auction) still needs every distinct publisher
+    separate, since two different people hosting the same file is real,
+    useful redundancy, not noise. But a person scanning a list doesn't
+    want to see the identical title N times just because N different
+    signers happen to host it — that's the actual complaint this fixes,
+    distinct from discover()'s own per-signer re-announcement dedup.
+    Keeps the most recently announced publisher's fields as the
+    representative row, plus host_count/hosts so a UI can still surface
+    "N hosts" instead of hiding the redundancy entirely."""
+    by_hash = {}
+    for r in results:
+        by_hash.setdefault(r['content_hash'], []).append(r)
+    merged = []
+    for content_hash, group in by_hash.items():
+        group.sort(key=lambda r: r['ts'], reverse=True)
+        rep = dict(group[0])
+        rep['host_count'] = len(group)
+        rep['hosts'] = [g['host'] for g in group]
+        merged.append(rep)
+    return merged

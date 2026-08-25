@@ -70,6 +70,8 @@ def _default_relay_list():
 
 def build_parser():
     import node
+    import lightning_settle
+    ln_nodes = sorted(lightning_settle.NODES)
     parser = argparse.ArgumentParser(
         prog='weed',
         description=f'{node.weed_banner()} — real mechanisms behind the #all-pdx brainstorm.')
@@ -93,6 +95,10 @@ def build_parser():
     p_host.add_argument('--file', help='which archived file, if more than one (default: most recent)')
     p_host.add_argument('--port', type=int, default=9201)
     p_host.add_argument('--price', type=int, default=0, help='sats to charge per download (default: free)')
+    p_host.add_argument('--lightning-node', choices=ln_nodes,
+                         help='settle --price through this demo LND identity\'s own real BOLT11 '
+                              'invoice (see lightning_settle.py; needs the lightning/ stack up) '
+                              '— omit to leave this host unable to answer INVOICE at all')
     p_host.add_argument('--relay', action='append', default=_default_relay_list(),
                          help='relay URL to announce on (repeatable; default: $WEED_RELAY if set)')
     p_host.add_argument('--advertise-host', default='127.0.0.1',
@@ -127,6 +133,9 @@ def build_parser():
     p_download.add_argument('--lightning', action='store_true',
                              help='pay the winning host over a real Lightning HTLC if it has a price '
                                   '(needs the lightning/ stack up — see lightning/README.md)')
+    p_download.add_argument('--lightning-node', choices=ln_nodes,
+                             help='pay as this demo LND identity — required with --lightning '
+                                  'against a real priced host')
 
     p_like = sub.add_parser('like', help='sign and post a real like event')
     p_like.add_argument('content_hash')
@@ -194,23 +203,26 @@ def cmd_host(args):
         relay_host, relay_port, use_tls = node._parse_tunnel(args.tunnel)
         archive_dir = os.path.expanduser(args.archive_dir)
         for entry in entries:
-            file_path = entry.get('last_path') or os.path.join(archive_dir, entry['name'])
+            file_path = node.resolve_file_path(entry, archive_dir)
             threading.Thread(target=node.run_host_tunnel,
                               args=(relay_host, relay_port, entry['sha256'], entry,
                                     all_leaves[entry['sha256']], file_path, args.price),
-                              kwargs={'use_tls': use_tls}, daemon=True).start()
-    node.run_host_server(args.archive_dir, args.file, args.port, price=args.price)
+                              kwargs={'use_tls': use_tls, 'ln_node': args.lightning_node},
+                              daemon=True).start()
+    node.run_host_server(args.archive_dir, args.file, args.port, price=args.price,
+                          ln_node=args.lightning_node)
 
 
 def cmd_discover(args):
     import node
-    results = node.discover(args.relay)
+    results = node.group_discover_by_content(node.discover(args.relay))
     if not results:
         print("nothing found (relay(s) unreachable, or nothing published yet)")
         return
     for r in results:
+        hosts_note = f'  (+{r["host_count"] - 1} more host(s))' if r['host_count'] > 1 else ''
         print(f"  {r['title']!r:40s}  hash={r['content_hash'][:16]}...  host={r['host']}  "
-              f"by={r['signer_pubkey'][:12]}...")
+              f"by={r['signer_pubkey'][:12]}...{hosts_note}")
 
 
 def cmd_download(args):
@@ -223,8 +235,11 @@ def cmd_download(args):
         return
     if not args.content_hash:
         sys.exit("need a content_hash (to resolve via --relay) or --from host:port")
+    if args.lightning and not args.lightning_node:
+        sys.exit("--lightning needs --lightning-node <alice|bob> to say who's paying")
     node.download_with_auction(args.content_hash, args.relay, out_path=args.out,
-                                k=args.challenge_rounds, use_lightning=args.lightning)
+                                k=args.challenge_rounds, use_lightning=args.lightning,
+                                lightning_node=args.lightning_node)
 
 
 def cmd_like(args):

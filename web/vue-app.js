@@ -58,7 +58,7 @@ const app = createApp({
       library: { downloads: {}, likes: new Set(), subscriptions: new Set() },
 
       hostForm: {
-        archiveDir: '', fileName: '', port: 9201, price: 0,
+        archiveDir: '', fileName: '', port: 9201, price: 0, lightningNode: null,
         relays: 'http://127.0.0.1:9101', advertiseHost: '127.0.0.1',
         tunnelEnabled: false, tunnelAddr: '',
       },
@@ -66,7 +66,7 @@ const app = createApp({
       hosts: [],
 
       downloadForm: {
-        hash: '', relays: 'http://127.0.0.1:9101', out: '', lightning: false,
+        hash: '', relays: 'http://127.0.0.1:9101', out: '', lightning: false, lightningNode: null,
       },
       // both persisted-on-load downloads and ones started this session end
       // up here, in the same shape, so one template handles both instead
@@ -89,6 +89,13 @@ const app = createApp({
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
       qr: { visible: false, url: '', top: 0, left: null, right: null },
+
+      // errors can now carry node.py's full captured diagnostic trace
+      // (see web_ui.py's _with_captured_detail), not just a one-line
+      // summary -- a native alert() can't be text-selected/copied in most
+      // browsers, which defeats the point once there's a real multi-line
+      // trace worth copying out. Plain in-page text instead.
+      errorDialog: { visible: false, message: '' },
     };
   },
 
@@ -265,6 +272,14 @@ const app = createApp({
       this.qr.visible = false;
     },
 
+    showError(message) {
+      this.errorDialog.message = message;
+      this.errorDialog.visible = true;
+    },
+    closeError() {
+      this.errorDialog.visible = false;
+    },
+
     // ── global video player: PIP ↔ theater ↔ fullscreen ─────────────────
     // :fullscreen is handled entirely in CSS, so Esc-to-exit (which
     // bypasses our own button) still lands back in whichever of
@@ -411,7 +426,7 @@ const app = createApp({
       r._dl.downloading = true;
       r._dl.pct = 0;
       const resp = await this.startDownload(
-        r.content_hash, this.discoverRelaysList, null, false, r.title, r.signer_pubkey,
+        r.content_hash, this.discoverRelaysList, null, false, null, r.title, r.signer_pubkey,
         {
           onProgress: pct => { r._dl.pct = pct; },
           onDone: job => {
@@ -423,13 +438,13 @@ const app = createApp({
           },
           onError: err => {
             r._dl.downloading = false;
-            alert('error: ' + err);
+            this.showError('error: ' + err);
           },
         },
       );
       if (resp.error) {
         r._dl.downloading = false;
-        alert('error: ' + resp.error);
+        this.showError('error: ' + resp.error);
       }
     },
 
@@ -440,7 +455,7 @@ const app = createApp({
         content_hash: r.content_hash, relay: this.discoverRelaysList[0],
       });
       if (result.error) {
-        alert('verify error: ' + result.error);
+        this.showError('verify error: ' + result.error);
         r._verify.label = 'Verify';
         r._verify.busy = false;
         return;
@@ -485,6 +500,7 @@ const app = createApp({
         relay: this.splitRelays(this.hostForm.relays),
         advertise_host: this.hostForm.advertiseHost,
         tunnel: this.hostForm.tunnelEnabled ? this.hostForm.tunnelAddr : null,
+        lightning_node: this.hostForm.lightningNode || null,
       };
       const resp = await this.apiPost('/api/host', body);
       if (resp.error) {
@@ -530,10 +546,11 @@ const app = createApp({
       }, 500);
     },
 
-    async startDownload(contentHash, relays, outPath, lightning, title, signerPubkey, extra) {
+    async startDownload(contentHash, relays, outPath, lightning, lightningNode, title, signerPubkey, extra) {
       const resp = await this.apiPost('/api/download', {
         content_hash: contentHash, relay: relays, out_path: outPath,
-        lightning: lightning, title: title || null, signer_pubkey: signerPubkey || null,
+        lightning: lightning, lightning_node: lightning ? lightningNode : null,
+        title: title || null, signer_pubkey: signerPubkey || null,
       });
       if (resp.error) return resp;
 
@@ -587,10 +604,11 @@ const app = createApp({
         this.splitRelays(this.downloadForm.relays),
         this.downloadForm.out || null,
         this.downloadForm.lightning,
+        this.downloadForm.lightningNode,
         null,
         null,
       );
-      if (resp.error) alert('error: ' + resp.error);
+      if (resp.error) this.showError('error: ' + resp.error);
     },
 
     // ── identity / reputation ─────────────────────────────────────────

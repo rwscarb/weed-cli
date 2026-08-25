@@ -1,773 +1,108 @@
-# weed-cli
-=======
+# weed
 
-Brainstormed in #all-pdx 2026-08-22: a YouTube replacement indexed on Bitcoin,
-distributed over BitTorrent-style magnet links. This tracks what got built and
-what was actually learned, not just the idea.
+**Censorship-resistant video distribution — proof of concept.**
 
-## The core design problem
+BitTorrent-style storage and delivery, discovery via gossiped signed
+events instead of a canonical index, incentives paid directly over
+Lightning instead of a project token. This repo is the distribution and
+incentive layer; [`ott`](https://pypi.org/project/btcvm/) (the `btcvm`
+package) is the underlying archive/storage format it builds on.
 
-Storage and delivery over BitTorrent-plus-a-chain-timestamp is the easy part —
-solved plumbing. The two things that actually kill projects like this:
+Every mechanism below has a standalone proof-of-concept script that
+validates it in isolation, plus a real integration test with actual
+output (not simulated) — see [Status](#status) for what's verified.
 
-- **Incentives.** LBRY minted a token and got sued as an unregistered security.
-  BitTube minted a token and died to the standard watch-to-earn Ponzi spiral.
-  PeerTube minted nothing and stayed permanently niche — no incentive layer at
-  all, purely volunteer-hosted. Anchoring to *existing* BTC (no new token) and
-  paying for service directly over Lightning avoids both failure modes at once.
-- **Discovery.** A single global index or "most popular" list is exactly as
-  seizable as YouTube's own trending page. The answer that doesn't reintroduce
-  a chokepoint: no canonical list at all — gossiped signals (payments, in this
-  case), any number of independent, replaceable indexer apps computing their
-  own view, Nostr-style. Not built yet, just designed.
+## Contents
 
-## What's built
+- [Design goals](#design-goals)
+- [Architecture](#architecture)
+- [Quick start](#quick-start)
+- [Running a node](#running-a-node)
+  - [CLI](#cli)
+  - [Interactive shell](#interactive-shell)
+  - [Web UI](#web-ui)
+  - [Docker](#docker)
+- [Core mechanisms](#core-mechanisms)
+- [The integrated node](#the-integrated-node)
+- [Deploying relays](#deploying-relays)
+- [Status](#status)
+- [Known limitations](#known-limitations)
 
-### `poc_challenge_auction.py` — possession-gated reverse auction
+## Design goals
 
-`merkle_root`/`merkle_proof`/`verify_proof` are imported from the real,
-[published](https://pypi.org/project/btcvm/) `btcvm` package (`pip install
-btcvm`) — same functions `ott verify-chunk` runs locally. Used to be
-vendored copies (kept this repo dependency-free before btcvm was on PyPI);
-now that it's real and installable, this repo depends on it properly
-instead. `ott` is the storage/archive layer — what you have and can prove
-you have; this repo is the distribution/incentive layer built on top of
-it. Deliberately kept as separate packages rather than merged: `ott` stays
-the stable, already-published tool with real users, this stays free to be
-a rougher-edged PoC without dragging Lightning/Docker into `ott`'s
-dependency surface.
+Storage and delivery over BitTorrent-plus-a-chain-timestamp is the easy
+part. The two things that actually kill projects like this:
 
-In-process simulation, five peers, one 8-chunk file.
+- **Incentives.** LBRY minted a token and got sued as an unregistered
+  security. BitTube minted a token and died to the standard
+  watch-to-earn Ponzi spiral. PeerTube minted nothing and stayed
+  permanently niche — no incentive layer at all, purely
+  volunteer-hosted. Anchoring to existing BTC (no new token) and paying
+  for service directly over Lightning avoids both failure modes at once.
+- **Discovery.** A single global index or "trending" list is exactly as
+  seizable as YouTube's own trending page. The answer that doesn't
+  reintroduce a chokepoint: no canonical list at all — gossiped signals
+  (likes, subscribes, payments), any number of independent, replaceable
+  indexer apps computing their own view, Nostr-style.
 
-**Part 1 — chunk-index challenge + auction.** A naive price-only auction picks
-the cheapest bidder regardless of whether they can deliver — and does, in the
-run captured here (a peer holding zero chunks wins on price alone). Gating bid
-eligibility on passing a random chunk-index + Merkle-proof challenge fixes it:
-a peer with nothing gets caught every round; a peer that tampers its response
-~70% of the time gets caught most rounds and wins once by pure luck — real
-evidence that a single spot-check isn't airtight, only a statistical one is.
-A legitimately partial holder (only half the chunks) correctly sits out
-rounds for chunks it doesn't have, without being flagged dishonest.
+## Architecture
 
-**Part 2 — nonce-salted challenge + timing bound.** Knowing a file's public
-SHA256 gives an attacker nothing — SHA256 preimage resistance means you can't
-derive `hash(chunk||nonce)` from `hash(chunk)` alone, so a peer with only the
-published hash can't even attempt a response. A peer that *does* have the
-real bytes but fetches them from someone else in real time (relaying) answers
-with a cryptographically **correct** hash every time — the nonce alone can't
-catch that. Only an added timing bound can, because the relay hop costs real
-latency a local holder never pays.
+| Component | Role |
+|---|---|
+| `node.py` | The real node: hosts, discovers, downloads, likes, subscribes. Wraps the actual wire protocol, possession-challenge auction, reputation, and trust graph. |
+| `discovery_relay.py` | Dumb store-and-forward HTTP relay for signed events (`publish`/`like`/`subscribe`/`attestation`). No ranking logic, no content opinion — verifies signatures, stores, serves back. |
+| `tunnel_relay.py` | NAT-traversal relay: pairs a downloader with a host that has no reachable inbound port, via a rendezvous protocol (REGISTER/CONNECT/NEWSTREAM/DATA). |
+| `dht.py` | Kademlia-based discovery (`kademlia` library) — finds peers with no relay at all. Covers `announce`/`lookup` only, not the richer signed-event system. |
+| `weed.py` / `shell.py` | Argparse CLI and an interactive, tab-completing shell (`cmd.Cmd`, same pattern as `ott`'s shell). |
+| `web_ui.py` + `web/` | Local browser control UI — stdlib HTTP JSON API plus a static, no-build-step frontend. |
+| `lightning_settle.py` + `lightning/` | Real Lightning HTLC settlement against two LND nodes on regtest. |
+| `poc_*.py` | Standalone proofs for each mechanism (auction, network timing, reputation, discovery, real archive) — see [Core mechanisms](#core-mechanisms). |
 
-### `poc_network_challenge.py` — the same mechanism over real sockets
-
-Takes the timing-bound claim off paper: real TCP, real OS subprocesses, real
-`time.perf_counter()`, loopback (127.0.0.1). Three modes:
-
-- `holder <port>` — actually stores chunks, answers directly
-- `relay <port> <holder_host> <holder_port>` — stores nothing, chains a
-  second real TCP connection to the holder to fetch real bytes before
-  answering
-- `verify-remote <h_host> <h_port> <r_host> <r_port> [b_host] [b_port]` —
-  client mode: connects to already-running holder/relay (e.g. other
-  containers) and runs the separation analysis against them, with an
-  optional second honest holder as a same-vs-same jitter baseline
-- (no args) — local convenience: single-shot challenge rounds on loopback, narrated
-- `stats` — local convenience: spawns holder+relay as subprocesses on
-  loopback, bulk collection (80 real samples per role) + bootstrap analysis
-  of how many repeated challenges it takes for the *session mean* to
-  reliably separate holder from relay
-
-**Real finding, not the expected one:** on loopback, single-shot timing does
-*not* reliably separate a holder from a relay — the honest holder's worst
-recorded round was slower than the relay's best. Averaging repeated
-challenges does separate them (typically somewhere in the k=3–20 range across
-several runs — see below); trust a session average, not any one round.
-
-RunPod was down the first time this was tried, so real WAN latency got
-measured against public hosts as a substitute (1.1.1.1, 8.8.8.8,
-api.github.com: 5-30ms real TCP-connect RTT) — suggestive, not conclusive.
-**Update: ran it for real once a RunPod box came back up**, tunneled over a
-real SSH connection (`ssh -L`, since the pod only exposes its SSH port, not
-arbitrary TCP) — local honest holder vs. a local relay that secretly fetches
-from that real remote box for every challenge:
-
-```
-holder: mean 0.254ms  min 0.186ms  max 1.250ms
-relay:  mean 432.648ms  min 395.583ms  max 638.218ms
-
-session size k   worst honest mean   best cheater mean  separated?
-             1             1.250ms           395.583ms  YES
-```
-
-~1700x gap, separates cleanly at k=1 — single-shot is all you need once real
-geographic distance is involved. Confirms the substitute-host hypothesis:
-real WAN distance makes this *easy*; the hard case this PoC actually
-stress-tests is two peers that are genuinely close together, which is
-exactly when a nearby relay is hardest to catch on timing
-alone.
-
-![session-size separation chart](poc_challenge_separation.png)
-
-Chart from `viz_challenge_separation.py` — regenerates real measurements each
-run rather than plotting a fixed snapshot. **The exact crossover k is not a
-fixed constant** — it moved between k=3, k=8, and k=20 across different runs
-of this same script on the same machine, purely from real system jitter. That
-instability is itself the finding: don't hardcode a specific k, measure it
-live and adapt, and prefer statistical separation over any fixed threshold.
-
-### `docker-compose.yml` — the same test over real container networking
-
-Four services: `holder1` and `holder2` (two independent honest peers),
-`relay` (holds nothing, relays from `holder1` over the compose network),
-`verifier` (runs the same repeated-challenge analysis against all three,
-using DNS service names instead of loopback).
+## Quick start
 
 ```bash
-docker compose up --build --abort-on-container-exit verifier
+pip install -e .          # installs the `weed` command (see pyproject.toml)
+# or: pip install -r requirements.txt   # run via python3 weed.py instead
+
+weed --help
 ```
 
-Real run, over podman's docker-compose shim, actual separate containers on
-the compose bridge network:
-
-```
-holder: mean 0.246ms  min 0.188ms  max 0.953ms
-relay:  mean 0.483ms  min 0.414ms  max 1.134ms
-holder2 (2nd honest holder, same-vs-same jitter baseline): mean 0.236ms  min 0.209ms  max 0.311ms
-
-session size k   worst honest mean   best cheater mean  separated?
-             1             0.953ms             0.414ms  no
-             2             0.626ms             0.414ms  no
-             3             0.712ms             0.421ms  no
-             5             0.541ms             0.432ms  no
-             8             0.430ms             0.437ms  YES
-            12             0.425ms             0.445ms  YES
-            20             0.346ms             0.448ms  YES
-            30             0.314ms             0.451ms  YES
-```
-
-Same shape as loopback (single-shot doesn't separate, k≈8 does), plus one
-useful sanity check the loopback version can't give: holder2's baseline mean
-(0.236ms) sits right next to holder1's (0.246ms) — two equally honest,
-unrelated containers naturally land close together, while the relay
-(0.483ms, roughly double) is a real structural gap, not just inter-container
-noise.
-
-### `poc_reputation.py` — persistent local reputation + signed portable attestations
-
-Two mechanisms, both real (Ed25519 via the `cryptography` package, actual
-signing and verification, not simulated):
-
-1. **Local reputation store** (`ReputationStore`, persisted to JSON) — a
-   client's own record of direct experience with a peer (passes/fails/avg
-   latency), so a known-good peer doesn't need to re-earn trust from zero on
-   every interaction.
-2. **Signed attestations** — a client signs its own verification outcome for
-   a peer and hands the signed blob to another client, who didn't do the
-   verification but can check the signature and decide how much to trust it.
-   Same shape as PGP's Web of Trust, applied to possession-verification
-   outcomes instead of key identity — including PGP's actual historical
-   weak point: the crypto is the easy part, "how much do I trust this
-   signer" is the unsolved UX problem, not a technical one.
-3. **Revocation** — a signer can kill their own earlier vouch (`sign_revocation`,
-   keyed to the attestation's content-hash `attestation_id`). Only accepted
-   if the revocation's signer matches the original attestation's signer;
-   the revoked attestation stays on record rather than being deleted, so
-   "X vouched for Y, then revoked it" stays an honest, auditable fact
-   instead of quietly disappearing.
-
-Demonstrated for real in one run: a fresh client with zero direct history
-bootstraps a trust score for an unknown peer purely from another client's
-signed vouch; a vouch from a signer you don't trust at all is cryptographically
-valid but contributes zero weight; mutating a signed payload after the fact
-(`passes: 8 → 800`) is caught by signature verification; a 90-day-old
-attestation is worth 0.125x a fresh one under a 30-day trust half-life;
-alice revoking her own vouch drops bob's trust score for that peer without
-bob ever re-verifying it himself; mallory forging a revocation of *alice's*
-vouch (valid signature, wrong signer) is correctly rejected; a revocation
-referencing an attestation nobody's ever seen is rejected too.
-
-### `lightning_settle.py` + `lightning/` — real Lightning HTLC settlement
-
-Replaces `poc_challenge_auction.py`'s mock "settlement" print with a real
-one: two real LND nodes (Lightning Labs' production node software) on
-regtest, real bitcoind backing them, a real funded channel between them.
-`poc_challenge_auction.py --lightning` settles every auction round's winner
-with a genuine BOLT11 invoice + HTLC — not simulated, and not just trusting
-LND's own "SUCCEEDED" status: `lightning_settle.py` independently re-hashes
-the revealed preimage and checks it against the invoice's payment_hash
-locally before calling it settled.
-
-Real run, 5 winning rounds, real preimages each verified against their own
-payment hash:
-
-```
-WINNER: bob      9 sat   preimage 4ac71143706b...  payment_hash d1be1130c553...
-WINNER: bob      5 sat   preimage eea88d802d1a...  payment_hash 8acabea4ddf7...
-WINNER: bob      6 sat   preimage 76f1ade0f9be...  payment_hash f9c9bda28be0...
-WINNER: bob     10 sat   preimage 96e696c1cde9...  payment_hash f8eeb66d1878...
-WINNER: mallory  1 sat   preimage 508385841cb3...  payment_hash 1c2872b6018f...
-```
-
-Bob's cumulative channel balance after the run matched the sum of every
-settled payment exactly, checked directly against LND rather than assumed.
-Full setup steps in `lightning/README.md` — real bitcoind + LND takes a
-one-time channel-funding setup regtest can't skip (mine to coinbase
-maturity, open a channel, mine confirmations) before it's usable.
-
-### `poc_real_archive_challenge.py` — real `.ott` archive, real video, real scale
-
-Every other PoC file here used `os.urandom` fake chunks (8 of them).
-This one points the same mechanism at a real 217MB video, archived with the
-real `ott` CLI at a real 64KB chunk size:
-
-```
-real archive: real_video.mp4, 217,831,234 bytes, 3324 real chunks x 65536 bytes
-recomputed Merkle root matches ott's own commit: True
-```
-
-The thing this was actually checking — proof size at real scale:
-
-```
-chunk     0: 12 steps, 396B raw, 1176B as JSON
-chunk  1662: 12 steps, 396B raw, 1168B as JSON
-chunk  3323: 12 steps, 396B raw, 1167B as JSON
-```
-
-12 proof steps at 3324 real chunks vs. 3 steps at the toy 8-chunk scale —
-exactly log2(N), not linear, confirmed with real numbers instead of just
-trusting the math. Even a 2-hour movie at these settings (~10GB, ~163,840
-64KB chunks) would only need ~17 steps, still under 1KB. Then ran the same
-nonce-salted-challenge logic from `poc_challenge_auction.py` Part 2 against
-real bytes read straight off disk at real offsets — all 5 real rounds
-checked out: hash matches ott's own committed leaf, Merkle proof verifies,
-nonce response is internally consistent.
-
-`real_archive/real_video.mp4` isn't committed to this repo (208MB, and it's
-not this repo's to redistribute) — `real_archive/.ott/`'s metadata is
-tracked, so the chunk list and commitment are there for inspection even
-without the video itself. Reproduce with any file:
+Three terminals — host a file, discover it, download it:
 
 ```bash
-cd real_archive
-python3 /path/to/btcvm/ott.py init
-# edit .ott/config, set "chunk_size" to whatever you want (65536 used here)
-python3 /path/to/btcvm/ott.py add your_video.mp4
-python3 /path/to/btcvm/ott.py commit
-cd ..
-python3 poc_real_archive_challenge.py
-```
-
-### `discovery_relay.py` + `poc_discovery.py` — discovery, no canonical index
-
-The last unsolved piece from the original brainstorm, actually built: no
-single "trending" list, no server whose seizure kills discoverability.
-Three independent relay processes (`discovery_relay.py` — real stdlib
-`http.server`, no deps), each deliberately dumb: verifies a posted event's
-signature (a relay won't store garbage) but has zero opinion on content
-quality, zero ranking logic. A creator (carol) publishes a real event
-pointing at the real video's real Merkle root from item 6. Viewers like it
-and subscribe to each other, spread across the three relays — nobody posts
-to all three, on purpose.
-
-Two clients, `bob` (subscribes to dan + erin) and `mallory` (subscribes to
-frank only), each query all three relays, verify every event's signature
-themselves (never trust a relay's word for it), and compute their own
-ranking from their own subscribe graph — subscriptions *are* the trust
-graph, not a separate feature, same insight from the Slack thread now
-actually running as code:
-
-```
-same 27 gossiped events, both clients saw all 23 likes (3 honest + 20 sybil),
-but scored the content differently — 2.0 (bob) vs 1.0 (mallory) — because
-ranking runs on each client's own trust graph, not vote count.
-```
-
-A 20-identity sybil swarm likes the same content — every signature is
-real and individually valid, a relay has no basis to reject any of them —
-and moves neither client's score, because neither bob nor mallory
-subscribes to any of the sybils. Sybil resistance from the trust graph,
-not from relay-side moderation.
-
-Then relay:9101 — the one carol's publish event and dan's like both
-happened to live on — gets killed outright. Real result, not a clean win:
-the content stays discoverable and rankable (erin's like survived on a
-different relay), but the human-readable title and dan's like are gone for
-good, since neither was posted anywhere else. Redundancy has to be
-deliberate — post to more than one relay — it isn't automatic just because
-relays are plural. Same limitation a real Nostr relay dying would have.
-
-```bash
-python3 poc_discovery.py
-```
-
-### `node.py` — the integration piece: host, discover, download, for real
-
-Everything above is a demo of one mechanism at a time. `node.py` (via
-`weed.py host/discover/download/like/subscribe/whoami`) is the actual
-integration: a real node that hosts a real archived file over the real
-wire protocol from `poc_network_challenge.py` (extended with `INFO` and
-`LEAVES` so a downloader can learn the archive's shape first), announces
-itself on a real relay, and — new, not just wired from existing pieces —
-actually downloads a file from a peer and reassembles it on disk, which
-nothing before this verified chunk-by-chunk *and* wrote a real file.
-
-A persistent identity now lives at `~/.weed_identity.key` — every other
-script tonight generated a fresh Ed25519 keypair per run, which is fine for
-a demo but means nobody could ever accumulate reputation or be subscribed
-to across invocations. A real node needs a stable pubkey.
-
-Real end-to-end run: hosted the real 217MB video, discovered it from a
-separate process, downloaded it to a new path, and diffed the result
-against the original with `cmp` (not just checking the tool's own claim of
-success) — byte-for-byte identical, matching SHA256 on both sides, 3324
-chunks downloaded and verified in 1.3s.
-
-Caught a real bug doing this, not a clean pass on the first try: `ott`
-records a video's `sha256` manifest field as the **Merkle root** over its
-chunk hashes (`digest = merkle_root(chunks)` in `ott.py`'s `cmd_add`), not
-a linear whole-file hash — my first version streamed a plain
-`hashlib.sha256()` over the received bytes and compared that, which does
-not and structurally cannot equal a Merkle root. Every individual chunk
-was verifying correctly the whole time; only the final whole-file check
-was comparing the wrong thing. Fixed by recomputing the Merkle root over
-the received leaves and checking it against the host's advertised
-`sha256` — done *before* downloading any chunk, not after, so a host lying
-about its own archive gets caught immediately instead of after wasting
-bandwidth on it.
-
-```bash
-# terminal 1
+# terminal 1: a discovery relay (or use the shell's `relay` command instead — see below)
 python3 discovery_relay.py 9101
 
-# terminal 2 — host the video from item 6
-python3 weed.py host real_archive --port 9201 --relay http://127.0.0.1:9101
+# terminal 2: host something (real_archive/ has a small demo .ott archive)
+weed host real_archive --port 9201 --relay http://127.0.0.1:9101
 
 # terminal 3
-python3 weed.py whoami
-python3 weed.py discover --relay http://127.0.0.1:9101
-python3 weed.py download <content_hash_prefix> --relay http://127.0.0.1:9101 --out downloaded.mp4
-python3 weed.py like <content_hash> --relay http://127.0.0.1:9101
-python3 weed.py subscribe <target_pubkey> --relay http://127.0.0.1:9101
+weed whoami
+weed discover --relay http://127.0.0.1:9101
+weed download <content_hash_prefix> --relay http://127.0.0.1:9101 --out downloaded.mp4
+weed like <content_hash> --relay http://127.0.0.1:9101
+weed subscribe <target_pubkey> --relay http://127.0.0.1:9101
 ```
 
-`--advertise-host` on `host` matters if you're not on localhost — no NAT
-traversal here, it just tells the relay what address to hand out, real
-reachability is on you. Same point-to-point-known-address limitation
-named earlier in this README, now visible as an actual CLI flag instead of
-just a caveat in prose.
+`--advertise-host` matters once you're off localhost — there's no NAT
+traversal on the direct path, it just tells the relay what address to
+hand out; reachability is on you (see `--tunnel` below for the
+NAT-friendly path).
 
-### `download` now runs the actual stack, not just a direct fetch
+## Running a node
 
-Until this point, `download` trusted whichever host `discover` found
-first, for free, with no possession check and no reputation. That was the
-real gap flagged after the last round of shell bug-fixes: the auction
-(`poc_challenge_auction.py`), the reputation/trust-graph layer
-(`poc_reputation.py`), and Lightning settlement (`lightning_settle.py`)
-were all built and validated standalone, but none of them were reachable
-from a real download. Now they are:
+### CLI
 
-1. **Resolve every host** claiming to have the content (`discover` already
-   deduped by event, not by content — `download_with_auction` groups by
-   content_hash so a second host publishing the same file actually gets
-   considered, not silently dropped).
-2. **Possession-challenge each one** — sample-FETCH `k` random chunks
-   (default 3) and verify against the already Merkle-root-checked LEAVES.
-   Scoped deliberately to poc_challenge_auction.py's **Part 1** mechanism
-   (chunk-index challenge), not Part 2's nonce/timing relay-detection —
-   that one needs ground-truth bytes the verifier already trusts, which a
-   first-time downloader doesn't have until *after* this same sampling
-   step. Noted here rather than silently narrowed.
-3. **Auction survivors** by local reputation first, then price — same
-   "challenge gates the auction" shape as the original PoC's naive-vs-
-   gated comparison. A host with no history starts at 0.0, same as
-   everyone; reputation only pulls ahead of price once there's real
-   experience behind it (verified — see below).
-4. **Pay the winner** over a real Lightning HTLC if `--lightning` is given
-   and the price is nonzero — same `lightning_settle.py` regtest demo path
-   as before. Honest limitation, not glossed over: this settles with the
-   fixed alice/bob demo nodes, not a general "pay this specific host's own
-   Lightning node" protocol — that would need hosts to serve their own
-   real BOLT11 invoices, which isn't built.
-5. **Download and record** — same chunk-verified `download()` as before,
-   then the outcome (pass/fail, latency) gets written to
-   `~/.weed_reputation.json` via `ReputationStore.record_direct`, so the
-   next auction for this host starts from real history instead of 0.0.
+`weed.py` is a thin argparse wrapper — `weed <subcommand> --help` for
+any command. Also runs straight from source: `python3 weed.py ...`.
 
-Real test, two independent hosts (separate identities, separate `HOME`s so
-podman's rootless state didn't collide) serving the same real video —
-one free, one priced at 500 sat:
+### Interactive shell
 
-```
-found 2 candidate host(s) for 7f2477c7ea675004...
-  + 127.0.0.1:9202: possession verified (3/3 chunks), price=0 sat, reputation=0.00, avg_latency=3.4ms
-  + 127.0.0.1:9203: possession verified (3/3 chunks), price=500 sat, reputation=0.00, avg_latency=0.7ms
-selected 127.0.0.1:9202 — price 0 sat, reputation 0.00, 3.4ms avg
-```
-
-Ties on reputation, cheapest wins — correct. Then manually seeded
-contrasting reputations (hostA bad, hostB good) to prove reputation
-actually *overrides* price rather than the selection just always
-defaulting to cheapest:
-
-```
-+ 127.0.0.1:9202: ... price=0 sat, reputation=0.10 ...
-+ 127.0.0.1:9203: ... price=500 sat, reputation=1.00 ...
-selected 127.0.0.1:9203 — price 500 sat, reputation 1.00, 0.4ms avg
-```
-
-Picked the pricier, more trusted host. Then killed the free host outright
-and re-ran with `--lightning`: real HTLC settled (500 sat, preimage
-independently re-verified against the invoice's own `r_hash` via
-`lncli listinvoices`, not just trusting the printed claim), download
-proceeded, byte-identical against the source via `cmp`.
-
-```bash
-python3 weed.py download <content_hash> --relay http://127.0.0.1:9101 \
-    --rounds 5 --lightning --out downloaded.mp4
-```
-
-`host --price N` sets what a host charges (sats, default free — `PRICE` is
-a new wire-protocol verb, backward compatible: a host that doesn't
-implement it just gets treated as free by an older/newer client either way).
-
-### Transitive trust — real attestations flow through the subscribe graph
-
-The gap named right after the auction landed: `select_host` was only ever
-passed *your own* direct history, never other people's signed vouches, so
-a host you'd genuinely never dealt with always scored a flat 0.0 no matter
-who else had already verified it. `poc_reputation.py`'s attestation/
-revocation machinery could support exactly this — it just was never fed
-anything, since attestations were never gossiped through a relay the way
-publish/like/subscribe already were.
-
-Considered adopting real PGP for this (Ryan asked) — decided against it:
-PGP's actual trust-level/path-counting *idea* (marginal vs full trust,
-computed transitively) is worth borrowing, but the OpenPGP *format* is
-built for signing emails, not cheaply gossiping dozens of small JSON
-events, and its classic path to real interoperability — public keyservers
-— reintroduces exactly the single-point-of-failure problem discovery.py's
-relay design exists to avoid. Built the trust-level idea on the Ed25519
-signing already in place instead of adopting the standard.
-
-`build_trust_graph()`: real BFS outward from your own pubkey through real
-signed `subscribe` events pulled from a relay (a subscribe *is* a trust
-edge — same insight from the original discovery-layer design, now actually
-computed transitively instead of 1-hop-only). Trust decays per hop
-(default 0.5×) — a friend counts fully, a friend-of-a-friend counts less.
-Takes the shortest path to each reachable pubkey, not the sum across every
-path — summing would let a sybil ring inflate a target's trust just by
-adding more low-value paths to it.
-
-`download_with_auction` now also pulls real `attestation` events from
-relays (new event type — no relay code changes needed, `discovery_relay.py`
-already verifies and filters by type generically), verifies each one, and
-feeds them into `select_host` alongside the trust graph. And after every
-successful download it publishes its own outcome as a real signed
-attestation, not just recording it locally — so the next person who trusts
-*you*, even transitively, benefits without ever dealing with that host
-first.
-
-Real end-to-end proof, not just the math: identity A downloaded from a
-host directly (0.00 reputation, no history, same as before this change),
-which auto-published a real attestation. A second identity, ROOT, who had
-**never talked to that host**, subscribed to A (one real signed edge), then
-ran `download`:
-
-```
-trust graph: 1 pubkey(s) reachable within 3 hop(s) of your own subscribes
-pulled 1/1 real attestation(s) from relays (others' vouches, weighted by your trust in whoever signed them)
-  + 127.0.0.1:9204: possession verified (3/3 chunks), price=0 sat, reputation=1.00 (1 attestation(s), weighted by signer trust + age), avg_latency=0.4ms
-```
-
-Would've been a flat `reputation=0.00` before this change — ROOT had zero
-direct history with the host. Instead it inherited A's real, already-
-verified experience through one real hop of trust. Byte-identical download
-confirmed via `cmp`, same as every other download in this repo.
-
-Separately verified the decay math itself against a real 3-hop chain
-(root→A→B→C) plus a disconnected stranger: `A=0.5, B=0.25, C=0.125`,
-stranger absent from the graph entirely, `max_hops` correctly bounding how
-far it searches — exact, not approximate.
-
-### `tunnel_relay.py` + persistent sessions in `node.py` — NAT traversal
-
-`host --advertise-host`'s own help text used to say it outright: "no NAT
-traversal here." Real gap — almost nobody has a directly reachable
-inbound port. Fixed with a relay-mediated tunnel rather than real
-STUN/ICE hole-punching: works behind *any* NAT including CGNAT (both
-sides only ever make outbound connections, so there's nothing for a
-firewall to block), at the honest cost of relay bandwidth/latency and
-someone having to run `tunnel_relay.py` somewhere reachable — same
-operational shape as already running a discovery relay, not a new kind of
-problem.
-
-Rendezvous protocol (hand-rolled to match this repo's own line-based wire
-protocol rather than pulling in an external tunnel tool like `bore`):
-a NAT'd host opens one persistent outbound `REGISTER <token>` control
-connection; a downloader connects and sends `CONNECT <token>`; the relay
-asks the host to dial back (`NEWSTREAM <stream_id>` on the control
-channel, `DATA <stream_id>` as the reply) and, once paired, does nothing
-but shovel raw bytes between the two sockets — same "dumb relay, no
-opinion on the payload" design `discovery_relay.py` already uses, just
-for bytes instead of signed JSON events. `token` is the archive's
-`content_hash`; the relay has no idea what it means, same as everywhere
-else in this repo that keys off it.
-
-Had to fix a real prerequisite bug first, not just add the relay: every
-wire-protocol command (`INFO`, `LEAVES`, one `FETCH` per chunk — 3324 of
-them for the real archive) used to open a brand-new TCP connection.
-Cheap directly, fatal through a relay — every single chunk would pay a
-full rendezvous round-trip before any bytes moved. Fixed by giving both
-sides a persistent session (`HostConnection` client-side, `serve_session`
-host-side, looping over many commands per connection instead of one) —
-a net win for direct connections too, not just a tunnel workaround.
-
-Second real bug, caught while verifying this against real sockets, not
-just in review: Python's `socketserver.ThreadingMixIn` closes a
-connection's socket the instant its handler function *returns* — a
-handler that spawns a pipe thread and returns immediately gets its own
-socket killed out from under that thread mid-transfer. Fixed by having
-each handler thread block for the tunneled session's full lifetime
-(`_Pairing`'s `ready`/`done` events in `tunnel_relay.py`) instead of
-firing off detached threads and returning early. First attempt failed
-with `json.decoder.JSONDecodeError: Expecting value` — an empty response,
-not a corrupted one, which is exactly what a socket closed mid-read looks
-like.
-
-Real end-to-end proof: hosted the real 217MB/3324-chunk archive,
-advertised at a deliberately unreachable address (`10.255.255.1`, not
-localhost) so there was no possibility of a direct connection carrying
-the download, `--tunnel 127.0.0.1:9199`. Downloaded entirely through the
-tunnel, `cmp`-verified byte-identical against the source, 3324 chunks in
-1.4s — comparable to a direct download, not a meaningfully slower path.
-
-```bash
-# terminal 1
-python3 discovery_relay.py 9101
-# terminal 2
-python3 tunnel_relay.py 9199
-# terminal 3 — no reachable --advertise-host at all
-python3 weed.py host real_archive --port 9201 --tunnel 127.0.0.1:9199 \
-    --relay http://127.0.0.1:9101 --advertise-host 10.255.255.1
-# terminal 4
-python3 weed.py download <content_hash> --relay http://127.0.0.1:9101 --out downloaded.mp4
-```
-
-Additive, backward-compatible protocol change, same shape as the
-optional `PRICE` wire verb: `publish()` gained an optional `tunnel`
-field (`'relay_host:relay_port'` or absent); a candidate without it is
-just connected to directly, exactly as before this existed.
-
-**TLS**, for tunnel relays that terminate it at the edge instead of
-speaking it themselves (deployed one on Fly with `handlers = ["tls"]` —
-`fly.tunnel-relay.toml` + `Dockerfile.tunnel-relay` in this repo): prefix
-the address with `tls://` — `--tunnel tls://tunnel.example.com:9199`.
-`tunnel_relay.py` itself never changes; edge termination decrypts before
-the bytes ever reach it, so only the two ends that actually cross the
-public internet (the host's `REGISTER`/`DATA` connections, a
-downloader's `CONNECT`) wrap the socket in
-`ssl.create_default_context()` — real CA validation by default, not a
-weakened check. Verified against a real self-signed-cert TLS-terminating
-proxy built specifically to test this (mimicking exactly what Fly's edge
-does): confirmed the client correctly *rejects* an untrusted cert before
-trusting it, then a full host→tunnel→download round-trip over the
-encrypted path, byte-identical result.
-
-**Heartbeat**, for the same idle-connection problem real deployments
-actually hit: the `REGISTER` control connection sends nothing between
-registering and the first real download, sometimes for a long time.
-Fly's own edge (confirmed from real production logs, not a guess) resets
-TCP connections idle more than a few minutes, which silently
-unregistered the host with no error until the next download failed.
-Fixed with a small periodic `PING` on the control connection —
-`tunnel_relay.py` needed zero changes, its `REGISTER` loop already
-discards anything it receives that isn't relevant. Proved it against a
-real idle-enforcing test server (3-second idle limit): without the
-heartbeat, killed at exactly 3.0s; with it, survived 8 full seconds with
-no kill event at all.
-
-### `dht.py` — real Kademlia DHT discovery, no relay required
-
-Every other discovery path in this repo needs a relay URL, told to you
-out of band — real, and a real limitation, until now: `dht.py` answers
-"how do two nodes find each other with no shared server" using an actual
-Kademlia DHT, via the real `kademlia` PyPI library rather than
-reimplementing node-IDs/k-buckets/RPC routing from scratch. Scoped
-honestly: this covers `announce(content_hash, host_addr)` /
-`lookup(content_hash)` — not the richer signed-event system
-(publish/like/subscribe/attestation/trust-graph) `discovery_relay.py`
-already handles, since Kademlia's plain key→value store isn't a natural
-fit for an append-only event log. That richer system staying on relays
-is a deliberate scope boundary, not an oversight.
-
-Multiple announcers of the same content are merged, not overwritten —
-`kademlia`'s `set()` is single-value-per-key, so a naive announce would
-silently drop everyone else's listing; `_announce()` fetches, merges,
-re-announcing from the same host again correctly doesn't duplicate.
-
-Proved with three separate, escalating real tests: three chained nodes
-(C only ever bootstrapped through B, never spoke to A directly) — content
-announced on A was found from C, real Kademlia routing, not a shared-
-memory illusion. Two different hosts announcing the same content — both
-preserved. And the strongest one: a node announced content, then that
-node's *entire process exited* — a completely independent fourth process,
-knowing only the original bootstrap node, still found what was announced.
-Real value replication surviving the announcer going offline, which is
-the actual point of a DHT over a relay.
-
-```bash
-python3 dht.py 8468                          # first node, new swarm
-python3 dht.py 8469 127.0.0.1:8468           # second node, joins the first
-```
-
-Or from the shell: `dht start [port] [bootstrap_host:port]`,
-`dht announce <content_hash> <host:port> [title]`, `dht lookup <content_hash>`.
-
-### `web_ui.py` — local web UI
-
-Hosting/discovering/downloading/liking/subscribing all required
-memorizing `weed.py`'s CLI flags — real friction for anyone who isn't
-already comfortable with argparse. `web_ui.py` is a small stdlib
-`http.server`/`ThreadingHTTPServer` JSON API — same tool
-`discovery_relay.py` already uses, no new dependency, still just the
-three packages in `requirements.txt` — wrapping the exact same
-`node.py` functions the CLI calls, no reimplemented protocol logic. The
-frontend (`web/`) is a single static page, vanilla JS, no build step —
-matches the rest of this repo's no-toolchain style.
-
-Binds `127.0.0.1` by default on purpose: a local control surface, not
-something meant to face the internet, and there's no auth built — same
-"reachability is on you" honesty `--advertise-host`'s docs already apply
-elsewhere. `--bind` widens it at your own risk.
-
-Endpoints, all thin wrappers: `GET /api/whoami`, `GET /api/discover`,
-`POST /api/host` (backgrounds `run_host_server`/`run_host_tunnel` the
-same way `shell.py`'s `do_host` already does) + `GET /api/hosts`,
-`POST /api/download` + `GET /api/download/<job_id>` for polling progress
-(`download()` gained an optional `on_progress(idx, n_chunks)` callback,
-default no-op, so CLI output is unaffected), `POST /api/like`,
-`POST /api/subscribe`, `GET /api/reputation/<pubkey>`,
-`GET /api/stream/<job_id>`, `GET /api/qr?data=...`, `GET /api/lan-url`.
-
-Real end-to-end proof, not just the API responding: hosted a file
-through the **Host** form, confirmed a second terminal's `weed discover`
-actually saw it (proves the API called the real `node.publish`, not a
-mock); downloaded through the **Downloads** form with a live-polling
-progress bar, `cmp`-verified byte-identical; liked and subscribed
-through the UI, confirmed the real signed events landed on the relay by
-querying it directly.
-
-**Streaming** (`/api/stream/<job_id>`) — the actual gap behind "play
-media on my phone": the UI could already trigger a download, but the
-bytes only ever landed on this server's disk, never reached the browser.
-Real HTTP range support (`Accept-Ranges`, `206 Partial Content`, `416`
-for out-of-range), so a `<video>` tag can seek instead of downloading
-blind. Verified with real range requests against a real completed
-download — full fetch, a mid-file range, and an open-ended range, all
-byte-exact against the source; error paths (out-of-range, unknown job)
-checked too.
-
-**QR codes** (`/api/qr`, terminal QR on startup) — same `qrcode` package
-`ott`'s own `ott qr` already uses. `--bind 0.0.0.0` auto-detects the real
-LAN IP (a UDP-route trick, no packet actually sent) instead of printing
-the useless literal `0.0.0.0`, so the printed/scanned URL is one a phone
-can actually reach — and it's computed server-side and exposed via
-`/api/lan-url` specifically because the browser's own
-`location.origin` lies the instant you load the page via `localhost`
-instead of the LAN address; a real bug this caused (the header's "open
-on phone" QR pointing at `127.0.0.1`) was reproduced and fixed by having
-the client fetch the server's own answer instead of trusting
-`location.origin`.
-
-```bash
-python3 weed.py serve                # alias for `web`, positional args: serve [bind] [port]
-python3 weed.py serve 0.0.0.0 8080    # reachable from your phone; prints a scan-to-open QR
-# or, from the shell: `serve [bind] [port]`
-```
-
-### `Dockerfile.node` + `docker-compose.node.yml` — a node in a container
-
-Same `web_ui.py`, packaged to run somewhere other than a laptop — a
-always-on box, a VPS, anywhere you'd rather not keep a terminal open.
-Separate from the repo's other Dockerfiles on purpose: `Dockerfile` is
-`poc_network_challenge.py`'s holder/relay/verifier demo, and
-`Dockerfile.discovery-relay` / `Dockerfile.tunnel-relay` are the two
-dumb store-and-forward relays; this one is the actual node a person
-runs, `node.py` + `web_ui.py` + the static `web/` frontend.
-
-Identity key, reputation store, and library manifest all persist across
-restarts — `$HOME` is pointed at a named volume (`node-data`) inside the
-container, and all three are read/written via `os.path.expanduser`
-(`node.py`'s `IDENTITY_PATH`, `web_ui.py`'s `LIBRARY_PATH`/reputation
-store), so one volume covers all three instead of generating a fresh
-throwaway pubkey every restart. `downloads/` gets its own symlink into
-the same volume for the same reason.
-
-`/share` is a separate, optional *bind* mount rather than another named
-volume, on purpose: the `.ott` archives you're hosting should be real
-files on the host you can see/add/remove directly, not hidden inside
-Docker's volume storage. Defaults to `./share` next to the compose file
-(created empty on first run if missing); override with `WEED_SHARE_DIR`.
-In the web UI's Host form, point the archive dir at `/share` — that's
-this same host directory, from inside the container.
-
-Hosting a directory with more than one archived file needed its own
-fix here: `_run_host_job` originally used `find_manifest_entry`
-(singular — collapses to the single most-recently-added file), the
-exact same bug `load_manifest_entries` (plural) was already written to
-fix for `shell.py`'s `do_host`. Ported the same loop — every file in
-the directory now gets announced to the relay and, if `--tunnel` is in
-use, its own tunnel registration (one control connection per file,
-same as `do_host`). A second, unrelated bug surfaced testing this for
-real: `last_path` in a manifest entry is an absolute path recorded at
-`ott add` time, on whatever machine ran it — trusted unconditionally,
-it broke the instant the same content was mounted somewhere else (e.g.
-`/share` in the container vs. `/home/user/share` where it was
-originally archived), since a stale-but-non-empty `last_path` still
-short-circuited past a perfectly valid `archive_dir` fallback. Fixed
-with `node.resolve_file_path(entry, archive_dir)`, used by
-`run_host_server`, `web_ui.py`'s host job, and `shell.py`'s `do_host`
-alike: trust `last_path` only if it actually exists on disk.
-
-```bash
-make node               # build + run, http://127.0.0.1:8080, data persists in a named volume
-make node-down          # stop it (data survives)
-WEED_SHARE_DIR=~/Movies make node   # mount a real directory of .ott archives at /share
-```
-
-### `shell.py` — interactive, tab-completing, same pattern as `ott`'s shell
-
-`python3 weed.py` with no arguments (or `weed.py shell`) drops into an
-interactive shell — same `cmd.Cmd` + readline pattern as `ott`'s own shell,
-same conventions: short aliases (`w`/`h`/`r`/`disc`/`dl`/`l`/`sub`), `help`
-or `?` for commands, `Ctrl-D` or `q` to exit, tab completes.
-
-`relay` runs a real discovery relay in the background too, same pattern as
-`host` — the whole flow (relay, host, discover, download, like, subscribe)
-runs from one shell session, no second terminal required. Discovered
-running it that way for real (`host` with no relay running produces
-"unreachable, skipped, nothing found," `discover` alone can't conjure a
-relay that isn't there — real friction that surfaced from actually using
-it, not a hypothetical). `relay` also sets itself as the session's default
-relay, so `discover`/`download`/`like`/`subscribe` don't need `--relay`
-repeated every time. `host` also takes `--tunnel [tls://]RELAY_HOST:PORT`
-now, same as the CLI — see `tunnel_relay.py` above. `serve [bind] [port]`
-runs the web UI in the background without a second terminal — see
-`web_ui.py` above. `dht start/announce/lookup` runs a real Kademlia node
-in the background — see `dht.py` above. Every background command
-(`host`, `relay`, `serve`, `dht start`) goes through a shared `_bg()`
-wrapper now: a real failure inside one of those threads used to dump a
-raw Python traceback into the middle of the prompt (an uncaught
-exception in a background thread was never covered by `onecmd()`'s own
-try/except, which only wraps the synchronous part of a command) — caught
-live from a real `--tunnel ~/share` typo, fixed, reproduced the same
-crash again afterward to confirm it now prints a clean `✗ ...` line
-instead and the shell stays fully usable.
-
-Completion resolves against real state, not a fixed list — same idea as
-`ott`'s completions (which complete against the real archive). `download`
-and `like` tab-complete against content hashes actually seen in the last
-`discover`; `subscribe` completes against pubkeys actually seen:
+`weed` with no arguments (or `weed shell`) drops into a `cmd.Cmd` shell
+with tab completion and short aliases (`w`/`h`/`r`/`disc`/`dl`/`l`/`sub`).
+`relay` and `host` run in background threads, so one session covers the
+whole flow — relay, host, discover, download, like, subscribe — with no
+second terminal:
 
 ```
 weed> relay
@@ -782,113 +117,236 @@ weed> download 7f2477c7ea675004ad5dbab6dc7c44327c724b880cc389807df1965b77966acc
 3324 chunks downloaded and verified in 1.4s
 ```
 
-`host` runs the server in a background thread instead of blocking the
-shell — genuinely new, not copied from `ott`, since nothing in `ott`
-blocks forever the way a hosting server does. Ran this exact sequence for
-real (scripted, not just described): host → discover → download →
-`cmp`-verified byte-identical → `like`, all in one shell session, download
-still finishing in 1.4s with the server running in the background thread
-the whole time.
+`download`/`like` tab-complete against hashes from the last `discover`;
+`subscribe` completes against pubkeys actually seen. `serve` and
+`dht start` also run in the background — see below.
 
-## Running it
+### Web UI
 
-`./weed.py --help` (or `weed.py lightning --help` for the nested ones) is
-the friendliest entry point — it's a thin argparse wrapper over the
-Makefile, same targets, real subcommands and `--help` text instead of
-needing to remember `make` target names. `make help` lists the same
-targets directly. Or run any command below on its own:
+`web_ui.py` wraps the same `node.py` functions behind a small stdlib
+JSON API plus a static, no-build-step frontend — host/discover/download/
+like/subscribe without memorizing CLI flags. Binds `127.0.0.1` by
+default (no auth built — this is a local control surface, not something
+meant to face the internet); `--bind 0.0.0.0` widens it at your own
+risk and auto-detects your real LAN IP for the printed/scanned QR code.
 
 ```bash
-python3 poc_challenge_auction.py          # in-process, Parts 1 + 2, narrated
-python3 poc_network_challenge.py          # real sockets, single-shot rounds, loopback
-python3 poc_network_challenge.py stats    # real sockets, repeated-challenge separation, loopback
-python3 poc_reputation.py                 # real Ed25519 signing/verification demo
-python3 viz_challenge_separation.py       # regenerates the chart above from fresh data
-docker compose up --build --abort-on-container-exit verifier   # same test, real containers
-cd lightning && docker compose up -d && cd ..   # real bitcoind + 2 LND nodes (see lightning/README.md for setup)
-python3 poc_challenge_auction.py --lightning    # same auction, real HTLC settlement
-python3 poc_real_archive_challenge.py           # same challenge mechanism, real 3324-chunk video
-python3 poc_discovery.py                        # 3 real relays, personalized ranking, sybil test
-python3 tunnel_relay.py 9199                    # NAT-traversal relay — see host --tunnel below
-python3 weed.py serve --bind 0.0.0.0 --port 8080  # local web UI, reachable from your phone
-make node                                       # same web UI, containerized, data persists — see Dockerfile.node
-python3 dht.py 8468                             # real Kademlia DHT node — see dht.py above
+weed serve                          # alias for `web`, positional: serve [bind] [port]
+weed serve 0.0.0.0 8080             # reachable from your phone; prints a scan-to-open QR
 ```
 
-`pip install -r requirements.txt` gets everything (`btcvm`, `cryptography`,
-`matplotlib`, `kademlia`). Broken down: `poc_challenge_auction.py` (and
-`poc_real_archive_challenge.py`, which imports from it) needs `btcvm`;
-`poc_reputation.py` and `poc_discovery.py` (which imports from it) need
-`cryptography`; `viz_challenge_separation.py` needs `matplotlib`;
-`dht.py` needs `kademlia`. `poc_network_challenge.py` and
-`discovery_relay.py` are pure stdlib, no install needed. `qrcode` is
-optional (`pip install qrcode`) — `web_ui.py`'s QR endpoints degrade to a
-plain URL, printed instead of rendered, if it's missing. Docker/Compose
-needed for the container-network test and for `--lightning` (real
-bitcoind + LND, see `lightning/README.md`).
+Includes real HTTP range support (`/api/stream/<job_id>`) so a
+`<video>` tag can seek a completed download instead of downloading it
+blind.
 
-Or, packaged: `pip install -e .` (see `pyproject.toml`) installs a real
-`weed` command on your `PATH` instead of `python3 weed.py`.
+### Docker
 
-## Next steps
+`Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
+somewhere other than a laptop.
 
-1. ~~Nonce-salted challenge + timing bound~~ — done, `poc_challenge_auction.py` Part 2
-2. ~~Real network round-trip instead of in-process~~ — done, `poc_network_challenge.py`
-3. ~~Local reputation + signed portable attestations~~ — done, `poc_reputation.py`
-4. ~~Real WAN calibration against an actual second machine~~ — done, real
-   RunPod box over an SSH tunnel: ~1700x gap, separates at k=1
-5. ~~Real Lightning HTLC settlement~~ — done, `lightning_settle.py` +
-   `lightning/` (real bitcoind + 2 LND nodes, real BOLT11 invoices, real
-   preimage reveal independently re-verified). Regtest, not public testnet —
-   same reasoning as #4: real protocol code, skip the wait on chain
-   sync/faucets.
-6. ~~Point the mechanism at a real `.ott` archive~~ — done,
-   `poc_real_archive_challenge.py`: real 217MB video, 3324 real chunks,
-   12-step proofs (~400B), confirmed O(log N) not linear.
-7. ~~Attestation revocation~~ — done, `poc_reputation.py`: signer-only
-   revocation keyed to `attestation_id`, forged revocation from a different
-   signer correctly rejected, revoked attestation kept on record not deleted.
-8. ~~Discovery layer~~ — done, `discovery_relay.py` + `poc_discovery.py`:
-   3 independent dumb relays, personalized client-side ranking from each
-   client's own subscribe graph, sybil-resistant (20 fake identities move
-   neither client's score), real relay-death test (content survives,
-   anything posted only to the dead relay doesn't — redundancy isn't free).
-9. ~~NAT traversal~~ — done, `tunnel_relay.py`: relay-mediated rendezvous
-   (not real STUN/ICE hole-punching), real 217MB/3324-chunk archive
-   downloaded end-to-end through the tunnel with the host advertised at
-   an unreachable address, byte-identical. Required a persistent-session
-   refactor of `node.py`'s wire protocol first — see above.
-10. ~~Local UI~~ — done, `web_ui.py` + `web/`: stdlib JSON API wrapping
-    the same `node.py` functions the CLI calls, static vanilla-JS
-    frontend, no new dependency. Host/discover/download/like/subscribe
-    all verified working from the browser, not just the API responding.
-11. ~~Real P2P/DHT discovery~~ — done, `dht.py`: real Kademlia via the
-    `kademlia` library, not reimplemented. Content survived the
-    announcing node's process exiting entirely, found by a fourth,
-    independent process that only knew the original bootstrap node — real
-    value replication, not a two-party memory trick. Scoped honestly:
-    covers host-discovery only, not the richer event system.
-12. ~~TLS for tunnel relays~~ — done, `tls://` prefix on `--tunnel`,
-    verified against a real self-signed-cert TLS-terminating proxy built
-    specifically to test it, full host→tunnel→download round-trip over
-    the encrypted path.
-13. ~~Play media from the web UI~~ — done, `/api/stream` with real HTTP
-    range support, verified byte-exact against full/mid-file/open-ended
-    range requests.
-14. ~~Multi-file hosting~~ — done, `host <dir>` (no `--file`) serves every
-    archived file over one port, downloader `SELECT`s by content hash.
-    Fixes the original bug: a 45-file archive silently collapsed to
-    whichever file happened to be last in the manifest.
+```bash
+make node                            # build + run, http://127.0.0.1:8080
+make node-down                       # stop it — data persists
+WEED_SHARE_DIR=~/Movies make node    # mount a real directory of .ott archives at /share
+```
 
-Every item on the original roadmap is now built and verified against real
-output, not just designed — and `node.py` (below) wires host/discover/
-download/like/subscribe into one real tool instead of six disconnected
-demos. What's left is scaling and hardening this, not proving the
-mechanisms work — see each section above for the honest edges that are
-still real constraints even though the core ideas held up: loopback
-timing separation isn't airtight without averaging, relay death loses
-non-redundant data, RunPod flakiness, regtest-only Lightning, the DHT
-covers host-discovery but not the richer signed-event system, the tunnel
-relay (even with TLS) is still a single point of failure/bandwidth cost
-with no redundancy story the way discovery relays have, and the web UI
-has no auth, local-only by design.
+- Identity key, reputation store, and library manifest all persist in a
+  named volume (`node-data`, mounted at `$HOME=/data`) — one node keeps
+  the same pubkey (and everything vouching for it) across restarts.
+- `/share` is a separate *bind* mount, not a named volume, so the actual
+  `.ott` archives you're hosting are real files on the host you can see
+  and manage directly. Point the web UI's Host form at `/share`.
+- An entry's `last_path` (recorded at `ott add` time, on whatever
+  machine ran it) is only trusted if it exists on disk; otherwise the
+  node falls back to the given archive directory. This matters the
+  moment the same content is mounted somewhere else than where it was
+  archived — e.g. `/share` here vs. wherever it originally lived.
+
+## Core mechanisms
+
+Each of these has a standalone script proving the mechanism works
+before it's wired into `node.py`.
+
+**`poc_challenge_auction.py`** — possession-gated reverse auction. A
+naive price-only auction picks the cheapest bidder regardless of
+whether they can deliver (and does, in the captured run — a peer
+holding zero chunks wins on price alone). Gating bid eligibility on a
+random chunk-index + Merkle-proof challenge fixes it. A second
+mechanism (nonce-salted challenge + timing bound) catches a peer that
+*has* the real bytes but fetches them from someone else in real time —
+SHA256 preimage resistance alone can't, only added latency can.
+
+**`poc_network_challenge.py`** + **`docker-compose.yml`** — the same
+mechanism over real TCP sockets, both on loopback and across real
+containers. Finding: single-shot timing does *not* reliably separate an
+honest holder from a relay on loopback; averaging repeated challenges
+does (crossover point moves between runs — measure it live, don't
+hardcode a threshold):
+
+![session-size separation chart](poc_challenge_separation.png)
+
+Over real WAN distance (tunneled to a remote box over SSH), the gap is
+~1700x and separates cleanly at a single sample — the hard case this
+PoC stress-tests is two peers that are genuinely close together.
+
+**`poc_reputation.py`** — persistent local reputation plus signed,
+portable attestations (Ed25519, real signing/verification): a client's
+own record of direct experience with a peer, a way to hand a signed
+verification outcome to someone else who hasn't dealt with that peer
+yet, and signer-scoped revocation (the revoked attestation stays on
+record rather than disappearing).
+
+**`lightning_settle.py`** + **`lightning/`** — real Lightning HTLC
+settlement: two real LND nodes (`alice`, `bob`) on regtest, real
+bitcoind backing them, a real funded channel. `create_invoice(node,
+amount, memo)` and `pay_invoice(payer_node, bolt11, expected_hash)` are
+the pieces `node.py`'s real download path uses to pay *whichever* host
+actually wins the auction, as itself — not a fixed direction.
+`poc_challenge_auction.py --lightning` (a standalone demo with no real
+distinct host/downloader) still settles through a plain `settle()`
+wrapper, alice-pays-bob, unchanged. Every payment independently
+re-verifies the revealed preimage against the invoice's own payment
+hash rather than trusting LND's status string. See
+`lightning/README.md` for one-time channel setup.
+
+**`poc_real_archive_challenge.py`** — the same mechanism against a real
+217MB video archived with `ott` at a real 64KB chunk size (3324 real
+chunks, not 8 synthetic ones). Confirms Merkle proof size grows
+O(log N): 12 steps at 3324 chunks, ~17 steps even at a 2-hour movie's
+scale — still under 1KB.
+
+**`discovery_relay.py`** + **`poc_discovery.py`** — no canonical index.
+Three independent, deliberately dumb relay processes (verify a
+signature, store, serve — zero ranking opinion). Two clients with
+different subscribe graphs compute different rankings for the same 27
+gossiped events; a 20-identity sybil swarm liking the same content
+moves neither client's score, because neither subscribes to any of the
+sybils. Killing one relay outright loses only what was posted
+exclusively there — redundancy has to be deliberate.
+
+**`dht.py`** — Kademlia DHT discovery (`kademlia` library) for finding
+peers with no relay URL known out of band. Verified across three
+chained nodes with no direct connection between the endpoints, and —
+the strongest test — content still discoverable by a fourth,
+independent process after the announcing node's own process had
+already exited.
+
+```bash
+python3 dht.py 8468                     # first node, new swarm
+python3 dht.py 8469 127.0.0.1:8468      # second node, joins the first
+```
+
+## The integrated node
+
+`download_with_auction` (the real path behind `weed download`) ties
+every mechanism above together:
+
+1. **Resolve** every host claiming to have the content, grouped by
+   content hash (not by event — a second host publishing the same file
+   is actually considered).
+2. **Possession-challenge** each one — sample-FETCH `k` random chunks
+   (default 3), verified against Merkle-checked LEAVES.
+3. **Auction survivors** by local reputation first, then price.
+4. **Pay the winner** over a real Lightning HTLC if `--lightning` is
+   given and the price is nonzero — the winning host's own `--lightning-node`
+   generates a real BOLT11 invoice (a new `INVOICE` wire verb) for the
+   agreed price, and `--lightning-node` on the downloader's side pays
+   that exact invoice, on the same session that then serves the file. A
+   host with no `--lightning-node` configured just answers `INVOICE`
+   with `ERR`, and `--lightning` against it fails loudly instead of
+   downloading unpaid.
+5. **Download and record** the outcome to `~/.weed_reputation.json`, and
+   publish it as a signed attestation so the next downloader — even one
+   with no direct history with that host — benefits transitively.
+
+**Transitive trust**: `build_trust_graph()` does a real BFS outward from
+your own pubkey through signed `subscribe` events pulled from a relay,
+decaying trust per hop (default 0.5×, shortest path only — summing
+across paths would let a sybil ring inflate a target's trust just by
+adding more low-value paths). A host you've never dealt with directly
+can still score above zero if someone in your trust graph has already
+vouched for it.
+
+**NAT traversal** (`tunnel_relay.py`): a relay-mediated rendezvous
+rather than real STUN/ICE hole-punching — works behind any NAT
+including CGNAT, since both sides only ever make outbound connections.
+A host opens one persistent outbound `REGISTER` control connection; a
+downloader `CONNECT`s; the relay asks the host to dial back
+(`NEWSTREAM`/`DATA`) and then shovels raw bytes between the two
+sockets, no opinion on the tunneled protocol. Supports TLS at the edge
+(`tls://` prefix, for relays like Fly that terminate TLS themselves) and
+a periodic heartbeat so idle control connections survive proxies that
+reset connections after a few minutes of silence.
+
+```bash
+python3 discovery_relay.py 9101
+python3 tunnel_relay.py 9199
+weed host real_archive --port 9201 --tunnel 127.0.0.1:9199 \
+    --relay http://127.0.0.1:9101 --advertise-host 10.255.255.1
+weed download <content_hash> --relay http://127.0.0.1:9101 --out downloaded.mp4
+```
+
+## Deploying relays
+
+`discovery_relay.py` and `tunnel_relay.py` each ship a `Dockerfile.*`
+and `fly.*.toml` for running them publicly on Fly.io, since they need
+different scaling behavior:
+
+- **Discovery relay** is plain HTTP — Fly's auto-detected
+  `[http_service]` is correct as-is, including scale-to-zero when idle.
+  Persist events across restarts/deploys with a mounted Volume at
+  `WEED_RELAY_DATA` (defaults to the container's own ephemeral
+  filesystem otherwise).
+- **Tunnel relay** is raw TCP holding in-memory state
+  (`_registrations`/`_pending_streams`), not HTTP — needs an explicit
+  `[[services]]` block (`protocol = "tcp"`, `handlers = ["tls"]` for
+  edge TLS) instead of the auto-detected one, and exactly one machine,
+  always running (`min_machines_running = 1`, no autoscale). Two
+  replicas would let a REGISTER and a CONNECT for the same token land on
+  machines that have never heard of each other's state; scaling to zero
+  would drop every active registration, and a persistent control
+  connection can't wake a scaled-to-zero machine the way an HTTP request
+  can.
+
+## Status
+
+Everything below is implemented and verified against real output, not
+just designed:
+
+- Possession-gated auction (chunk-index + nonce/timing challenges)
+- Real-socket timing separation, loopback and real containers
+- Local reputation + signed, revocable attestations
+- Real WAN calibration against an actual second machine
+- Real Lightning HTLC settlement, paid to whichever host actually wins
+  the auction, as itself (real BOLT11 invoice over an `INVOICE` wire
+  verb, not a fixed pair settled regardless of who hosted) — regtest
+- Real `.ott` archive at scale (217MB, 3324 chunks, O(log N) proofs)
+- Discovery with no canonical index, sybil-resistant, relay-death tested
+- Multi-file hosting (one port, `SELECT` by content hash)
+- Transitive trust through the subscribe graph
+- NAT traversal via relay-mediated tunneling, with TLS and heartbeat
+- Kademlia DHT discovery, survives the announcing node going offline
+- Local web UI with live progress, QR onboarding, and HTTP range streaming
+- Containerized node (`Dockerfile.node`, `docker-compose.node.yml`)
+
+## Known limitations
+
+Honest edges that are still real constraints even though the core
+mechanisms hold up:
+
+- Loopback timing separation isn't airtight on a single sample —
+  averaging repeated challenges is required.
+- Relay death loses anything posted exclusively there; redundancy
+  across relays isn't automatic.
+- Lightning settlement is regtest-only, and both sides still have to
+  name which of exactly two demo LND identities (`alice`/`bob`) they
+  are — the protocol pays whoever really won, but the pool of real
+  nodes to test against is still the fixed two-node demo topology, not
+  an arbitrary host's own independently-run LND node.
+- The DHT covers host-discovery only, not the richer publish/like/
+  subscribe/attestation event system.
+- The tunnel relay (even with TLS) is a single point of failure and
+  bandwidth cost, with no redundancy story the way discovery relays have.
+- The web UI has no authentication; it's local-only by design. It also
+  doesn't expose `--lightning-node` in its Host/Download forms yet,
+  even though the API accepts it.

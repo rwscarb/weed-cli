@@ -108,26 +108,31 @@ class WeedShell(cmd.Cmd):
     def do_host(self, arg):
         """host <archive_dir> [--file NAME] [--port N] [--price SAT] [--relay URL]
         [--no-announce] [--advertise-host HOST] [--tunnel [tls://]RELAY_HOST:PORT]
+        [--lightning-node NODE]
         — serve every archived file in archive_dir in a background thread
         (shell stays usable), one port, downloaders SELECT which by content
         hash. Pass --file to restrict to a single file. Announces each file
         on --relay (default: your session's default relay — see `relay`,
         `set relay`, or $WEED_RELAY) unless --no-announce is given. --price
-        sets what download charges (default free). --tunnel registers with
-        a tunnel_relay.py instead of relying on a reachable inbound port —
-        for hosting behind NAT/CGNAT (default: your session's default
-        tunnel — see `set tunnel` or $WEED_TUNNEL). Registers one control
-        connection per file (REGISTER's token is each file's own content
-        hash), so a whole tree tunnels fine, not just a single file. Prefix
-        tls:// if the relay terminates TLS at the edge (e.g. a Fly service
-        with handlers = ["tls"]) — the relay process itself never needs to
-        know. An explicit --relay/--tunnel here also becomes the new
-        session default, same as `discover` already does for --relay."""
+        sets what download charges (default free); --lightning-node names
+        which demo LND identity (see lightning_settle.NODES) answers a
+        downloader's INVOICE with a real BOLT11 for that price — omit it and
+        this host just can't be paid over Lightning at all. --tunnel
+        registers with a tunnel_relay.py instead of relying on a reachable
+        inbound port — for hosting behind NAT/CGNAT (default: your session's
+        default tunnel — see `set tunnel` or $WEED_TUNNEL). Registers one
+        control connection per file (REGISTER's token is each file's own
+        content hash), so a whole tree tunnels fine, not just a single
+        file. Prefix tls:// if the relay terminates TLS at the edge (e.g. a
+        Fly service with handlers = ["tls"]) — the relay process itself
+        never needs to know. An explicit --relay/--tunnel here also becomes
+        the new session default, same as `discover` already does for
+        --relay."""
         parts = shlex.split(arg)
         if not parts:
             print('  usage: host <archive_dir> [--file NAME] [--port N] [--price SAT] '
                   '[--relay URL] [--no-announce] [--advertise-host HOST] '
-                  '[--tunnel RELAY_HOST:PORT]')
+                  '[--tunnel RELAY_HOST:PORT] [--lightning-node NODE]')
             return
         archive_dir = parts[0]
         file_name = None
@@ -137,6 +142,7 @@ class WeedShell(cmd.Cmd):
         no_announce = '--no-announce' in parts
         advertise_host = '127.0.0.1'
         tunnel = self.default_tunnel
+        ln_node = None
         i = 1
         while i < len(parts):
             if parts[i] == '--file' and i + 1 < len(parts):
@@ -157,6 +163,9 @@ class WeedShell(cmd.Cmd):
             elif parts[i] == '--tunnel' and i + 1 < len(parts):
                 i += 1
                 tunnel = parts[i]
+            elif parts[i] == '--lightning-node' and i + 1 < len(parts):
+                i += 1
+                ln_node = parts[i]
             i += 1
 
         # remember an explicit --relay/--tunnel for the rest of the
@@ -188,12 +197,13 @@ class WeedShell(cmd.Cmd):
                                        args=(node.run_host_tunnel, relay_host, relay_port,
                                              entry['sha256'], entry, all_leaves[entry['sha256']],
                                              file_path, price),
-                                       kwargs={'use_tls': use_tls, 'quiet': True}, daemon=True)
+                                       kwargs={'use_tls': use_tls, 'quiet': True, 'ln_node': ln_node},
+                                       daemon=True)
                 tt.start()
                 self._host_threads.append(tt)
         t = threading.Thread(target=_bg,
                               args=(node.run_host_server, archive_dir, file_name, port),
-                              kwargs={'quiet': True, 'price': price}, daemon=True)
+                              kwargs={'quiet': True, 'price': price, 'ln_node': ln_node}, daemon=True)
         t.start()
         self._host_threads.append(t)
         price_note = f', {price} sat/download' if price else ', free'
@@ -346,31 +356,36 @@ class WeedShell(cmd.Cmd):
         (default: the last relay used, $WEED_RELAY, or http://127.0.0.1:9101)."""
         relays = shlex.split(arg) or [self.default_relay]
         self.default_relay = relays[0]
-        results = node.discover(relays)
+        results = node.group_discover_by_content(node.discover(relays))
         self._last_discovery = results
         if not results:
             print('  nothing found')
             return
         for r in results:
+            hosts_note = f'  (+{r["host_count"] - 1} more host(s))' if r['host_count'] > 1 else ''
             print(f'  {r["title"]!r:40s}  hash={r["content_hash"][:16]}...  '
-                  f'host={r["host"]}  by={r["signer_pubkey"][:12]}...')
+                  f'host={r["host"]}  by={r["signer_pubkey"][:12]}...{hosts_note}')
 
     def do_download(self, arg):
         """download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] [--lightning]
+        [--lightning-node NODE]
         — resolve every host publishing this content, possession-challenge
         each one (N chunks sampled, default 3), auction survivors by
-        reputation then price, optionally pay the winner over a real
-        Lightning HTLC, download, and record the outcome to local
-        reputation. Tab-completes against the last `discover`."""
+        reputation then price, optionally pay the winning host's own real
+        Lightning invoice as --lightning-node (see lightning_settle.NODES),
+        download, and record the outcome to local reputation. Tab-completes
+        against the last `discover`."""
         parts = shlex.split(arg)
         if not parts:
-            print('  usage: download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] [--lightning]')
+            print('  usage: download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] '
+                  '[--lightning] [--lightning-node NODE]')
             return
         prefix = parts[0]
         out = None
         relay = self.default_relay
         rounds = 3
         use_lightning = '--lightning' in parts
+        ln_node = None
         i = 1
         while i < len(parts):
             if parts[i] == '--out' and i + 1 < len(parts):
@@ -382,9 +397,16 @@ class WeedShell(cmd.Cmd):
             elif parts[i] == '--rounds' and i + 1 < len(parts):
                 i += 1
                 rounds = int(parts[i])
+            elif parts[i] == '--lightning-node' and i + 1 < len(parts):
+                i += 1
+                ln_node = parts[i]
             i += 1
 
-        node.download_with_auction(prefix, [relay], out_path=out, k=rounds, use_lightning=use_lightning)
+        if use_lightning and not ln_node:
+            print("  --lightning needs --lightning-node <alice|bob> to say who's paying")
+            return
+        node.download_with_auction(prefix, [relay], out_path=out, k=rounds,
+                                    use_lightning=use_lightning, lightning_node=ln_node)
 
     def do_like(self, arg):
         """like <content_hash> [--relay URL]  — sign and post a real like event."""
