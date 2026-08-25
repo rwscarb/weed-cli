@@ -39,6 +39,12 @@ const app = createApp({
 
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
+      // true until the first refreshDiscover() actually resolves -- starts
+      // true (not false) since mounted() awaits whoami/config/library
+      // sequentially before ever calling it, so without this the empty
+      // table shows a misleading "nothing found" for that whole stretch,
+      // before a real request has even gone out
+      discoverLoading: true,
       discoverSearch: '',
       // content_hash of the row the search box's arrow-key navigation is
       // currently sitting on, or null -- tracked by hash rather than a
@@ -375,15 +381,20 @@ const app = createApp({
 
     // ── discover ──────────────────────────────────────────────────────
     async refreshDiscover() {
-      const relays = this.discoverRelaysList;
-      const qs = relays.map(r => 'relay=' + encodeURIComponent(r)).join('&');
-      const { results } = await this.apiGet('/api/discover?' + qs);
-      this.discoverResults = (results || []).map(r => ({
-        ...r,
-        _dl: { downloading: false, pct: 0 },
-        _verify: { busy: false, label: 'Verify', title: '' },
-      }));
-      this.searchHighlightHash = null;
+      this.discoverLoading = true;
+      try {
+        const relays = this.discoverRelaysList;
+        const qs = relays.map(r => 'relay=' + encodeURIComponent(r)).join('&');
+        const { results } = await this.apiGet('/api/discover?' + qs);
+        this.discoverResults = (results || []).map(r => ({
+          ...r,
+          _dl: { downloading: false, pct: 0 },
+          _verify: { busy: false, label: 'Verify', title: '' },
+        }));
+        this.searchHighlightHash = null;
+      } finally {
+        this.discoverLoading = false;
+      }
     },
 
     // Up/Down move a highlight through the currently-filtered rows;
