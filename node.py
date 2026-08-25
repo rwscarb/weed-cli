@@ -686,8 +686,8 @@ def get_price(conn):
 
 def discover_hosts_for(relay_urls, content_hash):
     """Every host that published a matching content_hash — real multi-host
-    resolution (discover() already dedupes by event, not by content, so
-    two publishers of the same file both show up here)."""
+    resolution (discover() dedupes per-signer, not across signers, so
+    two different publishers of the same file both show up here)."""
     return [p for p in discover(relay_urls) if p['content_hash'].startswith(content_hash)]
 
 
@@ -933,6 +933,14 @@ def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None):
 
 
 def discover(relay_urls):
+    """Deduped by (content_hash, signer_pubkey), keeping whichever event has
+    the newest ts — not by attestation_id (a hash of the whole signed
+    payload, ts included), which made every re-announcement of the same
+    file a "new" event forever, since re-running `host` always signs a
+    fresh ts. Keyed on the pair rather than content_hash alone so two
+    different signers hosting the same file still both show up (see
+    discover_hosts_for) — only a single signer's own repeat
+    announcements collapse."""
     seen = {}
     for relay_url in relay_urls:
         events = fetch_events(relay_url, 'publish')
@@ -941,6 +949,11 @@ def discover(relay_urls):
             continue
         for e in events:
             ok, _ = verify_attestation(e)
-            if ok:
-                seen[attestation_id(e)] = e['payload']
+            if not ok:
+                continue
+            payload = e['payload']
+            key = (payload['content_hash'], payload['signer_pubkey'])
+            existing = seen.get(key)
+            if existing is None or payload['ts'] > existing['ts']:
+                seen[key] = payload
     return list(seen.values())
