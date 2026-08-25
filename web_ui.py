@@ -92,13 +92,26 @@ sys.stdout = _JobStdout(sys.stdout)
 
 @contextlib.contextmanager
 def _quiet():
-    """Mute node.py's CLI-oriented prints for the current thread only,
-    for the duration of the with-block."""
-    sys.stdout._local.buf = io.StringIO()
+    """Mute node.py's CLI-oriented prints for the current thread only, for
+    the duration of the with-block -- yields the buffer they went into, so
+    a caller that hits an error can fold the captured detail into it
+    instead of only ever surfacing the final exception's one-line summary.
+    That gap was real: select_host's per-candidate "x <host>: unreachable
+    (...)" lines (exactly the detail that explains *why* a download
+    failed) used to get captured here and then thrown away unread, so the
+    web UI only ever showed "no candidate host passed the possession
+    challenge" with zero indication of which candidate failed how."""
+    buf = io.StringIO()
+    sys.stdout._local.buf = buf
     try:
-        yield
+        yield buf
     finally:
         sys.stdout._local.buf = None
+
+
+def _with_captured_detail(msg, captured):
+    detail = captured.getvalue().strip()
+    return f'{msg}\n{detail}' if detail else msg
 
 _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
@@ -188,8 +201,9 @@ def _detect_lan_ip():
 
 def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
                    ln_node=None):
+    captured = io.StringIO()
     try:
-        with _quiet():
+        with _quiet() as captured:
             identity = _identity()
             # every distinct file in the archive, not just the last-added one
             # — see load_manifest_entries' own docstring for why
@@ -229,10 +243,11 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node)
     except SystemExit as e:
         with _lock:
-            _hosts[host_id].update(status='error', error=str(e))
+            _hosts[host_id].update(status='error', error=_with_captured_detail(str(e), captured))
     except Exception as e:
         with _lock:
-            _hosts[host_id].update(status='error', error=f'{type(e).__name__}: {e}')
+            _hosts[host_id].update(status='error',
+                                    error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
 
 
 def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
@@ -241,9 +256,10 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
 
+    captured = io.StringIO()
     try:
         t0 = time.time()
-        with _quiet():
+        with _quiet() as captured:
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
                                                use_lightning=use_lightning, lightning_node=lightning_node,
                                                on_progress=on_progress)
@@ -260,10 +276,11 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _save_library()
     except SystemExit as e:
         with _lock:
-            _jobs[job_id].update(status='error', error=str(e))
+            _jobs[job_id].update(status='error', error=_with_captured_detail(str(e), captured))
     except Exception as e:
         with _lock:
-            _jobs[job_id].update(status='error', error=f'{type(e).__name__}: {e}')
+            _jobs[job_id].update(status='error',
+                                  error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
 
 
 class WebUIServer(ThreadingHTTPServer):

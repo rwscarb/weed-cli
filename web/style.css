@@ -275,7 +275,11 @@ td button {
 }
 
 .status-done { color: var(--accent); }
-.status-error { color: var(--danger); }
+/* pre-wrap, not the table's usual nowrap-collapse -- an error can now
+   carry node.py's full captured diagnostic trace (see web_ui.py's
+   _with_captured_detail), multiple real newlines, not just the final
+   one-line exception summary */
+.status-error { color: var(--danger); white-space: pre-wrap; }
 .status-running { color: var(--muted); }
 
 /* how many other signers also publish this same content_hash -- see
