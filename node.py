@@ -371,7 +371,8 @@ def _connect_tunnel_socket(relay_host, relay_port, use_tls):
 
 
 def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, price,
-                     use_tls=False, quiet=False, heartbeat_interval=45, ln_node=None):
+                     use_tls=False, quiet=False, heartbeat_interval=45, ln_node=None,
+                     max_backoff=60):
     """NAT-traversal path: instead of (or alongside) binding a locally
     reachable port, register with a tunnel_relay.py relay and serve every
     downloader it pairs us with. One persistent CONTROL connection stays
@@ -394,63 +395,100 @@ def run_host_tunnel(relay_host, relay_port, token, entry, leaves, file_path, pri
     already holds an active registration for can be refused instead of
     silently overwriting it — content_hash tokens are public (announced
     via discover), so without this anyone could squat/hijack another
-    host's rendezvous slot for content they didn't actually publish."""
+    host's rendezvous slot for content they didn't actually publish.
+
+    Runs forever, reconnecting with exponential backoff (1s, 2s, 4s, ...,
+    capped at max_backoff) on any connection failure, rejected REGISTER,
+    or the control connection just closing — this used to be one-shot
+    (sys.exit on a rejected REGISTER, plain return once the connection
+    dropped), which meant a tunnel relay restart for *any* reason (deploy,
+    crash, Fly host migration) silently and permanently dropped every
+    currently-hosting process until a human noticed and manually re-ran
+    `host --tunnel`. Not hypothetical: a real Fly Machine restart took
+    down every active registration on this relay at once in production
+    (see the tunnel_relay.py fly logs from 2026-08-25), and every one of
+    them stayed dead until manually restarted. This is the fix — the
+    relay coming back is enough, no human required."""
     entries_by_hash = {entry['sha256']: (entry, leaves, file_path)}
-    ctrl = _connect_tunnel_socket(relay_host, relay_port, use_tls)
-    ctrl.sendall(f'REGISTER {token}\n'.encode())
-    # one LineReader for the whole connection, created before the first
-    # read and reused for the NEWSTREAM loop below -- creating a second
-    # one later would lose whatever extra bytes this first recv() also
-    # happened to pick up (LineReader buffers internally; a fresh
-    # instance starts with an empty buffer, discarding anything already
-    # read into the old one)
-    reader = LineReader(ctrl)
-    ack = reader.readline()
-    if ack != 'OK':
-        ctrl.close()
-        # tunnel_relay.py now refuses a REGISTER for a token someone
-        # else already holds an active registration for, instead of
-        # silently letting the new one steal it -- content_hash tokens
-        # are public (announced via discover), so this stops anyone from
-        # squatting/hijacking another host's rendezvous slot for content
-        # they didn't actually publish
-        sys.exit(f"tunnel relay at {relay_host}:{relay_port} rejected REGISTER for "
-                  f"{token[:16]}...: {ack or '(connection closed)'}")
-    if not quiet:
-        tls_note = ' (tls)' if use_tls else ''
-        print(f"[tunnel] registered {token[:16]}... with relay {relay_host}:{relay_port}{tls_note}")
-
-    stop_heartbeat = threading.Event()
-
-    def send_heartbeats():
-        while not stop_heartbeat.wait(heartbeat_interval):
-            try:
-                ctrl.sendall(b'PING\n')
-            except OSError:
-                return
-
-    threading.Thread(target=send_heartbeats, daemon=True).start()
-
-    try:
-        while True:
-            line = reader.readline()
-            if not line:
+    backoff = 1
+    while True:
+        rejected, reject_reason = False, None
+        try:
+            ctrl = _connect_tunnel_socket(relay_host, relay_port, use_tls)
+            ctrl.sendall(f'REGISTER {token}\n'.encode())
+            # one LineReader for the whole connection, created before the
+            # first read and reused for the NEWSTREAM loop below --
+            # creating a second one later would lose whatever extra bytes
+            # this first recv() also happened to pick up (LineReader
+            # buffers internally; a fresh instance starts with an empty
+            # buffer, discarding anything already read into the old one)
+            reader = LineReader(ctrl)
+            ack = reader.readline()
+            if ack != 'OK':
+                rejected, reject_reason = True, ack or '(connection closed)'
+                ctrl.close()
+            else:
                 if not quiet:
-                    print(f"[tunnel] control connection to {relay_host}:{relay_port} closed")
-                return
-            parts = line.split()
-            if parts and parts[0] == 'NEWSTREAM':
-                stream_id = parts[1]
-                data_conn = _connect_tunnel_socket(relay_host, relay_port, use_tls)
-                data_conn.sendall(f'DATA {stream_id}\n'.encode())
-                threading.Thread(target=serve_session,
-                                  args=(data_conn, entries_by_hash, entry['sha256'], price, ln_node),
-                                  daemon=True).start()
-            # anything else (notably our own echoed-back nothing -- PING
-            # is one-directional, the relay never echoes it) is silently
-            # ignored, same as it always was
-    finally:
-        stop_heartbeat.set()
+                    tls_note = ' (tls)' if use_tls else ''
+                    print(f"[tunnel] registered {token[:16]}... with relay "
+                          f"{relay_host}:{relay_port}{tls_note}")
+                backoff = 1  # a real registration succeeded — forget any earlier backoff
+
+                stop_heartbeat = threading.Event()
+
+                def send_heartbeats():
+                    while not stop_heartbeat.wait(heartbeat_interval):
+                        try:
+                            ctrl.sendall(b'PING\n')
+                        except OSError:
+                            return
+
+                threading.Thread(target=send_heartbeats, daemon=True).start()
+
+                try:
+                    while True:
+                        line = reader.readline()
+                        if not line:
+                            if not quiet:
+                                print(f"[tunnel] control connection to {relay_host}:{relay_port} "
+                                      f"closed for {token[:16]}... — reconnecting")
+                            break
+                        parts = line.split()
+                        if parts and parts[0] == 'NEWSTREAM':
+                            stream_id = parts[1]
+                            data_conn = _connect_tunnel_socket(relay_host, relay_port, use_tls)
+                            data_conn.sendall(f'DATA {stream_id}\n'.encode())
+                            threading.Thread(target=serve_session,
+                                              args=(data_conn, entries_by_hash, entry['sha256'],
+                                                    price, ln_node),
+                                              daemon=True).start()
+                        # anything else (notably our own echoed-back nothing --
+                        # PING is one-directional, the relay never echoes it)
+                        # is silently ignored, same as it always was
+                finally:
+                    stop_heartbeat.set()
+        except OSError as e:
+            if not quiet:
+                print(f"[tunnel] connection to relay {relay_host}:{relay_port} for "
+                      f"{token[:16]}... failed ({e}) — retrying in {backoff}s")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+            continue
+
+        if rejected:
+            if not quiet:
+                print(f"[tunnel] relay at {relay_host}:{relay_port} rejected REGISTER for "
+                      f"{token[:16]}...: {reject_reason} — retrying in {backoff}s")
+            time.sleep(backoff)
+            backoff = min(backoff * 2, max_backoff)
+            continue
+
+        # control connection closed on its own after a previously-successful
+        # registration (relay restart, idle proxy reset, ...) -- reconnect
+        # right away rather than backing off; if the relay's actually still
+        # down this just falls into the OSError branch above on the very
+        # next iteration and starts backing off normally from there
+        backoff = 1
 
 
 # ── client side ──────────────────────────────────────────────────────────
