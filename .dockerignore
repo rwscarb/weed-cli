@@ -1,5 +1,8 @@
 # flyctl launch added from .gitignore
 **/__pycache__
+.git/
+share/
+dist/
 **/*.pyc
 **/download_*
 **/real_archive/*.mp4
