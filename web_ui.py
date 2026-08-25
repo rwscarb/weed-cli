@@ -177,6 +177,37 @@ def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_h
     return host_id
 
 
+def _ott_status(archive_dir):
+    """Real Bitcoin-commitment status for archive_dir's .ott/ store, read
+    straight from its ledger -- the same data `ott status`/`ott log` show
+    on the CLI, surfaced here so "has this actually been recorded to
+    Bitcoin, and when" has an answer without a terminal. Cheap and fully
+    local: just reads ledger.jsonl + recomputes the current merkle root,
+    no network call (same as ott status's own default -- confirming the
+    recorded block hash still matches a live block explorer is `ott
+    verify-chain --check-txs`'s job, out of scope for a per-request web
+    UI read). None on any error (btcvm not installed, no .ott/ yet,
+    archive_dir doesn't exist) rather than breaking the whole hosts list
+    over one host's missing archive."""
+    try:
+        from ott import OttStore
+        expanded = os.path.expanduser(archive_dir)
+        store = OttStore(os.path.join(expanded, '.ott'))
+        ledger = store.load_ledger()
+        if not ledger:
+            return {'committed': False}
+        last = ledger[-1]
+        return {
+            'committed': last.get('merkle_root') == store.current_root(),
+            'block_height': last.get('block_height'),
+            'ts': last.get('ts'),
+            'tx_hash': last.get('tx_hash'),
+            'network': last.get('network', 'mainnet'),
+        }
+    except Exception:
+        return None
+
+
 def _resume_persisted_hosts():
     for cfg in _persisted_hosts.values():
         _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
@@ -410,6 +441,8 @@ class Handler(BaseHTTPRequestHandler):
                 log_buf = _host_logs.get(h['id'])
                 if log_buf is not None:
                     h['log'] = log_buf.getvalue()
+                if h.get('archive_dir'):
+                    h['ott_status'] = _ott_status(h['archive_dir'])
             return self._json({'hosts': hosts})
         if path == '/api/library':
             with _lock:
