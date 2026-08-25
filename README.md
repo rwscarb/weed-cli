@@ -1,4 +1,4 @@
-# weed
+# weed-cli
 
 **Censorship-resistant video distribution — proof of concept.**
 
