@@ -190,15 +190,22 @@ def _resume_persisted_hosts():
     """Sequential on purpose, not fire-and-forget-them-all-at-once: two
     persisted configs sharing a port (the default in the Host form is
     always 9201, so this is the common case, not an edge case) could
-    both pass _probe_port_free's check before *either* reached the real
-    bind in run_host_server, since starting every host concurrently
-    means the check-then-bind isn't atomic across threads — the exact
-    race that let a zombie publish slip through even with that fix in
-    place. Waiting for each host to actually reach 'running' or 'error'
-    (a real terminal state, not just "thread started") before starting
-    the next one closes that window: by the time the next one probes
-    the port, the previous one has already really bound it or really
-    failed to."""
+    both bind successfully if started concurrently, since node.bind_host_port
+    for the second one wouldn't even run until the first's already had time
+    to occupy the port — but nothing serializes *when* each thread gets
+    there. Waiting for each host to reach 'bound' (or 'error', if the bind
+    itself failed) before starting the next one closes that window: by the
+    time the next one binds, the previous one already has the port or
+    already knows it can't.
+
+    Only waits for the bind, not all the way to 'running' — 'running'
+    doesn't happen until after each host's full publish loop (real network
+    I/O, up to 5s timeout per relay), which several persisted hosts
+    resuming in sequence have no reason to serialize on. That was a real
+    regression the first version of this function had: booting with a
+    handful of persisted hosts got noticeably slower, for zero extra
+    correctness, since the publish delay doesn't affect port ownership at
+    all."""
     for cfg in _persisted_hosts.values():
         host_id = _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
                                    cfg['relay'], cfg['advertise_host'], cfg['tunnel'],
@@ -206,7 +213,7 @@ def _resume_persisted_hosts():
         for _ in range(100):  # up to ~10s per host before moving on regardless
             with _lock:
                 status = _hosts[host_id]['status']
-            if status in ('running', 'error'):
+            if status in ('bound', 'running', 'error'):
                 break
             time.sleep(0.1)
 
@@ -331,6 +338,14 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # has no such window — the port either really is free right
             # now or this raises immediately, before any publish.
             bound_sock = node.bind_host_port(port)
+            # a distinct status the instant the bind (the only part
+            # _resume_persisted_hosts actually needs to wait for) is done
+            # — 'running' doesn't happen until after the publish loop
+            # below, which is real network I/O (up to 5s timeout *per*
+            # relay, see post_event) that resuming several hosts
+            # sequentially has no reason to serialize on
+            with _lock:
+                _hosts[host_id]['status'] = 'bound'
             ott_status = node.ott_commit_status(archive_dir)
             announced = []
             for entry in entries:
