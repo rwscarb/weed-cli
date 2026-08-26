@@ -72,7 +72,8 @@
             <div class="swipe-row">
               <div class="swipe-front">
                 <div class="title-row">
-                  <span class="title-text">{{ r.title }}</span>
+                  <span class="title-text" v-marquee><span>{{ r.title }}</span></span>
+                  <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
                   <span class="title-icons">
                     <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
                             :disabled="library.likes.has(r.content_hash)"
@@ -85,9 +86,8 @@
                     <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
                             @click="openPlaylistPicker($event, r)">♫+</button>
                   </span>
+                  <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
                 </div>
-                <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
-                <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
               </div>
               <div class="swipe-back">
                 <div class="actions-row">
@@ -212,14 +212,14 @@
             <div class="swipe-row">
               <div class="swipe-front">
                 <div class="title-row">
-                  <span class="title-text" :title="j.path || j.job_id">{{ j.title || shortHash(j.content_hash) }}</span>
+                  <span class="title-text" v-marquee :title="j.path || j.job_id"><span>{{ j.title || shortHash(j.content_hash) }}</span></span>
+                  <code class="mobile-hash">{{ shortHash(j.content_hash) }}</code>
                   <span class="title-icons">
                     <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
                             @click="openPlaylistPicker($event, j)">♫+</button>
                   </span>
+                  <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
                 </div>
-                <code class="mobile-hash">{{ shortHash(j.content_hash) }}</code>
-                <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
               </div>
               <div class="swipe-back">
                 <div class="actions-row">
@@ -277,7 +277,7 @@
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
            @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
         <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
-        <span class="playlist-item-title" v-marquee :title="it.title || shortHash(it.content_hash)">{{ it.title || shortHash(it.content_hash) }}</span>
+        <span class="playlist-item-title" v-marquee :title="it.title || shortHash(it.content_hash)"><span>{{ it.title || shortHash(it.content_hash) }}</span></span>
         <button type="button" class="play-btn" v-if="library.downloads[it.content_hash]"
                 @click="openPlayer(library.downloads[it.content_hash].job_id, it.title || library.downloads[it.content_hash].title || shortHash(it.content_hash), it.content_hash, it.signer_pubkey || library.downloads[it.content_hash].signer_pubkey)">▶ Play</button>
         <span v-else class="muted playlist-item-status">not downloaded</span>
@@ -304,7 +304,7 @@
      @click="setPlayerMode('pip')"></div>
 <div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
-    <span class="player-title" v-marquee>{{ player.title }}</span>
+    <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
     <div class="player-controls">
       <button type="button" class="icon-btn like-icon" :class="{active: player.contentHash && library.likes.has(player.contentHash)}"

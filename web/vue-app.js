@@ -1010,10 +1010,17 @@ const app = createApp({
 // truncated forever -- only ever animates elements that actually
 // overflow (checked via scrollWidth vs clientWidth), so a short title
 // that already fits just sits there normally, no pointless motion.
-// text-indent rather than a transform on some inner wrapper span: it
-// shifts a nowrap/overflow:hidden line's content directly, so every
-// existing .player-title/.playlist-item-title usage works unchanged,
-// no markup restructuring (an inner span per title) needed.
+//
+// Animates transform on an inner <span> (see the HTML -- every usage
+// wraps its text in one), not text-indent on this element directly.
+// text-indent was the first version of this: it worked without needing
+// that inner wrapper at all, but animating it forces a real text-layout
+// reflow on every single frame -- invisible on a desktop browser's spare
+// CPU, but a real phone starts dropping frames doing that 60 times a
+// second, especially with several rows animating at once, which is
+// exactly what "stutters" instead of gliding. transform is
+// compositor-only: the browser can slide the already-painted layer
+// around on the GPU without re-laying-out or re-painting text at all.
 function _updateMarquee(el) {
   const overflow = el.scrollWidth - el.clientWidth;
   const overflowing = overflow > 4;

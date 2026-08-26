@@ -503,32 +503,42 @@ td button {
    already measured as genuinely overflowing -- text-overflow: clip
    instead of ellipsis here since the animation itself is what reveals
    the rest, an ellipsis would just sit there covering the last few
-   pixels of every pass. Respects reduced-motion: the class still marks
-   "this is truncated" (title="" attributes on these spans already carry
-   the full text either way), it just skips the actual animation. */
+   pixels of every pass. The inner <span> every v-marquee usage wraps its
+   text in (see the HTML) is what actually animates -- transform, not
+   text-indent on this element -- so this element just needs to keep
+   clipping whatever slides underneath it. */
 .marquee-active {
   text-overflow: clip;
 }
 
 @media (prefers-reduced-motion: no-preference) {
-  .marquee-active {
+  /* the inner span, not .marquee-active itself -- transform is
+     compositor-only (the GPU can slide an already-painted layer around
+     with zero layout/paint work), unlike animating text-indent directly
+     on the clipping element, which forces a real text-layout reflow on
+     every single frame. Fine on a desktop browser's spare CPU, visibly
+     janky on an actual phone -- especially with several rows' titles
+     animating at once, which is exactly what read as "stutter" rather
+     than a smooth glide. */
+  .marquee-active > * {
+    display: inline-block;
+    will-change: transform;
     /* linear, not ease-in-out -- ease-in-out is slow at both ends and
        fastest in the middle, which on a shift of a couple hundred px
        means most of the *visible* motion happens in a quick burst
        through the middle of each pass. That reads as "it just snapped
        over there" rather than a graceful scroll, even though the
-       underlying values are moving continuously the whole time (sampled
-       this directly -- no actual discontinuity, just a bad-feeling
-       velocity curve for this specific use). Constant speed is the
-       standard choice for exactly this kind of ticking/marquee text. */
+       underlying values move continuously the whole time. Constant
+       speed is the standard choice for exactly this kind of
+       ticking/marquee text. */
     animation: marquee-scroll var(--marquee-duration, 6s) linear infinite;
   }
 }
 
 @keyframes marquee-scroll {
-  0%, 10%   { text-indent: 0; }
-  45%, 55%  { text-indent: var(--marquee-shift, 0); }
-  90%, 100% { text-indent: 0; }
+  0%, 10%   { transform: translateX(0); }
+  45%, 55%  { transform: translateX(var(--marquee-shift, 0)); }
+  90%, 100% { transform: translateX(0); }
 }
 
 .player-controls {
@@ -1082,18 +1092,49 @@ code {
     border-bottom: none;
   }
 
-  /* space-between shoves +1/★ all the way to the title column's far
-     edge, leaving an odd gap next to a short title -- follow the text
-     directly instead */
+  /* Front page layout: title + hash share a line (title grows, hash
+     sits flush at the top-right -- the standard "flex: 1 pushes the
+     trailing item to the far edge" shape), then +1/★/♫+ plus the swipe
+     hint share a second line below, spaced to opposite ends of it.
+     order + flex-basis: 100% (a line break, in a wrapping flex
+     container) gets both lines out of one flex parent instead of
+     needing a second wrapper div -- .title-text/.mobile-hash/
+     .title-icons/.swipe-hint are already siblings here on desktop too,
+     just not wrapping there (see .title-row's own default rule) since
+     .mobile-hash/.swipe-hint stay display:none until this breakpoint. */
   .title-row {
+    flex-wrap: wrap;
     justify-content: flex-start;
+  }
+  .title-text {
+    order: 1;
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .mobile-hash {
+    order: 2;
+    flex: none;
+  }
+  .title-icons {
+    order: 3;
+    flex-basis: 100%;
+    margin-top: 0.35rem;
+  }
+  .swipe-hint {
+    order: 4;
+    margin-left: auto;
+    margin-top: 0.35rem;
+    align-self: center;
   }
 
   /* Play/Download/Verify/etc used to be permanently visible here, which
      is most of what made a Discover/Downloads row feel cramped on a
      phone -- every row paid for a full second (sometimes third) line no
      matter how little you actually needed it right then. Now the front
-     page (title, its +1/★/♫+ icons, and the hash right under it) is all
+     page (title+hash, then +1/★/♫+ right below, see above) is all
      that's visible by default; scrolling/swiping the row horizontally
      snaps to a second page holding the actions instead. Real
      scroll-snap + native touch scrolling, not hand-rolled drag tracking
@@ -1122,8 +1163,9 @@ code {
   }
 
   /* .mobile-hash duplicates the real Content-hash column (hidden above)
-     right under the title instead -- "title w/hash" is meant to be the
-     whole front page, not a separate table column competing for width. */
+     right next to the title instead -- "title w/hash" is meant to be
+     one line of the front page, not a separate table column competing
+     for width. */
   .mobile-hash {
     display: block;
     font-size: 0.72rem;
@@ -1138,7 +1180,6 @@ code {
     font-size: 0.68rem;
     color: var(--muted);
     opacity: 0.6;
-    margin-top: 0.1rem;
   }
 
   /* .dl-hidden normally still reserves layout space (visibility: hidden,
