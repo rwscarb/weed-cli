@@ -994,9 +994,12 @@ code {
      Host/Tunnel/BTC/By are server-address/provenance trivia, not
      actionable from a phone; the phone/share column is actively
      pointless here too -- you're already ON the phone, there's nothing
-     to scan. Title (with the action buttons now living inside its own
-     cell, see the HTML) and Content hash are columns 1-2; this hides
-     3 through 7 (Host/Tunnel/BTC/By/phone-icon). */
+     to scan. Content hash (2) is dropped too now -- it's duplicated
+     inline as .mobile-hash right under the title instead (see the HTML
+     and .swipe-front below), so the real table column would just be a
+     second, redundant copy. Title (column 1, action buttons living
+     inside its own cell) is the only one left standing. */
+  #discover-table th:nth-child(2), #discover-table td:nth-child(2),
   #discover-table th:nth-child(3), #discover-table td:nth-child(3),
   #discover-table th:nth-child(4), #discover-table td:nth-child(4),
   #discover-table th:nth-child(5), #discover-table td:nth-child(5),
@@ -1075,23 +1078,58 @@ code {
      directly instead */
   .title-row {
     justify-content: flex-start;
-    /* room for the hash badge pinned top-right (below) so it doesn't sit
-       on top of a long, wrapped title */
-    padding-right: 4.5rem;
   }
 
-  /* Content hash pinned to the top-right corner of the card instead of
-     its own full-width line below Download -- taken out of flex flow
-     entirely (position: absolute) so it doesn't compete with Download
-     for width; :nth-child(2) is Content hash, the column right after
-     Title/actions (see the thead in index.html). */
-  #discover-table tbody td:nth-child(2) {
-    position: absolute;
-    top: 0.15rem;
-    right: 0;
-    width: auto;
-    padding: 0;
-    text-align: right;
+  /* Play/Download/Verify/etc used to be permanently visible here, which
+     is most of what made a Discover/Downloads row feel cramped on a
+     phone -- every row paid for a full second (sometimes third) line no
+     matter how little you actually needed it right then. Now the front
+     page (title, its +1/★/♫+ icons, and the hash right under it) is all
+     that's visible by default; scrolling/swiping the row horizontally
+     snaps to a second page holding the actions instead. Real
+     scroll-snap + native touch scrolling, not hand-rolled drag tracking
+     -- momentum, direction-locking against the page's own vertical
+     scroll, and snapping all come from the browser for free, and can't
+     get out of sync with an actual finger gesture the way replaying
+     touch events in JS sometimes can. */
+  .swipe-row {
+    display: flex;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .swipe-row::-webkit-scrollbar {
+    display: none;
+  }
+  .swipe-front, .swipe-back {
+    flex: 0 0 100%;
+    min-width: 0;
+    scroll-snap-align: start;
+  }
+  .swipe-back {
+    display: flex;
+    align-items: center;
+  }
+
+  /* .mobile-hash duplicates the real Content-hash column (hidden above)
+     right under the title instead -- "title w/hash" is meant to be the
+     whole front page, not a separate table column competing for width. */
+  .mobile-hash {
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  /* the only hint a front page even has a second one to slide to --
+     without this, "swipe to reveal actions" isn't discoverable at all,
+     it just looks like Play/Download quietly vanished */
+  .swipe-hint {
+    display: block;
+    font-size: 0.68rem;
+    color: var(--muted);
+    opacity: 0.6;
+    margin-top: 0.1rem;
   }
 
   /* .dl-hidden normally still reserves layout space (visibility: hidden,

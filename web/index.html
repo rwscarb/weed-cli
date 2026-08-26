@@ -69,34 +69,42 @@
             :class="{'dl-progress-row': r._dl.downloading, 'row-highlighted': r.content_hash === searchHighlightHash}"
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
           <td>
-            <div class="title-row">
-              <span class="title-text">{{ r.title }}</span>
-              <span class="title-icons">
-                <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
-                        :disabled="library.likes.has(r.content_hash)"
-                        :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
-                        @click="like(r.content_hash)">+1</button>
-                <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
-                        :disabled="library.subscriptions.has(r.signer_pubkey)"
-                        :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
-                        @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
-                <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
-                        @click="openPlaylistPicker($event, r)">♫+</button>
-              </span>
-            </div>
-            <div class="actions-row">
-              <template v-if="library.downloads[r.content_hash]">
-                <button type="button" class="play-btn"
-                        @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
-                <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
-                        @click="download(r)">↻</button>
-                <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
-                        @click="verify(r)">{{ r._verify.label }}</button>
-                <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
-              </template>
-              <button type="button" class="play-btn" v-else :class="{'dl-hidden': r._dl.downloading}"
-                      @click="download(r)">Download</button>
-              <span class="dl-log" :class="{'dl-hidden': !r._dl.downloading}" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
+            <div class="swipe-row">
+              <div class="swipe-front">
+                <div class="title-row">
+                  <span class="title-text">{{ r.title }}</span>
+                  <span class="title-icons">
+                    <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
+                            :disabled="library.likes.has(r.content_hash)"
+                            :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
+                            @click="like(r.content_hash)">+1</button>
+                    <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
+                            :disabled="library.subscriptions.has(r.signer_pubkey)"
+                            :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
+                            @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+                    <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                            @click="openPlaylistPicker($event, r)">♫+</button>
+                  </span>
+                </div>
+                <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
+                <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+              </div>
+              <div class="swipe-back">
+                <div class="actions-row">
+                  <template v-if="library.downloads[r.content_hash]">
+                    <button type="button" class="play-btn"
+                            @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
+                    <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
+                            @click="download(r)">↻</button>
+                    <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
+                            @click="verify(r)">{{ r._verify.label }}</button>
+                    <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
+                  </template>
+                  <button type="button" class="play-btn" v-else :class="{'dl-hidden': r._dl.downloading}"
+                          @click="download(r)">Download</button>
+                  <span class="dl-log" :class="{'dl-hidden': !r._dl.downloading}" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
+                </div>
+              </div>
             </div>
           </td>
           <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
@@ -201,23 +209,31 @@
       <tbody>
         <tr v-for="j in jobs" :key="j.job_id">
           <td>
-            <div class="title-row">
-              <span class="title-text" :title="j.path || j.job_id">{{ j.title || shortHash(j.content_hash) }}</span>
-              <span class="title-icons">
-                <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
-                        @click="openPlaylistPicker($event, j)">♫+</button>
-              </span>
-            </div>
-            <div class="actions-row">
-              <template v-if="j.status === 'done'">
-                <button type="button" class="play-btn"
-                        @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
-                <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
-                        @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
-                <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
-              </template>
-              <span v-else-if="j.status === 'error'" class="status-error">{{ j.error }}</span>
-              <span v-else class="dl-log" :title="j.log">{{ lastLogLine(j.log) || 'starting…' }}</span>
+            <div class="swipe-row">
+              <div class="swipe-front">
+                <div class="title-row">
+                  <span class="title-text" :title="j.path || j.job_id">{{ j.title || shortHash(j.content_hash) }}</span>
+                  <span class="title-icons">
+                    <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                            @click="openPlaylistPicker($event, j)">♫+</button>
+                  </span>
+                </div>
+                <code class="mobile-hash">{{ shortHash(j.content_hash) }}</code>
+                <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+              </div>
+              <div class="swipe-back">
+                <div class="actions-row">
+                  <template v-if="j.status === 'done'">
+                    <button type="button" class="play-btn"
+                            @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
+                    <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
+                            @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
+                    <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
+                  </template>
+                  <span v-else-if="j.status === 'error'" class="status-error">{{ j.error }}</span>
+                  <span v-else class="dl-log" :title="j.log">{{ lastLogLine(j.log) || 'starting…' }}</span>
+                </div>
+              </div>
             </div>
           </td>
           <td><code>{{ shortHash(j.content_hash) }}</code></td>
