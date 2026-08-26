@@ -66,17 +66,7 @@ services:
     volumes:
       - node-data:/data
       - ${WEED_SHARE_DIR:-./share}:/share
-    environment:
-      # `relay` resolves to the sibling service above over Compose's own
-      # network -- no port-forwarding round-trip through the host needed
-      # for node<->relay traffic, that's only there for *your* convenience
-      # (see the relay service's own ports: comment). Override via a real
-      # WEED_RELAY in your environment or .env (see .env.sample) to point
-      # at public infra instead, e.g. for an actual end-to-end test --
-      # this default deliberately favors "works out of the box, stays
-      # local" over that.
-      WEED_RELAY: "${WEED_RELAY:-http://relay:9101}"
-      WEED_TUNNEL: "${WEED_TUNNEL:-}"
+    env_file: .env
     restart: unless-stopped
 
 volumes:
