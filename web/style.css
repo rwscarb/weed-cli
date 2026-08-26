@@ -756,6 +756,7 @@ code {
   #discover-table tbody tr {
     display: flex;
     flex-direction: column;
+    position: relative;
     border-bottom: 1px solid var(--border);
     padding-bottom: 0.5rem;
     margin-bottom: 0.5rem;
@@ -769,7 +770,39 @@ code {
   /* space-between shoves +1/★ all the way to the title column's far
      edge, leaving an odd gap next to a short title -- follow the text
      directly instead */
-  .title-row { justify-content: flex-start; }
+  .title-row {
+    justify-content: flex-start;
+    /* room for the hash badge pinned top-right (below) so it doesn't sit
+       on top of a long, wrapped title */
+    padding-right: 4.5rem;
+  }
+
+  /* Content hash pinned to the top-right corner of the card instead of
+     its own full-width line below Download -- taken out of flex flow
+     entirely (position: absolute) so it doesn't compete with Download
+     for width; :nth-child(2) is Content hash, the column right after
+     Title/actions (see the thead in index.html). */
+  #discover-table tbody td:nth-child(2) {
+    position: absolute;
+    top: 0.15rem;
+    right: 0;
+    width: auto;
+    padding: 0;
+    text-align: right;
+  }
+
+  /* .dl-hidden normally still reserves layout space (visibility: hidden,
+     see the desktop rule above) so a download starting/finishing never
+     shifts the actions column's width -- worth it on desktop, where
+     there's room to spare, but on a phone-width card it's the reason
+     Download couldn't actually reach flex: 1 1 0's full width above: the
+     hidden .dl-log was still eating a fixed chunk of the row's space
+     next to it. Down here, cards already reflow constantly as content
+     wraps to however many lines it needs, so trading the anti-jitter
+     guarantee for Download (or the log text, whichever's showing)
+     genuinely getting the whole row is the right call specifically at
+     this width. */
+  .dl-hidden { display: none; }
 
   /* label + 3 buttons (Any/X/Not X) on one line runs well past 344px --
      "Not Downloaded"/"Not Subscribed" alone are wider than that. Forcing
