@@ -308,6 +308,14 @@ td button {
   display: contents;
 }
 
+/* Relay/Search/filter forms collapsed behind a toggle -- but only below
+   the mobile breakpoint (see the media query below); hidden here on
+   desktop since those forms are small relative to a desktop-width
+   screen and there's no real "clutter" problem to solve there. */
+.filters-toggle {
+  display: none;
+}
+
 /* same language as .play-btn: faint dark outline at rest, only lights up
    on hover -- and a shared min-width so the "+1" badge and the star
    render as the same size instead of each hugging its own glyph */
@@ -1224,6 +1232,37 @@ code {
      genuinely getting the whole row is the right call specifically at
      this width. */
   .dl-hidden { display: none; }
+
+  /* Relay(s) + Search/filters used to be permanently open above the
+     results list -- two full forms' worth of inputs and buttons every
+     single time, before you'd even seen a single row. Collapsed behind
+     a toggle by default down here; still just one tap away, and the
+     underlying discoverRelays/discoverSearch/filter* state is untouched
+     either way (closing the panel doesn't reset or lose anything
+     already entered into it). */
+  .filters-toggle {
+    display: block;
+    width: 100%;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: var(--muted);
+    padding: 0.4rem 0;
+    font-size: 0.85rem;
+  }
+  /* the global button:hover (accent-green fill) reads as a real,
+     substantial action button -- too loud for what's just a disclosure
+     toggle */
+  .filters-toggle:hover {
+    background: transparent;
+    color: var(--text);
+  }
+  .discover-filters {
+    display: none;
+  }
+  .discover-filters.filters-open {
+    display: block;
+  }
 
   /* label + 3 buttons (Any/X/Not X) on one line runs well past 344px --
      "Not Downloaded"/"Not Subscribed" alone are wider than that. Forcing

@@ -568,6 +568,11 @@ const app = createApp({
       if (e.key === '/') {
         e.preventDefault();
         this.activeTab = 'discover';
+        // the search box lives inside .discover-filters, collapsed by
+        // default below the mobile breakpoint (see discoverFiltersOpen)
+        // -- focus() on a display:none input is a silent no-op, so open
+        // it first or '/' would look like it just did nothing there
+        this.discoverFiltersOpen = true;
         this.$nextTick(() => this.$refs.searchInput && this.$refs.searchInput.focus());
         return;
       }
