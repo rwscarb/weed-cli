@@ -33,6 +33,7 @@ const app = createApp({
         { id: 'discover', label: 'Discover' },
         { id: 'host', label: 'Host' },
         { id: 'downloads', label: 'Downloads' },
+        { id: 'playlists', label: 'Playlists' },
         { id: 'identity-tab', label: 'Identity' },
       ],
       activeTab: 'discover',
@@ -58,10 +59,15 @@ const app = createApp({
       filterLiked: 'any',
       filterSubscribed: 'any',
 
-      // server-persisted memory of what's been downloaded/liked/subscribed,
-      // so a page reload (or a server restart) doesn't forget any of it --
-      // loaded once at startup, then kept in sync as the user acts
-      library: { downloads: {}, likes: new Set(), subscriptions: new Set() },
+      // server-persisted memory of what's been downloaded/liked/subscribed/
+      // playlisted, so a page reload (or a server restart) doesn't forget
+      // any of it -- loaded once at startup, then kept in sync as the user
+      // acts. playlists is a plain array (order is meaningful -- it's
+      // playback order), each entry the exact shape web_ui.py's
+      // /api/playlists/* endpoints hand back plus a couple of purely
+      // client-side UI fields (_editing/_nameDraft) for the inline rename
+      // control, same pattern discoverResults already uses for _dl/_verify.
+      library: { downloads: {}, likes: new Set(), subscriptions: new Set(), playlists: [] },
 
       hostForm: {
         archiveDir: '', fileName: '', port: 9201, price: 0, lightningNode: null,
@@ -90,11 +96,30 @@ const app = createApp({
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false,
+        // set only when playback started from a playlist's "Play all" --
+        // { items: [...], index } into that same array. null means "just
+        // playing one thing," the ordinary case -- see openPlayer/
+        // onPlayerEnded.
+        queue: null,
       },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
       qr: { visible: false, url: '', top: 0, left: null, right: null },
+
+      // one shared "add to playlist" popup, same anchored-under-the-
+      // clicked-button pattern as qr above -- item is whatever
+      // {content_hash, title, signer_pubkey} triggered it (a Discover
+      // result or a Downloads job), so addToPlaylist doesn't need two
+      // near-identical copies for the two places this opens from.
+      playlistPicker: { visible: false, top: 0, left: null, right: null, item: null },
+      newPlaylistName: '',
+      // separate from the picker's own newPlaylistName above -- the
+      // Playlists tab's own "create an empty playlist" form is a
+      // persistent, always-visible field, not a popup that resets itself
+      // on every open, so sharing one variable between them would leak
+      // whatever was last typed in either into the other.
+      newPlaylistNameStandalone: '',
 
       // errors can now carry node.py's full captured diagnostic trace
       // (see web_ui.py's _with_captured_detail), not just a one-line
@@ -108,7 +133,7 @@ const app = createApp({
       // keydown handler below, so the two can never drift out of sync
       shortcuts: [
         { keys: '/', desc: 'Jump to Discover search' },
-        { keys: '1 – 4', desc: 'Switch tabs (Discover/Host/Downloads/Identity)' },
+        { keys: '1 – 5', desc: 'Switch tabs (Discover/Host/Downloads/Playlists/Identity)' },
         { keys: '↑ / ↓', desc: 'Move highlight through Discover results (search box focused)' },
         { keys: 'Enter / Space', desc: 'Play or Download the highlighted row (search box focused)' },
         { keys: 'r', desc: 'Refresh Discover' },
@@ -175,6 +200,13 @@ const app = createApp({
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
     },
+    playlistPickerStyle() {
+      return {
+        top: this.playlistPicker.top + 'px',
+        left: this.playlistPicker.left != null ? this.playlistPicker.left + 'px' : 'auto',
+        right: this.playlistPicker.right != null ? this.playlistPicker.right + 'px' : 'auto',
+      };
+    },
   },
 
   watch: {
@@ -213,6 +245,7 @@ const app = createApp({
     for (const d of lib.downloads || []) this.library.downloads[d.content_hash] = d;
     this.library.likes = new Set(lib.likes || []);
     this.library.subscriptions = new Set(lib.subscriptions || []);
+    this.library.playlists = (lib.playlists || []).map(p => ({ ...p, _editing: false, _nameDraft: '' }));
     for (const d of lib.downloads || []) {
       this.jobs.push({
         job_id: d.job_id, content_hash: d.content_hash, pct: 0, status: 'done',
@@ -313,10 +346,14 @@ const app = createApp({
       this.qr.visible = true;
     },
     onDocumentClick(e) {
-      if (!this.qr.visible) return;
-      if (this.$refs.qrPopup && this.$refs.qrPopup.contains(e.target)) return;
-      if (e.target.closest('.qr-btn, .qr-toggle')) return;
-      this.qr.visible = false;
+      if (this.qr.visible) {
+        const insidePopup = this.$refs.qrPopup && this.$refs.qrPopup.contains(e.target);
+        if (!insidePopup && !e.target.closest('.qr-btn, .qr-toggle')) this.qr.visible = false;
+      }
+      if (this.playlistPicker.visible) {
+        const insidePicker = this.$refs.playlistPicker && this.$refs.playlistPicker.contains(e.target);
+        if (!insidePicker && !e.target.closest('.playlist-add-btn')) this.playlistPicker.visible = false;
+      }
     },
 
     showError(message) {
@@ -331,13 +368,18 @@ const app = createApp({
     // :fullscreen is handled entirely in CSS, so Esc-to-exit (which
     // bypasses our own button) still lands back in whichever of
     // pip/theater it was in before, with no extra JS bookkeeping.
-    openPlayer(jobId, title, contentHash, signerPubkey) {
+    // queue is only ever passed by playPlaylist/onPlayerEnded -- every
+    // ordinary "▶ Play" click omits it, which correctly ends any playlist
+    // that happened to be running (manually picking a different video is
+    // exactly the "I'm done following that queue" signal)
+    openPlayer(jobId, title, contentHash, signerPubkey, queue = null) {
       this.player.jobId = jobId;
       this.player.title = title || jobId;
       this.player.contentHash = contentHash || null;
       this.player.signerPubkey = signerPubkey || null;
       this.player.mode = 'pip';
       this.player.visible = true;
+      this.player.queue = queue;
       this.$nextTick(() => {
         const video = this.$refs.playerVideo;
         video.src = '/api/stream/' + jobId;
@@ -352,6 +394,7 @@ const app = createApp({
       video.load();
       this.player.visible = false;
       this.player.isPlaying = false;
+      this.player.queue = null;
     },
     setPlayerMode(mode) {
       const el = this.$refs.globalPlayer;
@@ -495,7 +538,7 @@ const app = createApp({
         return;
       }
 
-      const tabByDigit = { '1': 'discover', '2': 'host', '3': 'downloads', '4': 'identity-tab' };
+      const tabByDigit = { '1': 'discover', '2': 'host', '3': 'downloads', '4': 'playlists', '5': 'identity-tab' };
       if (tabByDigit[e.key]) {
         this.activeTab = tabByDigit[e.key];
         return;
@@ -615,6 +658,146 @@ const app = createApp({
     async subscribe(signerPubkey) {
       await this.apiPost('/api/subscribe', { target_pubkey: signerPubkey, relay: this.discoverRelaysList[0] });
       this.library.subscriptions.add(signerPubkey);
+    },
+
+    // ── playlists ─────────────────────────────────────────────────────
+    // item is {content_hash, title, signer_pubkey} -- a Discover result
+    // or a Downloads job both already carry exactly this shape, so
+    // callers just pass the row/job itself (or the equivalent plain
+    // object for the player header's own "+ Playlist" button).
+    openPlaylistPicker(event, item) {
+      const anchorEl = event.currentTarget;
+      if (this.playlistPicker.visible && this.playlistPicker.item === item) {
+        this.playlistPicker.visible = false;
+        return;
+      }
+      this.playlistPicker.item = item;
+      const rect = anchorEl.getBoundingClientRect();
+      this.playlistPicker.top = rect.bottom + window.scrollY + 6;
+      // same overflow-flip trick as toggleQr -- this can open from the
+      // Discover table's rightmost columns too
+      const popupWidth = 220;
+      if (rect.left + popupWidth > window.innerWidth) {
+        this.playlistPicker.left = null;
+        this.playlistPicker.right = window.innerWidth - rect.right;
+      } else {
+        this.playlistPicker.right = null;
+        this.playlistPicker.left = rect.left + window.scrollX;
+      }
+      this.newPlaylistName = '';
+      this.playlistPicker.visible = true;
+    },
+    // server hands back the *whole* updated playlist on every mutation
+    // rather than just an ok/error -- findable-and-replaceable here in
+    // one line, instead of every caller re-deriving what its own edit
+    // should have produced (which is exactly how the items-array
+    // ordering from move() could quietly drift out of sync with what the
+    // server actually did).
+    _applyPlaylist(playlist) {
+      const idx = this.library.playlists.findIndex(p => p.id === playlist.id);
+      const withUiState = { ...playlist, _editing: false, _nameDraft: '' };
+      if (idx === -1) this.library.playlists.push(withUiState);
+      else this.library.playlists[idx] = withUiState;
+    },
+    async addToPlaylist(playlistId) {
+      const item = this.playlistPicker.item;
+      const resp = await this.apiPost('/api/playlists/add', {
+        playlist_id: playlistId, content_hash: item.content_hash,
+        title: item.title || null, signer_pubkey: item.signer_pubkey || null,
+      });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+      this.playlistPicker.visible = false;
+    },
+    async createPlaylistAndAdd() {
+      const name = this.newPlaylistName.trim();
+      if (!name) return;
+      const resp = await this.apiPost('/api/playlists/create', { name });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+      await this.addToPlaylist(resp.playlist.id);
+    },
+    // Playlists tab's own create form -- an empty playlist with nothing
+    // added yet, unlike createPlaylistAndAdd above (always paired with an
+    // item from wherever the picker was opened)
+    async createPlaylistOnly() {
+      const name = this.newPlaylistNameStandalone.trim();
+      if (!name) return;
+      const resp = await this.apiPost('/api/playlists/create', { name });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+      this.newPlaylistNameStandalone = '';
+    },
+    async removeFromPlaylist(playlistId, contentHash) {
+      const resp = await this.apiPost('/api/playlists/remove', { playlist_id: playlistId, content_hash: contentHash });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+    },
+    async movePlaylistItem(playlistId, contentHash, direction) {
+      const resp = await this.apiPost('/api/playlists/move',
+        { playlist_id: playlistId, content_hash: contentHash, direction });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+    },
+    async deletePlaylist(playlistId) {
+      await this.apiPost('/api/playlists/delete', { playlist_id: playlistId });
+      this.library.playlists = this.library.playlists.filter(p => p.id !== playlistId);
+    },
+    // click-to-edit name, same spirit as everything else here staying
+    // plain-input rather than a native prompt() -- prompt() blocks the
+    // whole tab and looks like a browser chrome dialog, not part of the app
+    startRenamePlaylist(playlist) {
+      playlist._nameDraft = playlist.name;
+      playlist._editing = true;
+      // a fresh v-if="!pl._editing" -> v-else swap isn't focused by the
+      // browser on its own; attribute selector rather than a v-for ref
+      // (those come back as an array, awkward for "the one that just
+      // became editable" specifically)
+      this.$nextTick(() => {
+        const el = document.querySelector(`[data-playlist-name-input="${playlist.id}"]`);
+        if (el) { el.focus(); el.select(); }
+      });
+    },
+    async commitRenamePlaylist(playlist) {
+      const name = playlist._nameDraft.trim();
+      playlist._editing = false;
+      if (!name || name === playlist.name) return;
+      const resp = await this.apiPost('/api/playlists/rename', { playlist_id: playlist.id, name });
+      if (resp.error) { this.showError('error: ' + resp.error); return; }
+      this._applyPlaylist(resp.playlist);
+    },
+    // Plays every already-downloaded item in a playlist, in order, via
+    // the global player's queue -- an item nobody's downloaded yet gets
+    // skipped rather than auto-triggering a download on your behalf
+    // (bandwidth/possession-challenge auctions aren't something "press
+    // play" should silently kick off); it's still right there with its
+    // own Download button in the list below to grab first.
+    playPlaylist(playlist) {
+      const items = playlist.items.filter(it => this.library.downloads[it.content_hash]);
+      if (!items.length) {
+        this.showError('Nothing in this playlist is downloaded yet -- download at least one item first.');
+        return;
+      }
+      const first = items[0];
+      const rec = this.library.downloads[first.content_hash];
+      this.openPlayer(rec.job_id, first.title || rec.title || this.shortHash(first.content_hash),
+        first.content_hash, first.signer_pubkey || rec.signer_pubkey, { items, index: 0 });
+    },
+    // advances player.queue on the <video>'s own 'ended' event -- see
+    // openPlayer's queue param and playPlaylist above. Only ever walks
+    // the *already-filtered*, already-downloaded items list playPlaylist
+    // built, so every step here is immediately playable with no download
+    // detour mid-queue.
+    onPlayerEnded() {
+      this.player.isPlaying = false;
+      const q = this.player.queue;
+      if (!q) return;
+      const next = q.items[q.index + 1];
+      if (!next) { this.player.queue = null; return; }
+      const rec = this.library.downloads[next.content_hash];
+      if (!rec) { this.player.queue = null; return; }
+      this.openPlayer(rec.job_id, next.title || rec.title || this.shortHash(next.content_hash),
+        next.content_hash, next.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + 1 });
     },
 
     // ── host ──────────────────────────────────────────────────────────

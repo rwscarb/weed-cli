@@ -80,6 +80,8 @@
                         :disabled="library.subscriptions.has(r.signer_pubkey)"
                         :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
                         @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+                <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                        @click="openPlaylistPicker($event, r)">♫+</button>
               </span>
             </div>
             <div class="actions-row">
@@ -201,6 +203,10 @@
           <td>
             <div class="title-row">
               <span class="title-text" :title="j.path || j.job_id">{{ j.title || shortHash(j.content_hash) }}</span>
+              <span class="title-icons">
+                <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                        @click="openPlaylistPicker($event, j)">♫+</button>
+              </span>
             </div>
             <div class="actions-row">
               <template v-if="j.status === 'done'">
@@ -222,6 +228,53 @@
     </table></div>
   </section>
 
+  <section class="tab-panel" v-show="activeTab === 'playlists'">
+    <h2>Playlists</h2>
+    <form class="inline-form" @submit.prevent="createPlaylistOnly">
+      <label>New playlist
+        <input type="text" v-model="newPlaylistNameStandalone" placeholder="name">
+      </label>
+      <button type="submit" :disabled="!newPlaylistNameStandalone.trim()">Create</button>
+    </form>
+
+    <p v-if="!library.playlists.length" class="muted">
+      No playlists yet — use the ♫+ button on any Discover or Downloads row to start one.
+    </p>
+
+    <div class="playlist-card" v-for="pl in library.playlists" :key="pl.id">
+      <div class="playlist-card-header">
+        <span v-if="!pl._editing" class="playlist-name" title="Click to rename"
+              @click="startRenamePlaylist(pl)">{{ pl.name }}</span>
+        <input v-else type="text" class="playlist-name-input" v-model="pl._nameDraft"
+               :data-playlist-name-input="pl.id"
+               @keydown.enter="commitRenamePlaylist(pl)" @keydown.escape="pl._editing = false"
+               @blur="commitRenamePlaylist(pl)">
+        <span class="playlist-count muted">{{ pl.items.length }} item{{ pl.items.length === 1 ? '' : 's' }}</span>
+        <div class="playlist-card-actions">
+          <button type="button" class="play-btn" @click="playPlaylist(pl)">▶ Play all</button>
+          <button type="button" class="icon-btn" title="Delete playlist" @click="deletePlaylist(pl.id)">🗑</button>
+        </div>
+      </div>
+      <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
+      <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash">
+        <div class="title-row">
+          <span class="title-text">{{ it.title || shortHash(it.content_hash) }}</span>
+        </div>
+        <div class="actions-row">
+          <button type="button" class="play-btn" v-if="library.downloads[it.content_hash]"
+                  @click="openPlayer(library.downloads[it.content_hash].job_id, it.title || library.downloads[it.content_hash].title || shortHash(it.content_hash), it.content_hash, it.signer_pubkey || library.downloads[it.content_hash].signer_pubkey)">▶ Play</button>
+          <span v-else class="muted">not downloaded yet — grab it from Discover</span>
+          <button type="button" class="icon-btn" title="Move up" :disabled="idx === 0"
+                  @click="movePlaylistItem(pl.id, it.content_hash, 'up')">↑</button>
+          <button type="button" class="icon-btn" title="Move down" :disabled="idx === pl.items.length - 1"
+                  @click="movePlaylistItem(pl.id, it.content_hash, 'down')">↓</button>
+          <button type="button" class="icon-btn" title="Remove from playlist"
+                  @click="removeFromPlaylist(pl.id, it.content_hash)">✕</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
   <section class="tab-panel" v-show="activeTab === 'identity-tab'">
     <h2>Identity &amp; reputation</h2>
     <p>Your pubkey: <code>{{ pubkey }}</code></p>
@@ -240,6 +293,7 @@
 <div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title">{{ player.title }}</span>
+    <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
     <div class="player-controls">
       <button type="button" class="icon-btn like-icon" :class="{active: player.contentHash && library.likes.has(player.contentHash)}"
               :disabled="!player.contentHash || library.likes.has(player.contentHash)"
@@ -255,12 +309,24 @@
     </div>
   </div>
   <video ref="playerVideo" controls
-         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="player.isPlaying = false"></video>
+         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">
   <img v-if="qr.url" :src="'/api/qr?data=' + encodeURIComponent(qr.url)" :alt="'QR code for ' + qr.url">
   <div class="qr-url">{{ qr.url }}</div>
+</div>
+
+<div id="playlist-picker" ref="playlistPicker" class="qr-popup" :class="{hidden: !playlistPicker.visible}"
+     :style="playlistPickerStyle">
+  <div class="playlist-picker-title">Add to playlist</div>
+  <button type="button" class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
+          @click="addToPlaylist(pl.id)">{{ pl.name }} <span class="muted">({{ pl.items.length }})</span></button>
+  <div v-if="!library.playlists.length" class="playlist-picker-empty">no playlists yet</div>
+  <form class="playlist-picker-new" @submit.prevent="createPlaylistAndAdd">
+    <input type="text" v-model="newPlaylistName" placeholder="New playlist name">
+    <button type="submit" :disabled="!newPlaylistName.trim()">Create</button>
+  </form>
 </div>
 
 <div id="shortcuts-dialog-backdrop" :class="{hidden: !shortcutsVisible}" @click="shortcutsVisible = false"></div>

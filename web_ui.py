@@ -125,8 +125,14 @@ _lock = threading.Lock()
 # reload -- or a server restart -- doesn't forget any of it. Downloads
 # are keyed by content_hash (one record per piece of content, most
 # recent job wins); likes/subscriptions are just lists of hashes/pubkeys.
-# All access goes through _lock, same as _hosts/_jobs.
-_library = {'downloads': {}, 'likes': [], 'subscriptions': []}
+# playlists are purely local organization -- unlike likes/subscriptions
+# they're never signed or gossiped to a relay, nobody else has any
+# business seeing how you've grouped your own downloads -- a list of
+# {id, name, items: [{content_hash, title, signer_pubkey}, ...]}, id
+# stable across renames so the UI can keep pointing at the same playlist
+# while its name changes underneath it. All access goes through _lock,
+# same as _hosts/_jobs.
+_library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': []}
 
 # what to (re-)host on startup -- _hosts above is pure in-memory runtime
 # state, so a restart (a fresh `make node`, a Docker container recreated
@@ -245,6 +251,7 @@ def _load_library():
             'downloads': data.get('downloads') or {},
             'likes': data.get('likes') or [],
             'subscriptions': data.get('subscriptions') or [],
+            'playlists': data.get('playlists') or [],
         }
     except (FileNotFoundError, json.JSONDecodeError):
         pass
@@ -492,6 +499,7 @@ class Handler(BaseHTTPRequestHandler):
                     'downloads': list(_library['downloads'].values()),
                     'likes': list(_library['likes']),
                     'subscriptions': list(_library['subscriptions']),
+                    'playlists': list(_library['playlists']),
                 })
         if path.startswith('/api/download/'):
             job_id = path[len('/api/download/'):]
@@ -552,6 +560,12 @@ class Handler(BaseHTTPRequestHandler):
             '/api/host': self._handle_host, '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
             '/api/verify': self._handle_verify,
+            '/api/playlists/create': self._handle_playlist_create,
+            '/api/playlists/rename': self._handle_playlist_rename,
+            '/api/playlists/delete': self._handle_playlist_delete,
+            '/api/playlists/add': self._handle_playlist_add,
+            '/api/playlists/remove': self._handle_playlist_remove,
+            '/api/playlists/move': self._handle_playlist_move,
         }
         handler = handlers.get(path)
         if not handler:
@@ -629,6 +643,94 @@ class Handler(BaseHTTPRequestHandler):
                 _library['subscriptions'].append(target_pubkey)
                 _save_library()
         self._json({'result': result})
+
+    def _handle_playlist_create(self, body):
+        name = (body.get('name') or '').strip()
+        if not name:
+            return self._json({'error': 'name required'}, status=400)
+        playlist = {'id': uuid.uuid4().hex[:12], 'name': name, 'items': []}
+        with _lock:
+            _library['playlists'].append(playlist)
+            _save_library()
+        self._json({'playlist': playlist})
+
+    def _handle_playlist_rename(self, body):
+        playlist_id = body.get('playlist_id')
+        name = (body.get('name') or '').strip()
+        if not playlist_id or not name:
+            return self._json({'error': 'playlist_id and name required'}, status=400)
+        with _lock:
+            playlist = next((p for p in _library['playlists'] if p['id'] == playlist_id), None)
+            if not playlist:
+                return self._json({'error': 'no such playlist'}, status=404)
+            playlist['name'] = name
+            _save_library()
+            self._json({'playlist': playlist})
+
+    def _handle_playlist_delete(self, body):
+        playlist_id = body.get('playlist_id')
+        if not playlist_id:
+            return self._json({'error': 'playlist_id required'}, status=400)
+        with _lock:
+            _library['playlists'] = [p for p in _library['playlists'] if p['id'] != playlist_id]
+            _save_library()
+        self._json({'ok': True})
+
+    def _handle_playlist_add(self, body):
+        playlist_id = body.get('playlist_id')
+        content_hash = body.get('content_hash')
+        if not playlist_id or not content_hash:
+            return self._json({'error': 'playlist_id and content_hash required'}, status=400)
+        with _lock:
+            playlist = next((p for p in _library['playlists'] if p['id'] == playlist_id), None)
+            if not playlist:
+                return self._json({'error': 'no such playlist'}, status=404)
+            # re-adding something already in the playlist just moves it to
+            # this spot instead of piling up a duplicate entry -- same
+            # dedup-by-content_hash instinct _library['downloads'] already
+            # has, just for a list instead of a dict
+            playlist['items'] = [it for it in playlist['items'] if it['content_hash'] != content_hash]
+            playlist['items'].append({
+                'content_hash': content_hash,
+                'title': body.get('title') or None,
+                'signer_pubkey': body.get('signer_pubkey') or None,
+            })
+            _save_library()
+            self._json({'playlist': playlist})
+
+    def _handle_playlist_remove(self, body):
+        playlist_id = body.get('playlist_id')
+        content_hash = body.get('content_hash')
+        if not playlist_id or not content_hash:
+            return self._json({'error': 'playlist_id and content_hash required'}, status=400)
+        with _lock:
+            playlist = next((p for p in _library['playlists'] if p['id'] == playlist_id), None)
+            if not playlist:
+                return self._json({'error': 'no such playlist'}, status=404)
+            playlist['items'] = [it for it in playlist['items'] if it['content_hash'] != content_hash]
+            _save_library()
+            self._json({'playlist': playlist})
+
+    def _handle_playlist_move(self, body):
+        playlist_id = body.get('playlist_id')
+        content_hash = body.get('content_hash')
+        direction = body.get('direction')
+        if not playlist_id or not content_hash or direction not in ('up', 'down'):
+            return self._json({'error': "playlist_id, content_hash, and direction ('up'|'down') required"},
+                               status=400)
+        with _lock:
+            playlist = next((p for p in _library['playlists'] if p['id'] == playlist_id), None)
+            if not playlist:
+                return self._json({'error': 'no such playlist'}, status=404)
+            items = playlist['items']
+            idx = next((i for i, it in enumerate(items) if it['content_hash'] == content_hash), None)
+            if idx is None:
+                return self._json({'error': 'content_hash not in this playlist'}, status=404)
+            swap_with = idx - 1 if direction == 'up' else idx + 1
+            if 0 <= swap_with < len(items):
+                items[idx], items[swap_with] = items[swap_with], items[idx]
+                _save_library()
+            self._json({'playlist': playlist})
 
     def _handle_verify(self, body):
         """Re-checks an already-downloaded file against its own
