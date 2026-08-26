@@ -25,18 +25,26 @@ const FilterToggle = {
 
 const app = createApp({
   data() {
+    const tabs = [
+      { id: 'discover', label: 'Discover' },
+      { id: 'host', label: 'Host' },
+      { id: 'downloads', label: 'Downloads' },
+      { id: 'playlists', label: 'Playlists' },
+      { id: 'identity-tab', label: 'Identity' },
+    ];
+    // URL hash is the tab, e.g. weed:8080/#playlists -- read straight
+    // into the initial value here (not set later in mounted()) so a
+    // refresh lands on the right tab from the very first paint, instead
+    // of flashing Discover for a frame first. Anything unrecognized
+    // (empty hash on a first visit, a stale/hand-edited one) falls back
+    // to Discover same as before this existed.
+    const hashTab = location.hash.slice(1);
     return {
       pubkey: '',
       lanUrlBase: null,
 
-      tabs: [
-        { id: 'discover', label: 'Discover' },
-        { id: 'host', label: 'Host' },
-        { id: 'downloads', label: 'Downloads' },
-        { id: 'playlists', label: 'Playlists' },
-        { id: 'identity-tab', label: 'Identity' },
-      ],
-      activeTab: 'discover',
+      tabs,
+      activeTab: tabs.some(t => t.id === hashTab) ? hashTab : 'discover',
 
       discoverRelays: 'http://127.0.0.1:9101',
       discoverResults: [],
@@ -217,10 +225,25 @@ const app = createApp({
       immediate: true,
       handler(title) { document.title = title; },
     },
+    // replaceState, not pushState -- a tab switch isn't a "page" the
+    // back button should step through one at a time (that would make
+    // Back undo your last few tab clicks instead of leaving the site,
+    // surprising and not what "keep my tab on refresh" was asking for),
+    // it's just where a refresh should land you back at.
+    activeTab(tab) {
+      history.replaceState(null, '', '#' + tab);
+    },
   },
 
   async mounted() {
     document.addEventListener('click', this.onDocumentClick);
+    // covers back/forward and a hand-edited URL bar -- the watch above
+    // only ever writes the hash *from* activeTab; this is the other
+    // direction, hash changing out from under activeTab
+    window.addEventListener('hashchange', () => {
+      const id = location.hash.slice(1);
+      if (this.tabs.some(t => t.id === id)) this.activeTab = id;
+    });
     document.addEventListener('keydown', this.onGlobalKeydown);
 
     const { pubkey } = await this.apiGet('/api/whoami');
