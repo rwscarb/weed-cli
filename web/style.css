@@ -474,6 +474,22 @@ td button {
   white-space: nowrap;
 }
 
+.player-queue-pos {
+  font-size: 0.72rem;
+  color: var(--muted);
+  flex-shrink: 0;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+/* PIP is a small docked corner window -- title text is already fighting
+   .player-controls for room there (see .player-title's own ellipsis),
+   and "2 / 5" is the kind of detail worth showing once there's real
+   space for it (theater/fullscreen) rather than squeezing the title
+   further just to fit. */
+#global-player.mode-pip .player-queue-pos {
+  display: none;
+}
+
 .player-controls {
   display: flex;
   gap: 0.25rem;
