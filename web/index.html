@@ -30,21 +30,27 @@
 <main>
   <section class="tab-panel" v-show="activeTab === 'discover'">
     <h2>Discover</h2>
-    <form class="inline-form" @submit.prevent="refreshDiscover">
-      <label>Relay(s), comma-separated
-        <input type="text" v-model="discoverRelays">
-      </label>
-      <button type="submit" class="refresh-btn" :disabled="discoverLoading">{{ discoverLoading ? 'Discovering…' : 'Refresh' }}</button>
-    </form>
-    <form class="inline-form" @submit.prevent>
-      <label>Search
-        <input type="text" ref="searchInput" v-model="discoverSearch" placeholder="title or content hash"
-               @keydown="onSearchKeydown">
-      </label>
-      <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
-      <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
-      <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
-    </form>
+    <button type="button" class="filters-toggle" @click="discoverFiltersOpen = !discoverFiltersOpen"
+            :aria-expanded="discoverFiltersOpen">
+      {{ discoverFiltersOpen ? '▾' : '▸' }} Relay &amp; filters
+    </button>
+    <div class="discover-filters" :class="{'filters-open': discoverFiltersOpen}">
+      <form class="inline-form" @submit.prevent="refreshDiscover">
+        <label>Relay(s), comma-separated
+          <input type="text" v-model="discoverRelays">
+        </label>
+        <button type="submit" class="refresh-btn" :disabled="discoverLoading">{{ discoverLoading ? 'Discovering…' : 'Refresh' }}</button>
+      </form>
+      <form class="inline-form" @submit.prevent>
+        <label>Search
+          <input type="text" ref="searchInput" v-model="discoverSearch" placeholder="title or content hash"
+                 @keydown="onSearchKeydown">
+        </label>
+        <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
+        <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
+        <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
+      </form>
+    </div>
     <div class="table-wrap"><table id="discover-table">
       <thead><tr><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>BTC</th><th>By</th><th></th></tr></thead>
       <tbody>

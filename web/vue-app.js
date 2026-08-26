@@ -66,6 +66,14 @@ const app = createApp({
       filterDownloaded: 'any',
       filterLiked: 'any',
       filterSubscribed: 'any',
+      // collapses the Relay/Search/filter forms behind a toggle -- but
+      // only below the mobile breakpoint (see .discover-filters in
+      // style.css); the flag itself starts false unconditionally since
+      // CSS ignores it entirely at desktop width anyway (those forms
+      // always show there, same as before this existed), so there's no
+      // need to detect viewport width here just to pick the right
+      // default.
+      discoverFiltersOpen: false,
 
       // server-persisted memory of what's been downloaded/liked/subscribed/
       // playlisted, so a page reload (or a server restart) doesn't forget
