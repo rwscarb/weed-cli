@@ -374,6 +374,11 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
     try:
         t0 = time.time()
         with _quiet() as captured:
+            # registered as soon as it's the real live buffer (not the
+            # placeholder above) so /api/download/<job_id> can read
+            # node.py's real prints as they happen, not just after the
+            # job finishes — see the GET handler's use of _job_logs
+            _job_logs[job_id] = captured
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
                                                use_lightning=use_lightning, lightning_node=lightning_node,
                                                on_progress=on_progress)
@@ -458,9 +463,16 @@ class Handler(BaseHTTPRequestHandler):
                     'subscriptions': list(_library['subscriptions']),
                 })
         if path.startswith('/api/download/'):
+            job_id = path[len('/api/download/'):]
             with _lock:
-                job = _jobs.get(path[len('/api/download/'):])
-            return self._json(job) if job else self._json({'error': 'no such job'}, status=404)
+                job = _jobs.get(job_id)
+                job = dict(job) if job else None
+            if not job:
+                return self._json({'error': 'no such job'}, status=404)
+            log_buf = _job_logs.get(job_id)
+            if log_buf is not None:
+                job['log'] = log_buf.getvalue()
+            return self._json(job)
         if path.startswith('/api/reputation/'):
             from poc_reputation import ReputationStore
             pubkey = path[len('/api/reputation/'):]
