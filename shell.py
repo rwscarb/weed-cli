@@ -179,6 +179,23 @@ class WeedShell(cmd.Cmd):
         # and only fail later, in the background server thread (onecmd's
         # exception net doesn't reach into background threads)
         all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
+        # Same reasoning as web_ui.py's _run_host_job: bind the real,
+        # permanent listening socket now, before announcing anything to a
+        # relay, and hand this exact socket to run_host_server below
+        # instead of it binding a second one later. Without this, a port
+        # already in use (another `host` still running from earlier in
+        # this same session, or a persisted web-UI host on the same
+        # default port) only fails once the background thread started
+        # below gets around to its own bind — by then `announced ... on
+        # relay: {'ok': True, ...}` has already printed, and the relay
+        # has a listing for a host that was never actually reachable, with
+        # nothing pointing back at why until a downloader's own possession
+        # challenge mysteriously fails against it.
+        try:
+            bound_sock = node.bind_host_port(port)
+        except OSError as e:
+            print(f'  ✗ cannot bind port {port}: {e} — not announcing, nothing started')
+            return
         if relay and not no_announce:
             ott_status = node.ott_commit_status(archive_dir)
             for entry in entries:
@@ -204,7 +221,8 @@ class WeedShell(cmd.Cmd):
                 self._host_threads.append(tt)
         t = threading.Thread(target=_bg,
                               args=(node.run_host_server, archive_dir, file_name, port),
-                              kwargs={'quiet': True, 'price': price, 'ln_node': ln_node}, daemon=True)
+                              kwargs={'quiet': True, 'price': price, 'ln_node': ln_node, 'sock': bound_sock},
+                              daemon=True)
         t.start()
         self._host_threads.append(t)
         price_note = f', {price} sat/download' if price else ', free'

@@ -188,6 +188,18 @@ def cmd_host(args):
     # matching chunk data would otherwise get announced to the relay and
     # only fail later, in the background server thread
     all_leaves = {e['sha256']: node.load_leaves(args.archive_dir, e['sha256']) for e in entries}
+    # Bind the real listening socket now, before announcing anything --
+    # same reasoning as web_ui.py's _run_host_job and shell.py's do_host:
+    # a port already in use only used to surface once run_host_server got
+    # around to its own (later) bind, by which point every relay below
+    # had already been told this host is reachable at host_addr. Binding
+    # first and reusing the same socket in run_host_server (see sock=
+    # below) means a taken port fails loudly here instead, before a
+    # single relay ever hears about it.
+    try:
+        bound_sock = node.bind_host_port(args.port)
+    except OSError as e:
+        sys.exit(f'cannot bind port {args.port}: {e} — not announcing, nothing started')
     # one archive_dir, one merkle root, one commit -- computed once outside
     # the per-relay/per-entry loops below, not per file
     ott_status = node.ott_commit_status(args.archive_dir)
@@ -213,7 +225,7 @@ def cmd_host(args):
                               kwargs={'use_tls': use_tls, 'ln_node': args.lightning_node},
                               daemon=True).start()
     node.run_host_server(args.archive_dir, args.file, args.port, price=args.price,
-                          ln_node=args.lightning_node)
+                          ln_node=args.lightning_node, sock=bound_sock)
 
 
 def cmd_discover(args):
