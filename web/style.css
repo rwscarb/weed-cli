@@ -212,7 +212,17 @@ td button {
    column is narrow and this can be a full log line's worth of detail. */
 .dl-log {
   display: inline-block;
-  max-width: 14rem;
+  /* a fixed width, not max-width -- max-width still lets the box grow
+     and shrink with however long the latest captured line happens to
+     be, which reflows the whole actions column (and jitters every
+     sibling cell) on every single poll tick as the text changes length.
+     A fixed width truncates consistently regardless of content, so the
+     box itself never moves once it exists. flex-shrink: 0 for the same
+     reason -- .actions-row is a flex container, and without this a
+     shorter neighboring button could still get squeezed as the flex
+     layout renegotiates space each time this element's content changes. */
+  width: 12rem;
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
