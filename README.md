@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/logo.png" alt="weed logo" width="360"></p>
+
 # weed
 
 **Censorship-resistant video distribution — proof of concept.**
