@@ -220,8 +220,11 @@ td button {
      box itself never moves once it exists. flex-shrink: 0 for the same
      reason -- .actions-row is a flex container, and without this a
      shorter neighboring button could still get squeezed as the flex
-     layout renegotiates space each time this element's content changes. */
-  width: 12rem;
+     layout renegotiates space each time this element's content changes.
+     Now permanently in the layout (see .dl-hidden below) rather than only
+     while downloading, so this width is also the floor on how narrow the
+     actions column can ever get -- kept fairly tight for that reason. */
+  width: 7rem;
   flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -645,6 +648,18 @@ code {
 #discover-table td code {
   white-space: nowrap;
   overflow-wrap: normal;
+}
+
+/* Auto table layout sizes every row in a column to the *widest* row's
+   content -- one already-downloaded row (Play + Verify + a stats line)
+   was forcing every other, much shorter "Download"-only row's actions
+   column just as wide, which is most of where the visible gap before
+   Title came from (the .dl-hidden reservations above widen this further
+   on their own, but this was already most of it even before that).
+   .actions-row already wraps (flex-wrap: wrap) for exactly this reason --
+   it just had nothing capping its width to ever make wrapping kick in. */
+#discover-table td:first-child, #discover-table th:first-child {
+  max-width: 11rem;
 }
 
 .table-wrap {
