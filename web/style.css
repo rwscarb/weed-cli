@@ -503,7 +503,16 @@ td button {
 
 @media (prefers-reduced-motion: no-preference) {
   .marquee-active {
-    animation: marquee-scroll var(--marquee-duration, 6s) ease-in-out infinite;
+    /* linear, not ease-in-out -- ease-in-out is slow at both ends and
+       fastest in the middle, which on a shift of a couple hundred px
+       means most of the *visible* motion happens in a quick burst
+       through the middle of each pass. That reads as "it just snapped
+       over there" rather than a graceful scroll, even though the
+       underlying values are moving continuously the whole time (sampled
+       this directly -- no actual discontinuity, just a bad-feeling
+       velocity curve for this specific use). Constant speed is the
+       standard choice for exactly this kind of ticking/marquee text. */
+    animation: marquee-scroll var(--marquee-duration, 6s) linear infinite;
   }
 }
 

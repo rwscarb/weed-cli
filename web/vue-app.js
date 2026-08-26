@@ -1016,7 +1016,24 @@ const app = createApp({
 // no markup restructuring (an inner span per title) needed.
 function _updateMarquee(el) {
   const overflow = el.scrollWidth - el.clientWidth;
-  if (overflow > 4) {
+  const overflowing = overflow > 4;
+  // Bail out if nothing actually changed since last time -- this runs on
+  // *every* Vue re-render anywhere in the app (the 'updated' hook fires
+  // whenever this element's containing component re-renders at all, not
+  // just when this element's own content does -- and this is a single
+  // root component, so a hosts poll or a download's pct ticking up
+  // re-renders everything), not just when this element's own text or
+  // size genuinely changes. Rewriting the same --marquee-duration/
+  // --marquee-shift custom properties every single time was restarting
+  // the running CSS animation constantly, right in the middle of its
+  // slide -- which is exactly what looked like "jumps" instead of a
+  // smooth scroll: it never got to run for its own full duration.
+  if (el._marqueeOverflowing === overflowing && (!overflowing || el._marqueeAmount === overflow)) {
+    return;
+  }
+  el._marqueeOverflowing = overflowing;
+  el._marqueeAmount = overflowing ? overflow : null;
+  if (overflowing) {
     // slow and roughly overflow-proportional -- a title that barely
     // clips shouldn't crawl for as long as one that's wildly cut off
     const duration = Math.max(4, 3 + overflow / 30);
