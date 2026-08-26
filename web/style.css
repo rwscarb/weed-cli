@@ -1094,14 +1094,16 @@ code {
 
   /* Front page layout: title + hash share a line (title grows, hash
      sits flush at the top-right -- the standard "flex: 1 pushes the
-     trailing item to the far edge" shape), then +1/★/♫+ plus the swipe
-     hint share a second line below, spaced to opposite ends of it.
-     order + flex-basis: 100% (a line break, in a wrapping flex
-     container) gets both lines out of one flex parent instead of
-     needing a second wrapper div -- .title-text/.mobile-hash/
-     .title-icons/.swipe-hint are already siblings here on desktop too,
-     just not wrapping there (see .title-row's own default rule) since
-     .mobile-hash/.swipe-hint stay display:none until this breakpoint. */
+     trailing item to the far edge" shape), then +1/★/♫+ and the swipe
+     hint share a second line below, spaced to opposite ends of *that*
+     line. .mobile-controls-line is its own nested flex row rather than
+     giving .title-icons a flex-basis: 100% directly -- that sounds like
+     an equivalent "force a line break" trick, but flex-basis: 100% also
+     makes the item itself claim the *entire* line's width, leaving zero
+     room for .swipe-hint to share it (it got pushed to a third line
+     instead, not spaced against .title-icons on the second one). A
+     wrapper carrying the 100% break means .title-icons/.swipe-hint
+     inside it just split *that* row normally via space-between. */
   .title-row {
     flex-wrap: wrap;
     justify-content: flex-start;
@@ -1118,16 +1120,13 @@ code {
     order: 2;
     flex: none;
   }
-  .title-icons {
+  .mobile-controls-line {
     order: 3;
     flex-basis: 100%;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     margin-top: 0.35rem;
-  }
-  .swipe-hint {
-    order: 4;
-    margin-left: auto;
-    margin-top: 0.35rem;
-    align-self: center;
   }
 
   /* Play/Download/Verify/etc used to be permanently visible here, which
