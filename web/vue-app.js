@@ -747,6 +747,19 @@ const app = createApp({
       if (resp.error) { this.showError('error: ' + resp.error); return; }
       this._applyPlaylist(resp.playlist);
       this.playlistPicker.visible = false;
+      // The whole point of a playlist is "stuff I can just hit Play
+      // through" -- an item sitting in it still undownloaded defeats
+      // that the first time playPlaylist reaches it (silently skipped,
+      // see its own comment on why it doesn't auto-download mid-queue).
+      // Grabbing it now, right when it's added, avoids that gap instead
+      // of leaving it as a manual follow-up step. item._dl only exists
+      // on a Discover row (the download() this reuses is written against
+      // that shape, see its own comment) -- a Downloads job added here
+      // is already downloaded by definition, so there's never anything
+      // to start for one of those.
+      if (item._dl && !item._dl.downloading && !this.library.downloads[item.content_hash]) {
+        this.download(item);
+      }
     },
     async createPlaylistAndAdd() {
       const name = this.newPlaylistName.trim();
