@@ -470,7 +470,13 @@ const app = createApp({
       if (!this._drag) return;
       const dx = e.clientX - this._drag.startX;
       const dy = e.clientY - this._drag.startY;
-      if (!this._drag.moved && Math.hypot(dx, dy) < 4) return;
+      // a finger's contact area shifts a few px just from how a tap
+      // naturally presses and lifts, well past what a mouse click ever
+      // drifts by -- a 4px threshold tuned for a mouse cursor was
+      // classifying an ordinary tap-to-toggle-mode as a drag before it
+      // ever reached the click handler, on touch every time.
+      const threshold = e.pointerType === 'touch' ? 10 : 4;
+      if (!this._drag.moved && Math.hypot(dx, dy) < threshold) return;
       this._drag.moved = true;
       const el = this.$refs.globalPlayer;
       // keep at least a corner on-screen instead of letting it get

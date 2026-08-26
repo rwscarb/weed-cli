@@ -470,6 +470,16 @@ td button {
 
 #global-player.mode-pip .player-header {
   cursor: move;
+  /* without this, a touch drag here is ambiguous to the browser between
+     "pan the page" and "this element wants the gesture" -- it holds the
+     first several pointermove events back while it decides, then either
+     delivers them all at once (the drag jumping straight to wherever
+     the finger already is instead of tracking it from the start) or
+     hands the gesture to page-scroll instead and pointermove never
+     fires at all (the tap/drag just not registering). none makes it
+     unambiguous immediately: this element handles its own gestures,
+     nothing to decide. */
+  touch-action: none;
 }
 
 #global-player.mode-theater {
