@@ -187,9 +187,28 @@ def _ott_status(archive_dir):
 
 
 def _resume_persisted_hosts():
+    """Sequential on purpose, not fire-and-forget-them-all-at-once: two
+    persisted configs sharing a port (the default in the Host form is
+    always 9201, so this is the common case, not an edge case) could
+    both pass _probe_port_free's check before *either* reached the real
+    bind in run_host_server, since starting every host concurrently
+    means the check-then-bind isn't atomic across threads — the exact
+    race that let a zombie publish slip through even with that fix in
+    place. Waiting for each host to actually reach 'running' or 'error'
+    (a real terminal state, not just "thread started") before starting
+    the next one closes that window: by the time the next one probes
+    the port, the previous one has already really bound it or really
+    failed to."""
     for cfg in _persisted_hosts.values():
-        _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
-                         cfg['relay'], cfg['advertise_host'], cfg['tunnel'], cfg.get('lightning_node'))
+        host_id = _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
+                                   cfg['relay'], cfg['advertise_host'], cfg['tunnel'],
+                                   cfg.get('lightning_node'))
+        for _ in range(100):  # up to ~10s per host before moving on regardless
+            with _lock:
+                status = _hosts[host_id]['status']
+            if status in ('running', 'error'):
+                break
+            time.sleep(0.1)
 
 
 def _unpublish_all_hosts():
@@ -284,29 +303,6 @@ def _detect_lan_ip():
         s.close()
 
 
-def _probe_port_free(port, bind_host='0.0.0.0'):
-    """Bind-and-immediately-release, purely to fail fast on a port
-    collision *before* announcing anything — see _run_host_job's real
-    incident: the web UI's Host form always defaults to port 9201, so
-    hosting more than one file (including multiple entries auto-resumed
-    at once on startup, see _resume_persisted_hosts) without picking a
-    distinct port each time meant every loser published a real, signed
-    announcement and only discovered it couldn't actually bind *after*
-    — a permanent, unreachable zombie listing nothing could ever clean
-    up, since a host that never reaches 'running' never gets files/
-    announced_on populated for the graceful-shutdown unpublish to use
-    either. Still has a small window (this socket closes before
-    run_host_server's own real bind), not a hard guarantee — but it
-    catches the common case (concurrent startup, the actual incident)
-    instead of the current zero attempt to catch it at all."""
-    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        probe.bind((bind_host, port))
-    finally:
-        probe.close()
-
-
 def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
                    ln_node=None):
     captured = io.StringIO()
@@ -325,10 +321,16 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # and only fail later, deep in a background thread with no way
             # for the UI to ever find out
             all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
-            # also fail fast on a port collision, before announcing anything
-            # — see _probe_port_free's docstring for the real incident this
-            # prevents
-            _probe_port_free(port)
+            # bind the real, permanent listening socket now — before
+            # announcing anything — and hand it to run_host_server below
+            # instead of it binding a second one later. A separate
+            # bind-then-close probe here, followed by a *later* real bind,
+            # isn't atomic across two hosts starting concurrently (see
+            # _resume_persisted_hosts): both could pass the probe before
+            # either did the real bind. One bind, kept alive and reused,
+            # has no such window — the port either really is free right
+            # now or this raises immediately, before any publish.
+            bound_sock = node.bind_host_port(port)
             ott_status = node.ott_commit_status(archive_dir)
             announced = []
             for entry in entries:
@@ -354,7 +356,8 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                                             all_leaves[entry['sha256']], file_path, price),
                                       kwargs={'use_tls': use_tls, 'quiet': True, 'ln_node': ln_node},
                                       daemon=True).start()
-            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node)
+            node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node,
+                                  sock=bound_sock)
     except SystemExit as e:
         with _lock:
             _hosts[host_id].update(status='error', error=_with_captured_detail(str(e), captured))

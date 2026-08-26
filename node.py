@@ -337,8 +337,24 @@ def serve_session(conn, entries_by_hash, default_hash, price, ln_node=None):
         _graceful_close(conn)
 
 
+def bind_host_port(port, bind_host='0.0.0.0'):
+    """Split out of run_host_server so a caller (see web_ui.py's
+    _run_host_job) can bind the real, permanent listening socket early —
+    right where a port-collision needs to fail fast, before announcing
+    anything — and hand that exact socket to run_host_server later
+    instead of it binding a second, separate one. A bind-then-close probe
+    followed by a *second*, later bind of the same port isn't atomic
+    across two hosts starting concurrently: both can pass the probe
+    before either does the real bind. Binding once, early, and reusing
+    the same socket removes that race entirely instead of narrowing it."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind((bind_host, port))
+    return srv
+
+
 def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
-                     ln_node=None):
+                     ln_node=None, sock=None):
     archive_dir = os.path.expanduser(archive_dir)
     entries = load_manifest_entries(archive_dir, file_name)
     entries_by_hash = {}
@@ -350,9 +366,7 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
         entries_by_hash[entry['sha256']] = (entry, leaves, file_path)
     default_hash = next(iter(entries_by_hash)) if len(entries_by_hash) == 1 else None
 
-    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    srv.bind((bind_host, port))
+    srv = sock if sock is not None else bind_host_port(port, bind_host)
     srv.listen(8)
     if not quiet:
         # a background thread's print() races with cmd.Cmd's input()-driven
