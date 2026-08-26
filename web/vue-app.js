@@ -414,7 +414,7 @@ const app = createApp({
         const { results } = await this.apiGet('/api/discover?' + qs);
         this.discoverResults = (results || []).map(r => ({
           ...r,
-          _dl: { downloading: false, pct: 0 },
+          _dl: { downloading: false, pct: 0, log: '' },
           _verify: { busy: false, label: 'Verify', title: '' },
         }));
         this.searchHighlightHash = null;
@@ -462,10 +462,12 @@ const app = createApp({
     async download(r) {
       r._dl.downloading = true;
       r._dl.pct = 0;
+      r._dl.log = '';
       const resp = await this.startDownload(
         r.content_hash, this.discoverRelaysList, null, false, null, r.title, r.signer_pubkey,
         {
           onProgress: pct => { r._dl.pct = pct; },
+          onLog: log => { r._dl.log = log; },
           onDone: job => {
             r._dl.downloading = false;
             this.library.downloads[r.content_hash] = {
@@ -557,7 +559,7 @@ const app = createApp({
     // jobs table, a Discover row, ...) can watch the same job by passing
     // their own callbacks -- nothing here assumes there's exactly one
     // place a job's progress is shown.
-    pollJob(jobId, { onProgress, onDone, onError }) {
+    pollJob(jobId, { onProgress, onLog, onDone, onError }) {
       const timer = setInterval(async () => {
         const job = await this.apiGet('/api/download/' + jobId);
         // the server's job dict never carries its own id (job_id is only
@@ -570,6 +572,13 @@ const app = createApp({
           if (onError) onError(job.error);
           return;
         }
+        // node.py's own real prints (found N candidate host(s), trust
+        // graph, per-candidate challenge results, ...) captured server-side
+        // to keep its stdout quiet -- see web_ui.py's _job_logs -- surfaced
+        // here instead of a download button just vanishing with nothing to
+        // show while discovery/auction/challenge runs before any chunk
+        // (and therefore onProgress) ever fires
+        if (job.log && onLog) onLog(job.log);
         if (job.n_chunks && onProgress) {
           onProgress(Math.round(100 * (job.idx + 1) / job.n_chunks));
         }
@@ -592,7 +601,7 @@ const app = createApp({
       if (resp.error) return resp;
 
       this.jobs.push({
-        job_id: resp.job_id, content_hash: contentHash, pct: 0, status: 'running',
+        job_id: resp.job_id, content_hash: contentHash, pct: 0, status: 'running', log: '',
         path: null, error: null, size: null, bps: null, title, signer_pubkey: signerPubkey || null,
       });
       // Vue 3's reactivity is proxy-based: mutating a plain object literal
@@ -609,6 +618,11 @@ const app = createApp({
           const job = findJob();
           if (job) job.pct = pct;
           if (extra && extra.onProgress) extra.onProgress(pct);
+        },
+        onLog: log => {
+          const job = findJob();
+          if (job) job.log = log;
+          if (extra && extra.onLog) extra.onLog(log);
         },
         onDone: j => {
           const job = findJob();
