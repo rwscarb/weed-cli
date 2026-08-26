@@ -93,7 +93,7 @@ button {
   color: var(--text);
   border: 1px solid var(--accent);
   border-radius: 5px;
-  padding: 0.25rem 1rem;
+  padding: 0.45rem 1rem;
   cursor: pointer;
   font-size: 0.9rem;
   align-self: center;
@@ -820,7 +820,6 @@ code {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  margin-left: auto;
 }
 
 .playlist-empty {
