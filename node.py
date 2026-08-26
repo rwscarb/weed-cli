@@ -44,8 +44,12 @@ TAGLINE = 'we do in 4 what others do in 5'
 
 
 def weed_version():
-    """Installed package version (pyproject.toml's source of truth), with a
-    fallback for running straight from source without `pip install -e .`."""
+    """Installed package version (pyproject.toml's source of truth), with
+    fallbacks for the two other real ways this runs: straight from a git
+    checkout without `pip install -e .` (read pyproject.toml directly —
+    Dockerfile.node copies it in for exactly this, since it copies loose
+    .py files rather than pip-installing the package), or neither file
+    present at all (genuinely no version info available)."""
     try:
         from importlib.metadata import version, PackageNotFoundError
         try:
@@ -53,6 +57,15 @@ def weed_version():
         except PackageNotFoundError:
             pass
     except ImportError:
+        pass
+    pyproject_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'pyproject.toml')
+    try:
+        with open(pyproject_path) as f:
+            for line in f:
+                line = line.strip()
+                if line.startswith('version'):
+                    return line.split('=', 1)[1].strip().strip('"\'')
+    except (OSError, IndexError):
         pass
     return '0.0.0-dev'
 
@@ -65,9 +78,36 @@ def _git_commit_hash():
     behind a real debugging session: two checkouts reporting the same
     version, one of them missing a fix the other had. None for anything
     that isn't a git checkout at all (installed from a built wheel/sdist,
-    no .git present) — a version number is all there is to go on there."""
+    no .git present) — a version number is all there is to go on there.
+
+    $WEED_GIT_COMMIT checked first — Dockerfile.node has no .git directory
+    at all (never copied in, on purpose: bloats the image and ships the
+    full history for no reason), so a container build has no way to
+    answer this live. docker-compose.node.yml passes the *host's* commit
+    hash in as a build arg at image-build time instead, baked in as this
+    env var, same intent as the live git lookup below just computed once,
+    earlier, somewhere that actually has the repo.
+
+    `git rev-parse` walks *up* parent directories looking for a .git —
+    a real `pip install .` (not `-e`) copies this file into site-packages,
+    which usually isn't a checkout at all, but if it happens to be nested
+    anywhere under some unrelated git-tracked ancestor directory (a
+    dotfiles repo, a pyenv install tracked in git, anything above it),
+    this would otherwise silently report *that* repo's own unrelated
+    commit — worse than showing nothing, since it looks plausible. Only
+    trust the hash once --show-toplevel confirms this file's own
+    directory really is that repo's root."""
+    env_commit = os.environ.get('WEED_GIT_COMMIT')
+    if env_commit:
+        return env_commit
     repo_dir = os.path.dirname(os.path.abspath(__file__))
     try:
+        toplevel = subprocess.run(['git', 'rev-parse', '--show-toplevel'], cwd=repo_dir,
+                                   capture_output=True, text=True, timeout=2)
+        if toplevel.returncode != 0:
+            return None
+        if os.path.realpath(toplevel.stdout.strip()) != os.path.realpath(repo_dir):
+            return None
         result = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], cwd=repo_dir,
                                  capture_output=True, text=True, timeout=2)
         if result.returncode == 0:

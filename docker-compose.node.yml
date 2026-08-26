@@ -34,6 +34,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.node
+      args:
+        # computed by `make node` (see Makefile) from wherever it's
+        # actually run, not hardcoded here -- see Dockerfile.node's own
+        # comment on this arg for why the container can't compute it itself
+        GIT_COMMIT: ${GIT_COMMIT:-}
     ports:
       - "8080:8080"
     volumes:

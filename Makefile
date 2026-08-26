@@ -1,5 +1,5 @@
 .PHONY: help demo network stats chart reputation discovery real-archive \
-        containers node node-down lightning-up lightning-down lightning-demo lightning-smoke \
+        containers node node-down node-shell lightning-up lightning-down lightning-demo lightning-smoke \
         all-stdlib clean install uninstall
 
 PYTHON ?= python3
@@ -24,6 +24,7 @@ help:
 	@echo "  make containers     same challenge test, real containers instead of loopback"
 	@echo "  make node           web_ui.py in a container, port 8080 — host/discover/download from a browser"
 	@echo "  make node-down      stop the node container (data survives — see docker-compose.node.yml)"
+	@echo "  make node-shell     interactive weed shell inside the running node container"
 	@echo ""
 	@echo "Needs the lightning/ stack up (see lightning/README.md for one-time channel setup):"
 	@echo "  make lightning-up    start bitcoind + 2 LND nodes on regtest"
@@ -64,10 +65,13 @@ containers:
 	docker compose down
 
 node:
-	docker compose -f docker-compose.node.yml up --build
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null) docker compose -f docker-compose.node.yml up --build
 
 node-down:
 	docker compose -f docker-compose.node.yml down
+
+node-shell:
+	docker compose -f docker-compose.node.yml exec node python3 weed.py
 
 lightning-up:
 	cd lightning && docker compose up -d

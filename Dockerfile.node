@@ -17,10 +17,27 @@ WORKDIR /app
 # Docker but not bare CLI" question had no way to control for "same
 # container, different code path" vs "different container entirely"
 # without them. `docker compose -f docker-compose.node.yml exec node
-# python3 shell.py` (or `weed.py <subcommand>`) now works.
-COPY node.py web_ui.py poc_reputation.py weed.py shell.py discovery_relay.py lightning_settle.py dht.py ./
+# python3 weed.py` (bare `shell.py` has no __main__ block — it's only
+# ever meant to be imported by weed.py, running it directly just exits)
+# now gets an interactive shell in this exact container.
+#
+# pyproject.toml is here purely so node.weed_version() has something real
+# to read (see its own docstring) -- this image never `pip install`s the
+# package itself (just its runtime deps below), so importlib.metadata has
+# no entry to find either.
+COPY node.py web_ui.py poc_reputation.py weed.py shell.py discovery_relay.py lightning_settle.py dht.py pyproject.toml ./
 COPY web/ ./web/
 RUN pip install --no-cache-dir btcvm cryptography qrcode pillow kademlia
+
+# The commit hash node.weed_banner() shows (see _git_commit_hash's own
+# docstring for why that matters) has no way to compute itself inside the
+# container -- no .git directory is ever copied in here, deliberately, so
+# there's nothing for a live `git rev-parse` to find. docker-compose.node.yml
+# passes the *host's* commit hash in as this build arg instead, computed
+# once at image-build time from wherever `make node` actually runs, and
+# baked in as an env var _git_commit_hash checks first.
+ARG GIT_COMMIT=
+ENV WEED_GIT_COMMIT=$GIT_COMMIT
 
 # Identity key, reputation store, and library manifest are all read/written
 # via os.path.expanduser('~/...') (see node.py's IDENTITY_PATH and
