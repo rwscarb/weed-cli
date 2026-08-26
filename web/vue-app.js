@@ -114,6 +114,9 @@ const app = createApp({
       // near-identical copies for the two places this opens from.
       playlistPicker: { visible: false, top: 0, left: null, right: null, item: null },
       newPlaylistName: '',
+      // 'playlistId:index' of whichever playlist-item is the current
+      // drop target mid-drag, or null -- see onItemDragOver/onItemDrop
+      dragOverKey: null,
       // separate from the picker's own newPlaylistName above -- the
       // Playlists tab's own "create an empty playlist" form is a
       // persistent, always-visible field, not a popup that resets itself
@@ -733,9 +736,41 @@ const app = createApp({
       if (resp.error) { this.showError('error: ' + resp.error); return; }
       this._applyPlaylist(resp.playlist);
     },
-    async movePlaylistItem(playlistId, contentHash, direction) {
-      const resp = await this.apiPost('/api/playlists/move',
-        { playlist_id: playlistId, content_hash: contentHash, direction });
+    // ── playlist drag-to-reorder ──────────────────────────────────────
+    // Native HTML5 drag-and-drop, not a library -- one draggable list,
+    // no cross-window/touch requirements, not worth a dependency for.
+    // _dragFrom is plain (non-reactive) instance state, same reasoning
+    // as the player's own _drag tracking above: it only matters within
+    // one drag gesture, nothing ever needs to render off of it directly.
+    onItemDragStart(e, playlist, idx) {
+      this._dragFrom = { playlistId: playlist.id, index: idx };
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox won't fire drop at all unless dragstart sets *some* data
+      e.dataTransfer.setData('text/plain', String(idx));
+    },
+    onItemDragEnd() {
+      this._dragFrom = null;
+      this.dragOverKey = null;
+    },
+    // dragOverKey is reactive (unlike _dragFrom) purely to drive the
+    // drop-target highlight -- keyed 'playlistId:index' since two
+    // playlists' items can share the same index
+    onItemDragOver(e, playlist, idx) {
+      if (!this._dragFrom || this._dragFrom.playlistId !== playlist.id) return;
+      e.dataTransfer.dropEffect = 'move';
+      this.dragOverKey = playlist.id + ':' + idx;
+    },
+    async onItemDrop(e, playlist, idx) {
+      this.dragOverKey = null;
+      const from = this._dragFrom;
+      this._dragFrom = null;
+      if (!from || from.playlistId !== playlist.id || from.index === idx) return;
+      const items = playlist.items.slice();
+      const [moved] = items.splice(from.index, 1);
+      items.splice(idx, 0, moved);
+      playlist.items = items; // optimistic -- server call below just confirms it
+      const resp = await this.apiPost('/api/playlists/reorder',
+        { playlist_id: playlist.id, order: items.map(it => it.content_hash) });
       if (resp.error) { this.showError('error: ' + resp.error); return; }
       this._applyPlaylist(resp.playlist);
     },

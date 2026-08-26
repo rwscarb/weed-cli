@@ -256,21 +256,17 @@
         </div>
       </div>
       <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
-      <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash">
-        <div class="title-row">
-          <span class="title-text">{{ it.title || shortHash(it.content_hash) }}</span>
-        </div>
-        <div class="actions-row">
-          <button type="button" class="play-btn" v-if="library.downloads[it.content_hash]"
-                  @click="openPlayer(library.downloads[it.content_hash].job_id, it.title || library.downloads[it.content_hash].title || shortHash(it.content_hash), it.content_hash, it.signer_pubkey || library.downloads[it.content_hash].signer_pubkey)">▶ Play</button>
-          <span v-else class="muted">not downloaded yet — grab it from Discover</span>
-          <button type="button" class="icon-btn" title="Move up" :disabled="idx === 0"
-                  @click="movePlaylistItem(pl.id, it.content_hash, 'up')">↑</button>
-          <button type="button" class="icon-btn" title="Move down" :disabled="idx === pl.items.length - 1"
-                  @click="movePlaylistItem(pl.id, it.content_hash, 'down')">↓</button>
-          <button type="button" class="icon-btn" title="Remove from playlist"
-                  @click="removeFromPlaylist(pl.id, it.content_hash)">✕</button>
-        </div>
+      <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
+           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx)}"
+           @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
+           @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
+        <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
+        <span class="playlist-item-title" :title="it.title || shortHash(it.content_hash)">{{ it.title || shortHash(it.content_hash) }}</span>
+        <button type="button" class="play-btn" v-if="library.downloads[it.content_hash]"
+                @click="openPlayer(library.downloads[it.content_hash].job_id, it.title || library.downloads[it.content_hash].title || shortHash(it.content_hash), it.content_hash, it.signer_pubkey || library.downloads[it.content_hash].signer_pubkey)">▶ Play</button>
+        <span v-else class="muted playlist-item-status">not downloaded</span>
+        <button type="button" class="icon-btn" title="Remove from playlist"
+                @click="removeFromPlaylist(pl.id, it.content_hash)">✕</button>
       </div>
     </div>
   </section>
@@ -317,12 +313,17 @@
   <div class="qr-url">{{ qr.url }}</div>
 </div>
 
-<div id="playlist-picker" ref="playlistPicker" class="qr-popup" :class="{hidden: !playlistPicker.visible}"
+<div id="playlist-picker" ref="playlistPicker" class="qr-popup playlist-picker" :class="{hidden: !playlistPicker.visible}"
      :style="playlistPickerStyle">
   <div class="playlist-picker-title">Add to playlist</div>
-  <button type="button" class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
-          @click="addToPlaylist(pl.id)">{{ pl.name }} <span class="muted">({{ pl.items.length }})</span></button>
-  <div v-if="!library.playlists.length" class="playlist-picker-empty">no playlists yet</div>
+  <div class="playlist-picker-list" v-if="library.playlists.length">
+    <button type="button" class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
+            @click="addToPlaylist(pl.id)">
+      <span class="playlist-picker-item-name">{{ pl.name }}</span>
+      <span class="muted">{{ pl.items.length }}</span>
+    </button>
+  </div>
+  <div v-else class="playlist-picker-empty muted">no playlists yet</div>
   <form class="playlist-picker-new" @submit.prevent="createPlaylistAndAdd">
     <input type="text" v-model="newPlaylistName" placeholder="New playlist name">
     <button type="submit" :disabled="!newPlaylistName.trim()">Create</button>

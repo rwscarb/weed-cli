@@ -565,7 +565,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/playlists/delete': self._handle_playlist_delete,
             '/api/playlists/add': self._handle_playlist_add,
             '/api/playlists/remove': self._handle_playlist_remove,
-            '/api/playlists/move': self._handle_playlist_move,
+            '/api/playlists/reorder': self._handle_playlist_reorder,
         }
         handler = handlers.get(path)
         if not handler:
@@ -711,25 +711,30 @@ class Handler(BaseHTTPRequestHandler):
             _save_library()
             self._json({'playlist': playlist})
 
-    def _handle_playlist_move(self, body):
+    def _handle_playlist_reorder(self, body):
+        """Whole-list reorder (drag-and-drop's own natural shape) rather
+        than one-step-at-a-time move -- a real drag can jump an item
+        several positions in one gesture, and doing that as N sequential
+        up/down calls (the earlier arrow-button UI's own approach) is both
+        chattier and racier under Vue's own optimistic local reorder than
+        just telling the server the whole new order in one call."""
         playlist_id = body.get('playlist_id')
-        content_hash = body.get('content_hash')
-        direction = body.get('direction')
-        if not playlist_id or not content_hash or direction not in ('up', 'down'):
-            return self._json({'error': "playlist_id, content_hash, and direction ('up'|'down') required"},
-                               status=400)
+        order = body.get('order')
+        if not playlist_id or not isinstance(order, list):
+            return self._json({'error': 'playlist_id and order (list of content_hash) required'}, status=400)
         with _lock:
             playlist = next((p for p in _library['playlists'] if p['id'] == playlist_id), None)
             if not playlist:
                 return self._json({'error': 'no such playlist'}, status=404)
-            items = playlist['items']
-            idx = next((i for i, it in enumerate(items) if it['content_hash'] == content_hash), None)
-            if idx is None:
-                return self._json({'error': 'content_hash not in this playlist'}, status=404)
-            swap_with = idx - 1 if direction == 'up' else idx + 1
-            if 0 <= swap_with < len(items):
-                items[idx], items[swap_with] = items[swap_with], items[idx]
-                _save_library()
+            by_hash = {it['content_hash']: it for it in playlist['items']}
+            # order is trusted for *sequence* only, not as the source of
+            # truth for membership -- an item order somehow omits (a stale
+            # client, a concurrent add from another tab) stays in the
+            # playlist, just at the end, rather than silently vanishing
+            reordered = [by_hash.pop(h) for h in order if h in by_hash]
+            reordered.extend(by_hash.values())
+            playlist['items'] = reordered
+            _save_library()
             self._json({'playlist': playlist})
 
     def _handle_verify(self, body):
