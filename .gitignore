@@ -9,6 +9,9 @@ weed.egg-info/
 real_archive/
 *.egg-info/
 *.pyc
+*.mkv
+*.webm
+*.mp3
 __pycache__/
 relay_events.jsonl
 real_archive/*.mp4
