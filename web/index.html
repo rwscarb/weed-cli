@@ -45,11 +45,10 @@
       <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
     </form>
     <div class="table-wrap"><table id="discover-table">
-      <thead><tr><th></th><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>BTC</th><th>By</th><th></th></tr></thead>
+      <thead><tr><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>BTC</th><th>By</th><th></th></tr></thead>
       <tbody>
         <template v-if="discoverLoading && !discoverResults.length">
           <tr class="skeleton-row" v-for="n in 3" :key="'skeleton-' + n">
-            <td><span class="skeleton skeleton-btn"></span></td>
             <td><span class="skeleton skeleton-title"></span></td>
             <td><span class="skeleton skeleton-hash"></span></td>
             <td><span class="skeleton skeleton-host"></span></td>
@@ -60,41 +59,43 @@
           </tr>
         </template>
         <tr v-else-if="!discoverResults.length">
-          <td colspan="8">nothing found — relay(s) unreachable, or nothing published yet</td>
+          <td colspan="7">nothing found — relay(s) unreachable, or nothing published yet</td>
         </tr>
         <tr v-else-if="!filteredDiscoverResults.length">
-          <td colspan="8">no results match your search/filters</td>
+          <td colspan="7">no results match your search/filters</td>
         </tr>
         <tr v-for="r in filteredDiscoverResults" :key="r.content_hash" :data-hash="r.content_hash"
             :class="{'dl-progress-row': r._dl.downloading, 'row-highlighted': r.content_hash === searchHighlightHash}"
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
-          <td><div class="actions-row">
-            <template v-if="library.downloads[r.content_hash]">
-              <button type="button" class="play-btn"
-                      @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
-              <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
-                      @click="download(r)">↻</button>
-              <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
-                      @click="verify(r)">{{ r._verify.label }}</button>
-              <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
-            </template>
-            <button type="button" class="play-btn" v-else :class="{'dl-hidden': r._dl.downloading}"
-                    @click="download(r)">Download</button>
-            <span class="dl-log" :class="{'dl-hidden': !r._dl.downloading}" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
-          </div></td>
-          <td><div class="title-row">
-            <span class="title-text">{{ r.title }}</span>
-            <span class="title-icons">
-              <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
-                      :disabled="library.likes.has(r.content_hash)"
-                      :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
-                      @click="like(r.content_hash)">+1</button>
-              <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
-                      :disabled="library.subscriptions.has(r.signer_pubkey)"
-                      :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
-                      @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
-            </span>
-          </div></td>
+          <td>
+            <div class="title-row">
+              <span class="title-text">{{ r.title }}</span>
+              <span class="title-icons">
+                <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
+                        :disabled="library.likes.has(r.content_hash)"
+                        :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
+                        @click="like(r.content_hash)">+1</button>
+                <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
+                        :disabled="library.subscriptions.has(r.signer_pubkey)"
+                        :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
+                        @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+              </span>
+            </div>
+            <div class="actions-row">
+              <template v-if="library.downloads[r.content_hash]">
+                <button type="button" class="play-btn"
+                        @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
+                <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
+                        @click="download(r)">↻</button>
+                <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
+                        @click="verify(r)">{{ r._verify.label }}</button>
+                <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
+              </template>
+              <button type="button" class="play-btn" v-else :class="{'dl-hidden': r._dl.downloading}"
+                      @click="download(r)">Download</button>
+              <span class="dl-log" :class="{'dl-hidden': !r._dl.downloading}" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
+            </div>
+          </td>
           <td><code>{{ shortHash(r.content_hash, 8) }}</code></td>
           <td>{{ r.host }}<span v-if="r.host_count > 1" class="host-count" :title="r.hosts.join(', ')"> (+{{ r.host_count - 1 }})</span></td>
           <td>{{ r.tunnel || '—' }}</td>

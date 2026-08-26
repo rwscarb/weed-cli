@@ -278,6 +278,10 @@ td button {
   align-items: center;
   flex-wrap: wrap;
   gap: 0.4rem;
+  /* sits directly under .title-row in the same Title cell now (was its
+     own column) -- a little breathing room so buttons don't crowd the
+     title text right above them */
+  margin-top: 0.35rem;
 }
 
 .title-icons {
@@ -650,18 +654,6 @@ code {
   overflow-wrap: normal;
 }
 
-/* Auto table layout sizes every row in a column to the *widest* row's
-   content -- one already-downloaded row (Play + Verify + a stats line)
-   was forcing every other, much shorter "Download"-only row's actions
-   column just as wide, which is most of where the visible gap before
-   Title came from (the .dl-hidden reservations above widen this further
-   on their own, but this was already most of it even before that).
-   .actions-row already wraps (flex-wrap: wrap) for exactly this reason --
-   it just had nothing capping its width to ever make wrapping kick in. */
-#discover-table td:first-child, #discover-table th:first-child {
-  max-width: 11rem;
-}
-
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
@@ -702,13 +694,14 @@ code {
      Host/Tunnel/BTC/By are server-address/provenance trivia, not
      actionable from a phone; the phone/share column is actively
      pointless here too -- you're already ON the phone, there's nothing
-     to scan. 8 columns now (BTC inserted between Tunnel and By, see
-     ott_status), so this hides 4 through 8, not 4 through 7. */
+     to scan. Title (with the action buttons now living inside its own
+     cell, see the HTML) and Content hash are columns 1-2; this hides
+     3 through 7 (Host/Tunnel/BTC/By/phone-icon). */
+  #discover-table th:nth-child(3), #discover-table td:nth-child(3),
   #discover-table th:nth-child(4), #discover-table td:nth-child(4),
   #discover-table th:nth-child(5), #discover-table td:nth-child(5),
   #discover-table th:nth-child(6), #discover-table td:nth-child(6),
-  #discover-table th:nth-child(7), #discover-table td:nth-child(7),
-  #discover-table th:nth-child(8), #discover-table td:nth-child(8) {
+  #discover-table th:nth-child(7), #discover-table td:nth-child(7) {
     display: none;
   }
   #hosts-table th:nth-child(4), #hosts-table td:nth-child(4),
@@ -748,16 +741,16 @@ code {
      weight here -- drop it instead of trying to patch its column math. */
   #discover-table thead { display: none; }
 
-  /* Shrinking the buttons alone doesn't fix the real problem: the
-     actions column only ever gets a sliver of the row's width, so
+  /* Shrinking the buttons alone doesn't fix the real problem: a narrow
+     column only ever gets a sliver of the row's width, so
      Play/Re-download/Verify still stack one-per-line no matter how
-     small they are. Below this width, give up on the 3-column table
+     small they are. Below this width, give up on the multi-column table
      shape for each body row and stack it into a little card instead --
-     title+hash on top, action buttons flowing left-to-right along the
-     bottom where they have the whole row's width to share. (Children of
-     a flex container are "blockified" regardless of their own display,
-     so table-cell tds here behave as plain flex items -- same reasoning
-     as .title-row/.actions-row already being inner wrappers rather than
+     the Title cell (title, then action buttons right below it, see the
+     HTML) on top, hash right under that. (Children of a flex container
+     are "blockified" regardless of their own display, so table-cell tds
+     here behave as plain flex items -- same reasoning as
+     .title-row/.actions-row already being inner wrappers rather than
      display:flex directly on a td, just applied to the row itself this
      time since every cell in it needs to reflow together.) */
   #discover-table tbody tr {
@@ -772,9 +765,6 @@ code {
     padding: 0.15rem 0;
     border-bottom: none;
   }
-  #discover-table tbody td:nth-child(1) { order: 3; padding-top: 0.4rem; }
-  #discover-table tbody td:nth-child(2) { order: 1; }
-  #discover-table tbody td:nth-child(3) { order: 2; }
 
   /* space-between shoves +1/★ all the way to the title column's far
      edge, leaving an odd gap next to a short title -- follow the text
