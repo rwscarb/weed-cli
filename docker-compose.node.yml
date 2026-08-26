@@ -66,7 +66,26 @@ services:
     volumes:
       - node-data:/data
       - ${WEED_SHARE_DIR:-./share}:/share
-    env_file: .env
+    env_file:
+      # .env isn't committed (see .gitignore) -- a plain `env_file: .env`
+      # here means `docker compose ... up` hard-fails on a fresh checkout
+      # with no .env yet ("env file .env not found"), before ever getting
+      # anywhere near "self-sufficient, works out of the box" (see this
+      # file's own top comment). required: false makes "no .env" the same
+      # as "an empty one" -- the environment: defaults below still apply.
+      - path: .env
+        required: false
+    environment:
+      # env_file above injects whatever .env sets, verbatim -- it has no
+      # way to know "unset" should mean something *different* here than
+      # it does for the bare CLI (127.0.0.1:9101, node.py's own built-in
+      # default -- correct outside Docker, but this container's own
+      # loopback, nothing, from in here). `environment:` entries always
+      # win over env_file for the same key, so a real WEED_RELAY/
+      # WEED_TUNNEL in .env still overrides this; this only fills in the
+      # container-appropriate default for whichever one .env leaves unset.
+      WEED_RELAY: ${WEED_RELAY:-http://relay:9101}
+      WEED_TUNNEL: ${WEED_TUNNEL:-}
     restart: unless-stopped
 
 volumes:
