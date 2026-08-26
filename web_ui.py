@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import signal
+import socket
 import sys
 import threading
 import time
@@ -283,6 +284,29 @@ def _detect_lan_ip():
         s.close()
 
 
+def _probe_port_free(port, bind_host='0.0.0.0'):
+    """Bind-and-immediately-release, purely to fail fast on a port
+    collision *before* announcing anything — see _run_host_job's real
+    incident: the web UI's Host form always defaults to port 9201, so
+    hosting more than one file (including multiple entries auto-resumed
+    at once on startup, see _resume_persisted_hosts) without picking a
+    distinct port each time meant every loser published a real, signed
+    announcement and only discovered it couldn't actually bind *after*
+    — a permanent, unreachable zombie listing nothing could ever clean
+    up, since a host that never reaches 'running' never gets files/
+    announced_on populated for the graceful-shutdown unpublish to use
+    either. Still has a small window (this socket closes before
+    run_host_server's own real bind), not a hard guarantee — but it
+    catches the common case (concurrent startup, the actual incident)
+    instead of the current zero attempt to catch it at all."""
+    probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind((bind_host, port))
+    finally:
+        probe.close()
+
+
 def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
                    ln_node=None):
     captured = io.StringIO()
@@ -301,6 +325,10 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # and only fail later, deep in a background thread with no way
             # for the UI to ever find out
             all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
+            # also fail fast on a port collision, before announcing anything
+            # — see _probe_port_free's docstring for the real incident this
+            # prevents
+            _probe_port_free(port)
             ott_status = node.ott_commit_status(archive_dir)
             announced = []
             for entry in entries:
