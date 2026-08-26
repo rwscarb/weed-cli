@@ -118,7 +118,6 @@ _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
 _job_logs = {}   # job_id -> the live io.StringIO node.py's prints are captured into (see _quiet)
 _host_logs = {}  # host_id -> same, for a host job (announce progress, [host:PORT] serving, ...)
->>>>>>> c844a7b (.)
 _lock = threading.Lock()
 
 # what's been downloaded/liked/subscribed, persisted to disk so a page
