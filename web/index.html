@@ -19,6 +19,7 @@
     <template v-else>loading identity…</template>
   </div>
   <button type="button" class="qr-toggle" @click="toggleQr($event, qrBaseUrl)">📱 Open on phone</button>
+  <button type="button" class="qr-toggle" title="Keyboard shortcuts (?)" @click="shortcutsVisible = !shortcutsVisible">⌨ Shortcuts</button>
 </header>
 
 <nav id="tabs">
@@ -37,7 +38,7 @@
     </form>
     <form class="inline-form" @submit.prevent>
       <label>Search
-        <input type="text" v-model="discoverSearch" placeholder="title or content hash"
+        <input type="text" ref="searchInput" v-model="discoverSearch" placeholder="title or content hash"
                @keydown="onSearchKeydown">
       </label>
       <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
@@ -194,25 +195,28 @@
       <button type="submit">Download</button>
     </form>
     <div class="table-wrap"><table id="jobs-table">
-      <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th><th>Result</th></tr></thead>
+      <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th></tr></thead>
       <tbody>
         <tr v-for="j in jobs" :key="j.job_id">
-          <td><code>{{ j.job_id }}</code></td>
+          <td>
+            <div class="title-row">
+              <span class="title-text" :title="j.path || j.job_id">{{ j.title || shortHash(j.content_hash) }}</span>
+            </div>
+            <div class="actions-row">
+              <template v-if="j.status === 'done'">
+                <button type="button" class="play-btn"
+                        @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
+                <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
+                        @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
+                <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
+              </template>
+              <span v-else-if="j.status === 'error'" class="status-error">{{ j.error }}</span>
+              <span v-else class="dl-log" :title="j.log">{{ lastLogLine(j.log) || 'starting…' }}</span>
+            </div>
+          </td>
           <td><code>{{ shortHash(j.content_hash) }}</code></td>
           <td><div class="progress-bar"><div class="progress-fill" :style="{width: (j.status === 'done' ? 100 : j.pct) + '%'}"></div></div></td>
           <td :class="j.status === 'done' ? 'status-done' : (j.status === 'error' ? 'status-error' : 'status-running')">{{ j.status }}</td>
-          <td>
-            <template v-if="j.status === 'done'">
-              {{ j.path }}
-              <button type="button" class="play-btn"
-                      @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
-              <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
-                      @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
-              <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
-            </template>
-            <template v-else-if="j.status === 'error'">{{ j.error }}</template>
-            <template v-else>—</template>
-          </td>
         </tr>
       </tbody>
     </table></div>
@@ -257,6 +261,20 @@
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">
   <img v-if="qr.url" :src="'/api/qr?data=' + encodeURIComponent(qr.url)" :alt="'QR code for ' + qr.url">
   <div class="qr-url">{{ qr.url }}</div>
+</div>
+
+<div id="shortcuts-dialog-backdrop" :class="{hidden: !shortcutsVisible}" @click="shortcutsVisible = false"></div>
+<div id="shortcuts-dialog" :class="{hidden: !shortcutsVisible}" role="dialog" aria-label="Keyboard shortcuts">
+  <div class="shortcuts-dialog-header">
+    <span>Keyboard shortcuts</span>
+    <button type="button" class="icon-btn" title="Close" @click="shortcutsVisible = false">✕</button>
+  </div>
+  <table class="shortcuts-table">
+    <tr v-for="s in shortcuts" :key="s.keys">
+      <td><kbd>{{ s.keys }}</kbd></td>
+      <td>{{ s.desc }}</td>
+    </tr>
+  </table>
 </div>
 
 <div id="error-dialog-backdrop" :class="{hidden: !errorDialog.visible}" @click="closeError"></div>

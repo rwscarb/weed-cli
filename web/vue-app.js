@@ -102,6 +102,20 @@ const app = createApp({
       // browsers, which defeats the point once there's a real multi-line
       // trace worth copying out. Plain in-page text instead.
       errorDialog: { visible: false, message: '' },
+
+      shortcutsVisible: false,
+      // shown in the shortcuts overlay and used to build the actual
+      // keydown handler below, so the two can never drift out of sync
+      shortcuts: [
+        { keys: '/', desc: 'Jump to Discover search' },
+        { keys: '1 – 4', desc: 'Switch tabs (Discover/Host/Downloads/Identity)' },
+        { keys: '↑ / ↓', desc: 'Move highlight through Discover results (search box focused)' },
+        { keys: 'Enter / Space', desc: 'Play or Download the highlighted row (search box focused)' },
+        { keys: 'r', desc: 'Refresh Discover' },
+        { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open)' },
+        { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
+        { keys: '?', desc: 'Toggle this list' },
+      ],
     };
   },
 
@@ -172,6 +186,7 @@ const app = createApp({
 
   async mounted() {
     document.addEventListener('click', this.onDocumentClick);
+    document.addEventListener('keydown', this.onGlobalKeydown);
 
     const { pubkey } = await this.apiGet('/api/whoami');
     this.pubkey = pubkey;
@@ -404,6 +419,25 @@ const app = createApp({
       if (document.fullscreenElement) document.exitFullscreen();
       else this.$refs.globalPlayer.requestFullscreen();
     },
+    // PIP → Theater → Fullscreen → PIP → ... -- the `f` hotkey's one job,
+    // so pressing it repeatedly walks every size the player actually has
+    // instead of just flipping fullscreen on/off and leaving pip/theater
+    // as a separate, unreachable-by-keyboard click-only toggle. Fullscreen
+    // isn't a third value of player.mode (it's a real browser API state,
+    // :fullscreen in CSS, see openPlayer's docstring) -- exiting it here
+    // also resets mode back to 'pip' so the cycle actually closes the
+    // loop, rather than dropping back into whatever theater/pip it
+    // started from (which is still exactly what Esc does, unchanged).
+    cyclePlayerMode() {
+      if (document.fullscreenElement === this.$refs.globalPlayer) {
+        document.exitFullscreen();
+        this.setPlayerMode('pip');
+      } else if (this.player.mode === 'pip') {
+        this.setPlayerMode('theater');
+      } else {
+        this.$refs.globalPlayer.requestFullscreen();
+      }
+    },
 
     // ── discover ──────────────────────────────────────────────────────
     async refreshDiscover() {
@@ -420,6 +454,61 @@ const app = createApp({
         this.searchHighlightHash = null;
       } finally {
         this.discoverLoading = false;
+      }
+    },
+
+    // App-wide hotkeys -- deliberately bare keys (no modifier), so every
+    // one of them has to be dead certain it's not intercepting real
+    // typing. Escape is the one exception let through while an input is
+    // focused (it also needs to blur that input, not just close dialogs);
+    // everything else below the `typing` check bails out immediately
+    // rather than firing while someone's mid-sentence in a text field.
+    onGlobalKeydown(e) {
+      const active = document.activeElement;
+      const typing = !!active && (
+        ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName) || active.isContentEditable
+      );
+
+      if (e.key === 'Escape') {
+        // closest-thing-first: only ever undoes one layer per press, same
+        // as a browser's own Esc-closes-the-topmost-thing convention
+        if (this.qr.visible) { this.qr.visible = false; return; }
+        if (this.player.visible) { this.closePlayer(); return; }
+        if (this.errorDialog.visible) { this.closeError(); return; }
+        if (this.shortcutsVisible) { this.shortcutsVisible = false; return; }
+        if (typing) active.blur();
+        return;
+      }
+
+      if (e.key === '?' && !typing) {
+        e.preventDefault();
+        this.shortcutsVisible = !this.shortcutsVisible;
+        return;
+      }
+
+      if (typing) return;
+
+      if (e.key === '/') {
+        e.preventDefault();
+        this.activeTab = 'discover';
+        this.$nextTick(() => this.$refs.searchInput && this.$refs.searchInput.focus());
+        return;
+      }
+
+      const tabByDigit = { '1': 'discover', '2': 'host', '3': 'downloads', '4': 'identity-tab' };
+      if (tabByDigit[e.key]) {
+        this.activeTab = tabByDigit[e.key];
+        return;
+      }
+
+      if (e.key === 'r' && this.activeTab === 'discover') {
+        e.preventDefault();
+        this.refreshDiscover();
+        return;
+      }
+
+      if (e.key === 'f' && this.player.visible) {
+        this.cyclePlayerMode();
       }
     },
 

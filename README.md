@@ -144,19 +144,28 @@ blind.
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
-somewhere other than a laptop.
+somewhere other than a laptop — alongside its own local discovery relay
+(`Dockerfile.discovery-relay`), so there's always something real for it
+to announce to and discover from out of the box.
 
 ```bash
 make node                            # build + run, http://127.0.0.1:8080
 make node-down                       # stop it — data persists
+make node-shell                      # interactive weed shell, same container as the running node
 WEED_SHARE_DIR=~/Movies make node    # mount a real directory of .ott archives at /share
-docker compose -f docker-compose.node.yml exec node python3 shell.py   # interactive shell, same container
 docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # or a one-off CLI command
 ```
 
 - Identity key, reputation store, and library manifest all persist in a
   named volume (`node-data`, mounted at `$HOME=/data`) — one node keeps
   the same pubkey (and everything vouching for it) across restarts.
+- The `relay` service is `node`'s default `WEED_RELAY` (`http://relay:9101`,
+  resolved over Compose's own network) — its events persist in their own
+  `relay-data` volume, and port 9101 is published to the host too, for
+  curling `/events` directly or pointing a non-Docker `weed`/shell session
+  at the exact same relay. Override `WEED_RELAY` (shell env or `.env`,
+  see `.env.sample`) to point at public infra instead, e.g. for a real
+  end-to-end test.
 - `/share` is a separate *bind* mount, not a named volume, so the actual
   `.ott` archives you're hosting are real files on the host you can see
   and manage directly. Point the web UI's Host form at `/share`.

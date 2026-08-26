@@ -1034,6 +1034,26 @@ def _relay_url_hint(relay_url):
     return None
 
 
+def _normalize_relay_url(relay_url):
+    """A bare host:port with no scheme (e.g. '127.0.0.1:9101', the most
+    natural way to type a local relay) isn't a URL urllib can parse at
+    all -- everything before the first ':' becomes the *scheme*, so this
+    reads as scheme '127.0.0.1' and raises "unknown url type", not a
+    connection error. That already lands on post_event/fetch_events'
+    existing except clauses (an unreachable relay is routine, not
+    exceptional), which is exactly the trap: hosting against a
+    scheme-less relay used to report status: running with zero actual
+    announcements ever reaching it, and discover against one silently
+    came back empty -- nothing hinted that the URL itself, not the
+    relay, was the problem. Every relay this project actually ships or
+    documents is plain HTTP(S), so defaulting a missing scheme to
+    http:// turns the common typo into the thing the user obviously
+    meant instead of a silent no-op."""
+    if '://' not in relay_url:
+        return 'http://' + relay_url
+    return relay_url
+
+
 _dns_bound_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix='urlopen')
 
 
@@ -1059,6 +1079,7 @@ def post_event(relay_url, event):
     hint = _relay_url_hint(relay_url)
     if hint:
         return {'ok': False, 'error': hint}
+    relay_url = _normalize_relay_url(relay_url)
     req = urllib.request.Request(
         f'{relay_url}/event', data=json.dumps(event).encode(),
         headers={'Content-Type': 'application/json'}, method='POST')
@@ -1082,6 +1103,7 @@ def fetch_events(relay_url, event_type=None):
     if hint:
         print(f"  {relay_url}: {hint}")
         return None
+    relay_url = _normalize_relay_url(relay_url)
     url = f'{relay_url}/events' + (f'?type={event_type}' if event_type else '')
     try:
         with _urlopen_bounded(url, timeout=5) as resp:

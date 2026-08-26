@@ -1,16 +1,23 @@
-# A weed node + its local control UI (see Dockerfile.node). Separate file
-# from docker-compose.yml on purpose -- that one is the holder/relay/
-# verifier network-challenge demo, unrelated services with unrelated
-# lifecycles.
+# A weed node + its local control UI (see Dockerfile.node), plus its own
+# local discovery relay (see Dockerfile.discovery-relay) so `make node` is
+# self-sufficient -- hosting/discovering used to silently need a relay
+# running *somewhere* first (either this repo's public one, or your own,
+# started by hand in a second terminal), which is exactly the trap:
+# nothing here fails loudly if none exists, a host just reports
+# status: running with zero real announcements ever reaching anywhere
+# (see node.py's post_event -- an unreachable relay is routine, not
+# exceptional, by design). Separate file from docker-compose.yml on
+# purpose -- that one is the holder/relay/verifier network-challenge
+# demo, unrelated services with unrelated lifecycles.
 #
 # Run:
 #   docker compose -f docker-compose.node.yml up --build
 #   open http://127.0.0.1:8080
 #
-# node-data is a named volume, not a bind mount, so identity/reputation/
-# library/downloads (see Dockerfile.node's HOME=/data comment) survive
-# `docker compose down` and only go away on an explicit `docker volume rm`
-# or `down -v`.
+# node-data/relay-data are named volumes, not bind mounts, so identity/
+# reputation/library/downloads (see Dockerfile.node's HOME=/data comment)
+# and the relay's own published events survive `docker compose down` and
+# only go away on an explicit `docker volume rm` or `down -v`.
 #
 # /share is a bind mount, not a named volume, on purpose -- you want the
 # actual .ott archives you're hosting to be real files on the host you can
@@ -30,6 +37,19 @@
 # container.
 
 services:
+  relay:
+    build:
+      context: .
+      dockerfile: Dockerfile.discovery-relay
+    ports:
+      # published to the host too, not just reachable from `node` --
+      # handy for curling /events directly, or pointing a non-Docker
+      # `weed.py`/shell.py at the exact same relay this node uses
+      - "9101:9101"
+    volumes:
+      - relay-data:/data
+    restart: unless-stopped
+
   node:
     build:
       context: .
@@ -39,19 +59,26 @@ services:
         # actually run, not hardcoded here -- see Dockerfile.node's own
         # comment on this arg for why the container can't compute it itself
         GIT_COMMIT: ${GIT_COMMIT:-}
+    depends_on:
+      - relay
     ports:
       - "8080:8080"
     volumes:
       - node-data:/data
       - ${WEED_SHARE_DIR:-./share}:/share
     environment:
-      # point these at your real deployed infra -- defaults inside
-      # web_ui.py fall back to http://127.0.0.1:9101 / no tunnel, which
-      # only make sense if a discovery_relay.py is also running on this
-      # same host.
-      WEED_RELAY: "https://r.hak4.org"
-      WEED_TUNNEL: "tls://t.hak4.org:9199"
+      # `relay` resolves to the sibling service above over Compose's own
+      # network -- no port-forwarding round-trip through the host needed
+      # for node<->relay traffic, that's only there for *your* convenience
+      # (see the relay service's own ports: comment). Override via a real
+      # WEED_RELAY in your environment or .env (see .env.sample) to point
+      # at public infra instead, e.g. for an actual end-to-end test --
+      # this default deliberately favors "works out of the box, stays
+      # local" over that.
+      WEED_RELAY: "${WEED_RELAY:-http://relay:9101}"
+      WEED_TUNNEL: "${WEED_TUNNEL:-}"
     restart: unless-stopped
 
 volumes:
   node-data:
+  relay-data:

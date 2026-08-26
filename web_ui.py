@@ -351,8 +351,21 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             for entry in entries:
                 for relay_url in relay_urls:
                     host_addr = f'{advertise_host}:{port}'
-                    node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                                  tunnel=tunnel, ott_status=ott_status)
+                    result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
+                                           tunnel=tunnel, ott_status=ott_status)
+                    # publish()/post_event() report a failed announce as a
+                    # normal {'ok': False, ...} return, not an exception (an
+                    # unreachable or malformed relay is routine, not
+                    # exceptional -- see post_event's own docstring) -- which
+                    # this loop used to just ignore entirely, so a host could
+                    # sit at status: running, "announced" on a relay it never
+                    # actually reached, with nothing in the UI to say so.
+                    # do_host (shell.py) already prints every result
+                    # unconditionally; this only prints the failures; a
+                    # working host's log staying free of routine "ok: True"
+                    # noise matters more here than in a CLI's own scrollback.
+                    if isinstance(result, dict) and not result.get('ok', True):
+                        print(f'  ✗ announce to {relay_url} failed: {result.get("error")}')
                 announced = relay_urls
             files = [{'name': e['name'], 'content_hash': e['sha256']} for e in entries]
             with _lock:

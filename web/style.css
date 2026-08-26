@@ -630,6 +630,76 @@ td button {
   user-select: text;
 }
 
+/* same backdrop/dialog shape as #error-dialog above, just accent-colored
+   instead of danger-colored since nothing's actually wrong */
+#shortcuts-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  z-index: 200;
+}
+
+#shortcuts-dialog-backdrop.hidden {
+  display: none;
+}
+
+#shortcuts-dialog {
+  position: fixed;
+  z-index: 201;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: min(420px, calc(100vw - 2rem));
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--accent-dim);
+  border-radius: 8px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+
+#shortcuts-dialog.hidden {
+  display: none;
+}
+
+.shortcuts-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.shortcuts-table {
+  border-collapse: collapse;
+  margin: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.shortcuts-table td {
+  padding: 0.35rem 0.6rem;
+  border-bottom: none;
+}
+
+.shortcuts-table kbd {
+  display: inline-block;
+  min-width: 1.5rem;
+  padding: 0.15rem 0.4rem;
+  text-align: center;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--accent);
+}
+
 #host-result, #reputation-result {
   margin-top: 0.75rem;
   font-size: 0.85rem;
@@ -708,7 +778,10 @@ code {
   #hosts-table th:nth-child(5), #hosts-table td:nth-child(5) {
     display: none;
   }
-  #jobs-table th:nth-child(1), #jobs-table td:nth-child(1) {
+  /* Job (column 1) now carries the Play/QR controls in its own cell (see
+     the HTML) same as Discover's Title column does, so it's Content hash
+     -- the least actionable field here -- that goes now, not Job. */
+  #jobs-table th:nth-child(2), #jobs-table td:nth-child(2) {
     display: none;
   }
 
