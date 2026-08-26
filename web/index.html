@@ -74,19 +74,21 @@
                 <div class="title-row">
                   <span class="title-text" v-marquee><span>{{ r.title }}</span></span>
                   <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
-                  <span class="title-icons">
-                    <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
-                            :disabled="library.likes.has(r.content_hash)"
-                            :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
-                            @click="like(r.content_hash)">+1</button>
-                    <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
-                            :disabled="library.subscriptions.has(r.signer_pubkey)"
-                            :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
-                            @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
-                    <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
-                            @click="openPlaylistPicker($event, r)">♫+</button>
-                  </span>
-                  <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+                  <div class="mobile-controls-line">
+                    <span class="title-icons">
+                      <button type="button" class="icon-btn like-icon" :class="{active: library.likes.has(r.content_hash)}"
+                              :disabled="library.likes.has(r.content_hash)"
+                              :title="library.likes.has(r.content_hash) ? 'Liked' : 'Like'"
+                              @click="like(r.content_hash)">+1</button>
+                      <button type="button" class="icon-btn sub-icon" :class="{active: library.subscriptions.has(r.signer_pubkey)}"
+                              :disabled="library.subscriptions.has(r.signer_pubkey)"
+                              :title="library.subscriptions.has(r.signer_pubkey) ? 'Subscribed' : 'Subscribe'"
+                              @click="subscribe(r.signer_pubkey)">{{ library.subscriptions.has(r.signer_pubkey) ? '★' : '☆' }}</button>
+                      <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                              @click="openPlaylistPicker($event, r)">♫+</button>
+                    </span>
+                    <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+                  </div>
                 </div>
               </div>
               <div class="swipe-back">
@@ -214,11 +216,13 @@
                 <div class="title-row">
                   <span class="title-text" v-marquee :title="j.path || j.job_id"><span>{{ j.title || shortHash(j.content_hash) }}</span></span>
                   <code class="mobile-hash">{{ shortHash(j.content_hash) }}</code>
-                  <span class="title-icons">
-                    <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
-                            @click="openPlaylistPicker($event, j)">♫+</button>
-                  </span>
-                  <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+                  <div class="mobile-controls-line">
+                    <span class="title-icons">
+                      <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                              @click="openPlaylistPicker($event, j)">♫+</button>
+                    </span>
+                    <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
+                  </div>
                 </div>
               </div>
               <div class="swipe-back">
@@ -370,7 +374,4 @@
 </div>
 </div>
 
-<script src="vendor/vue.global.prod.js"></script>
-<script src="vue-app.js"></script>
-</body>
-</html>
+<script src="
