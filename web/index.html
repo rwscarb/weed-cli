@@ -72,15 +72,15 @@
             <template v-if="library.downloads[r.content_hash]">
               <button type="button" class="play-btn"
                       @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
-              <button type="button" class="play-btn icon-only" v-if="!r._dl.downloading" title="Re-download"
+              <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
                       @click="download(r)">↻</button>
               <button type="button" class="play-btn" :disabled="r._verify.busy" :title="r._verify.title"
                       @click="verify(r)">{{ r._verify.label }}</button>
               <span class="dl-stats" v-if="statsText(library.downloads[r.content_hash])">{{ statsText(library.downloads[r.content_hash]) }}</span>
             </template>
-            <button type="button" class="play-btn" v-else-if="!r._dl.downloading"
+            <button type="button" class="play-btn" v-else :class="{'dl-hidden': r._dl.downloading}"
                     @click="download(r)">Download</button>
-            <span class="dl-log" v-if="r._dl.downloading" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
+            <span class="dl-log" :class="{'dl-hidden': !r._dl.downloading}" :title="r._dl.log">{{ lastLogLine(r._dl.log) || 'starting…' }}</span>
           </div></td>
           <td><div class="title-row">
             <span class="title-text">{{ r.title }}</span>

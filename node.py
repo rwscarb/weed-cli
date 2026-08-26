@@ -19,6 +19,7 @@ every previous script verified chunks locally or over a network, none of
 them reassembled a full file from a remote peer onto disk before this.
 """
 import base64
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -1033,6 +1034,27 @@ def _relay_url_hint(relay_url):
     return None
 
 
+_dns_bound_pool = concurrent.futures.ThreadPoolExecutor(max_workers=8, thread_name_prefix='urlopen')
+
+
+def _urlopen_bounded(req_or_url, timeout=5):
+    """urlopen's own timeout= only bounds the connect/read phases — the
+    getaddrinfo() call underneath (DNS resolution) is a blocking libc call
+    with no timeout of its own, so a relay hostname that's slow or
+    unreachable to resolve can hang here indefinitely no matter what
+    timeout= says. That's exactly the situation right after a container
+    boots and its network/DNS isn't fully settled yet: _resume_persisted_hosts
+    (web_ui.py) resuming a host at that moment used to get stuck at
+    "(starting…)" forever, since nothing downstream ever times out either.
+    Running the call in a worker thread and bounding *that* with
+    .result(timeout=) catches DNS hangs the same as connect/read hangs —
+    the stuck worker thread leaks (a blocking C call can't be cancelled),
+    but it's a daemon-pool thread and this process was going to give up and
+    move on regardless."""
+    future = _dns_bound_pool.submit(urllib.request.urlopen, req_or_url, timeout=timeout)
+    return future.result(timeout=timeout + 1)
+
+
 def post_event(relay_url, event):
     hint = _relay_url_hint(relay_url)
     if hint:
@@ -1041,11 +1063,11 @@ def post_event(relay_url, event):
         f'{relay_url}/event', data=json.dumps(event).encode(),
         headers={'Content-Type': 'application/json'}, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=5) as resp:
+        with _urlopen_bounded(req, timeout=5) as resp:
             return json.loads(resp.read())
     except urllib.error.HTTPError as e:
         return json.loads(e.read())
-    except (urllib.error.URLError, ConnectionRefusedError) as e:
+    except (urllib.error.URLError, ConnectionRefusedError, concurrent.futures.TimeoutError) as e:
         # download_with_auction posts the post-download attestation to every
         # relay in relay_urls, which by default includes 127.0.0.1:9101
         # whether or not anything is actually listening there (same default
@@ -1062,9 +1084,9 @@ def fetch_events(relay_url, event_type=None):
         return None
     url = f'{relay_url}/events' + (f'?type={event_type}' if event_type else '')
     try:
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        with _urlopen_bounded(url, timeout=5) as resp:
             return json.loads(resp.read())
-    except (urllib.error.URLError, ConnectionRefusedError):
+    except (urllib.error.URLError, ConnectionRefusedError, concurrent.futures.TimeoutError):
         return None
 
 

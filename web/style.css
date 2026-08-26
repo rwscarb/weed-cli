@@ -231,6 +231,22 @@ td button {
   color: var(--muted);
 }
 
+/* .dl-log, the Download button, and the icon-only re-download button all
+   used to be v-if/v-else-if'd out of the DOM depending on r._dl.downloading
+   -- fixed-width CSS on .dl-log alone only stops it jittering once it's
+   already visible; whichever of these elements gets inserted/removed at
+   the moment a download starts still changes the actions row's total
+   required width right then, same problem either direction (previously:
+   growing, once .dl-log's own width was fixed, since the *other* element
+   disappearing wasn't). Always rendering all of them and hiding whichever
+   isn't current with visibility (not display: none, which drops an
+   element from layout the same as v-if did) keeps every one of their
+   boxes permanently reserved, so starting or finishing a download never
+   changes the actions column's size at all. */
+.dl-hidden {
+  visibility: hidden;
+}
+
 /* keyboard nav in the search box (Up/Down to move, Enter/Space to act) --
    a left accent bar reads clearly without fighting .dl-progress-row's own
    background animation if both ever land on the same row */
