@@ -339,6 +339,7 @@ td button {
    each hugging its own label, keeping whatever follows (stats text,
    the Title column) starting at a consistent x across every row */
 .play-btn {
+  min-height: 2.6rem;
   min-width: 4.75rem;
   padding: 0.3rem 0.7rem;
   font-size: 0.8rem;
