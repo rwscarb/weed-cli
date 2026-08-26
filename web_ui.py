@@ -767,6 +767,13 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         _lan_url = f'http://{reachable_host}:{port}/'
 
     if not quiet:
+        # answers "is this container actually running the code I think it
+        # is" directly in `docker compose logs`/`make node`'s own output —
+        # see node.weed_banner()'s own docstring for exactly the debugging
+        # session that motivated adding a commit hash to it in the first
+        # place; printing it here means the same question doesn't need a
+        # docker exec + grep to answer for the web UI specifically
+        print(f"[web:{port}] {node.weed_banner()}", flush=True)
         print(f"[web:{port}] weed control UI at http://{bind_host}:{port}/", flush=True)
         if bind_host == '127.0.0.1':
             print("  bound to localhost only -- pass --bind 0.0.0.0 to reach this from your "

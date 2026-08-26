@@ -150,6 +150,8 @@ somewhere other than a laptop.
 make node                            # build + run, http://127.0.0.1:8080
 make node-down                       # stop it — data persists
 WEED_SHARE_DIR=~/Movies make node    # mount a real directory of .ott archives at /share
+docker compose -f docker-compose.node.yml exec node python3 shell.py   # interactive shell, same container
+docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # or a one-off CLI command
 ```
 
 - Identity key, reputation store, and library manifest all persist in a

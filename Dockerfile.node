@@ -10,9 +10,17 @@
 # store-and-forward relays. This one is the actual node a person runs.
 FROM python:3.13-slim
 WORKDIR /app
-COPY node.py web_ui.py poc_reputation.py ./
+# weed.py/shell.py/discovery_relay.py/lightning_settle.py/dht.py weren't
+# here before -- the image only ever ran web_ui.py, so there was no way
+# to get an interactive shell or bare CLI *inside this exact container*
+# to compare against. That mattered for real: a "why does this fail in
+# Docker but not bare CLI" question had no way to control for "same
+# container, different code path" vs "different container entirely"
+# without them. `docker compose -f docker-compose.node.yml exec node
+# python3 shell.py` (or `weed.py <subcommand>`) now works.
+COPY node.py web_ui.py poc_reputation.py weed.py shell.py discovery_relay.py lightning_settle.py dht.py ./
 COPY web/ ./web/
-RUN pip install --no-cache-dir btcvm cryptography qrcode pillow
+RUN pip install --no-cache-dir btcvm cryptography qrcode pillow kademlia
 
 # Identity key, reputation store, and library manifest are all read/written
 # via os.path.expanduser('~/...') (see node.py's IDENTITY_PATH and
