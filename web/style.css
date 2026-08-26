@@ -290,6 +290,15 @@ td button {
   flex: none;
 }
 
+/* mobile-only front page decoration (duplicate hash + swipe affordance,
+   see the HTML) -- the real Content-hash column already shows the hash
+   on desktop, and .swipe-row's two-page layout below only exists at
+   mobile width at all, so both stay hidden until that breakpoint turns
+   them on. */
+.mobile-hash, .swipe-hint {
+  display: none;
+}
+
 /* same language as .play-btn: faint dark outline at rest, only lights up
    on hover -- and a shared min-width so the "+1" badge and the star
    render as the same size instead of each hugging its own glyph */
