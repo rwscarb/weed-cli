@@ -982,5 +982,51 @@ const app = createApp({
   },
 });
 
+// v-marquee: slides an overflowing single-line text element back and
+// forth to reveal the rest, instead of just leaving it ellipsis-
+// truncated forever -- only ever animates elements that actually
+// overflow (checked via scrollWidth vs clientWidth), so a short title
+// that already fits just sits there normally, no pointless motion.
+// text-indent rather than a transform on some inner wrapper span: it
+// shifts a nowrap/overflow:hidden line's content directly, so every
+// existing .player-title/.playlist-item-title usage works unchanged,
+// no markup restructuring (an inner span per title) needed.
+function _updateMarquee(el) {
+  const overflow = el.scrollWidth - el.clientWidth;
+  if (overflow > 4) {
+    // slow and roughly overflow-proportional -- a title that barely
+    // clips shouldn't crawl for as long as one that's wildly cut off
+    const duration = Math.max(4, 3 + overflow / 30);
+    el.style.setProperty('--marquee-shift', `-${overflow}px`);
+    el.style.setProperty('--marquee-duration', `${duration}s`);
+    el.classList.add('marquee-active');
+  } else {
+    el.classList.remove('marquee-active');
+    el.style.removeProperty('--marquee-shift');
+    el.style.removeProperty('--marquee-duration');
+  }
+}
+app.directive('marquee', {
+  mounted(el) {
+    _updateMarquee(el);
+    // the element's *available* width changes independently of its text
+    // content -- most notably .player-title, whose box gets wider or
+    // narrower purely from switching PIP/theater/fullscreen, with no Vue
+    // re-render (and so no 'updated' hook) involved at all
+    el._marqueeRO = new ResizeObserver(() => _updateMarquee(el));
+    el._marqueeRO.observe(el);
+  },
+  updated(el) {
+    // content itself can also change without a resize -- a Discover
+    // poll swapping a different row's title into the same DOM position,
+    // a playlist rename -- requestAnimationFrame so this reads layout
+    // after the DOM patch has actually settled, not mid-patch
+    requestAnimationFrame(() => _updateMarquee(el));
+  },
+  unmounted(el) {
+    if (el._marqueeRO) el._marqueeRO.disconnect();
+  },
+});
+
 app.component('filter-toggle', FilterToggle);
 app.mount('#app');

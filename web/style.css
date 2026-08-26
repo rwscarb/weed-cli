@@ -490,6 +490,29 @@ td button {
   display: none;
 }
 
+/* v-marquee (vue-app.js) only ever adds this class to an element it's
+   already measured as genuinely overflowing -- text-overflow: clip
+   instead of ellipsis here since the animation itself is what reveals
+   the rest, an ellipsis would just sit there covering the last few
+   pixels of every pass. Respects reduced-motion: the class still marks
+   "this is truncated" (title="" attributes on these spans already carry
+   the full text either way), it just skips the actual animation. */
+.marquee-active {
+  text-overflow: clip;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .marquee-active {
+    animation: marquee-scroll var(--marquee-duration, 6s) ease-in-out infinite;
+  }
+}
+
+@keyframes marquee-scroll {
+  0%, 10%   { text-indent: 0; }
+  45%, 55%  { text-indent: var(--marquee-shift, 0); }
+  90%, 100% { text-indent: 0; }
+}
+
 .player-controls {
   display: flex;
   gap: 0.25rem;
