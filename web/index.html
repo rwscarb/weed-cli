@@ -312,7 +312,7 @@
 
 <div id="player-backdrop" :class="{hidden: !(player.visible && player.mode === 'theater')}"
      @click="setPlayerMode('pip')"></div>
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible}]">
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || (easterEggVisible && player.mode === 'pip')}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>

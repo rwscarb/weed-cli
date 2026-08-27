@@ -84,6 +84,9 @@ btn, .btn {
     <span class="ascii-controls-label">RES</span>
     <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
     <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
+    <span class="ascii-controls-label">BRI</span>
+    <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1">
+    <span class="ascii-controls-val" id="asciiBriVal">1.0x</span>
     <button class="btn" data-color="neon">NEON</button>
     <button class="btn lit" data-color="natural">NATURAL</button>
   </div>
@@ -172,6 +175,13 @@ let vizMode = 'ascii';
 // full resolution (stride 1), natural color.
 let asciiStride = 1;
 let asciiColorMode = 'natural';
+// Multiplies the per-pixel luminance ASCII uses for both glyph density
+// (which RAMP character gets picked) and color intensity (alpha in
+// NATURAL, lightness/alpha in NEON) -- the direct answer to "often
+// quite dark", which the NEON palette only ever addressed indirectly.
+// >1 also lets genuinely dark source footage clear the bright<0.03
+// skip threshold and actually render instead of leaving blank cells.
+let asciiBrightness = 1.0;
 
 function resetVizNav() { vizPanX=0; vizPanY=0; vizUserScale=1.0; }
 
@@ -235,6 +245,15 @@ asciiResSlider.addEventListener('input', () => {
 // chars" HTML placeholder until either a video frame arrived or the
 // slider moved, instead of correctly reading "—" (no video yet).
 updateAsciiResLabel();
+
+// ASCII brightness slider -- see asciiBrightness's own comment for what
+// it actually multiplies.
+const asciiBriSlider = document.getElementById('asciiBriSlider');
+const asciiBriVal = document.getElementById('asciiBriVal');
+asciiBriSlider.addEventListener('input', () => {
+  asciiBrightness = parseFloat(asciiBriSlider.value);
+  asciiBriVal.textContent = asciiBrightness.toFixed(1) + 'x';
+});
 
 // ASCII color mode -- NATURAL (the video's own per-cell color, exactly
 // what this mode used to always do) vs NEON (the rotating HSL palette
@@ -497,7 +516,7 @@ function drawViz() {
         for (let x=0; x<cols; x++) {
           const i = ((y*STRIDE)*videoFrame.w + (x*STRIDE)) * 4;
           const r=px[i], g=px[i+1], b=px[i+2];
-          const bright = (r*0.299 + g*0.587 + b*0.114) / 255;
+          const bright = Math.min(1, (r*0.299 + g*0.587 + b*0.114) / 255 * asciiBrightness);
           if (bright < 0.03) continue; // near-black cells stay empty, same as real ASCII art leaving blanks
           const ch = RAMP[Math.min(RAMP.length-1, Math.floor(bright * RAMP.length))];
           // audio nudges brightness/alpha per column, same "ties into
@@ -529,8 +548,14 @@ function drawViz() {
             // its own option: footage that's already colorful (or where
             // the actual colors are the point) looks better true to
             // itself than forced through a rainbow it doesn't need.
+            // asciiBrightness scales the literal RGB here too, not just
+            // alpha -- alpha alone only ever controls how much black
+            // shows through, capped by however dim the source pixel
+            // already was; this is the part that actually lightens the
+            // color itself for genuinely dark footage.
             const alpha = Math.min(1, 0.55 + bright*0.3 + v*0.25);
-            vctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+            const rb = Math.min(255, r*asciiBrightness), gb = Math.min(255, g*asciiBrightness), bb = Math.min(255, b*asciiBrightness);
+            vctx.fillStyle = `rgba(${rb|0},${gb|0},${bb|0},${alpha.toFixed(2)})`;
           }
           vctx.fillText(ch, ox + x*cellW + cellW/2, oy + y*cellH + cellH/2);
         }
