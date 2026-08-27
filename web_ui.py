@@ -45,6 +45,11 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 DEFAULT_RELAY = os.environ.get('WEED_RELAY', 'http://127.0.0.1:9101')
 DEFAULT_TUNNEL = os.environ.get('WEED_TUNNEL')
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
+# play history is a log, not a set -- it grows forever otherwise (every
+# playlist "next" and every re-watch appends). This caps ~/.weed_library.json
+# from growing unbounded while still keeping far more history than anyone
+# is realistically going to scroll back through.
+MAX_HISTORY = 500
 # every real POST body here is a handful of JSON fields (hashes, URLs,
 # titles) -- no endpoint ever legitimately needs anywhere near this much,
 # it's purely a cap against a client claiming a huge Content-Length and
@@ -130,9 +135,12 @@ _lock = threading.Lock()
 # business seeing how you've grouped your own downloads -- a list of
 # {id, name, items: [{content_hash, title, signer_pubkey}, ...]}, id
 # stable across renames so the UI can keep pointing at the same playlist
-# while its name changes underneath it. All access goes through _lock,
-# same as _hosts/_jobs.
-_library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': []}
+# while its name changes underneath it. history is a chronological log of
+# plays (newest last), each {content_hash, title, played_at} -- separate
+# from downloads' own play_count/last_played (see _handle_play) since
+# those two are aggregates per content_hash, while this is the actual
+# per-play timeline. All access goes through _lock, same as _hosts/_jobs.
+_library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': [], 'history': []}
 
 # what to (re-)host on startup -- _hosts above is pure in-memory runtime
 # state, so a restart (a fresh `make node`, a Docker container recreated
@@ -252,6 +260,7 @@ def _load_library():
             'likes': data.get('likes') or [],
             'subscriptions': data.get('subscriptions') or [],
             'playlists': data.get('playlists') or [],
+            'history': data.get('history') or [],
         }
     except (FileNotFoundError, json.JSONDecodeError):
         pass
@@ -500,6 +509,9 @@ class Handler(BaseHTTPRequestHandler):
                     'likes': list(_library['likes']),
                     'subscriptions': list(_library['subscriptions']),
                     'playlists': list(_library['playlists']),
+                    # newest first -- the only order a "recently played" list
+                    # is ever actually consumed in
+                    'history': list(reversed(_library['history'])),
                 })
         if path.startswith('/api/download/'):
             job_id = path[len('/api/download/'):]
@@ -559,7 +571,7 @@ class Handler(BaseHTTPRequestHandler):
         handlers = {
             '/api/host': self._handle_host, '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
-            '/api/verify': self._handle_verify,
+            '/api/verify': self._handle_verify, '/api/play': self._handle_play,
             '/api/playlists/create': self._handle_playlist_create,
             '/api/playlists/rename': self._handle_playlist_rename,
             '/api/playlists/delete': self._handle_playlist_delete,
@@ -643,6 +655,32 @@ class Handler(BaseHTTPRequestHandler):
                 _library['subscriptions'].append(target_pubkey)
                 _save_library()
         self._json({'result': result})
+
+    def _handle_play(self, body):
+        """Called once per openPlayer() on the frontend (Discover's ▶ Play,
+        a Downloads row, a playlist item, or onPlayerEnded's own auto-
+        advance) -- not inferred from /api/stream's byte-range requests,
+        which fire many times per single watch (seeking, buffering) and
+        would massively overcount. No relay/event involved, unlike
+        like/subscribe above -- what you've watched is purely local, same
+        reasoning as playlists' own docstring on why those aren't gossiped
+        either."""
+        content_hash = body.get('content_hash')
+        if not content_hash:
+            return self._json({'error': 'content_hash required'}, status=400)
+        now = time.time()
+        with _lock:
+            rec = _library['downloads'].get(content_hash)
+            title = body.get('title') or (rec.get('title') if rec else None)
+            play_count = None
+            if rec is not None:
+                rec['play_count'] = rec.get('play_count', 0) + 1
+                rec['last_played'] = now
+                play_count = rec['play_count']
+            _library['history'].append({'content_hash': content_hash, 'title': title, 'played_at': now})
+            _library['history'] = _library['history'][-MAX_HISTORY:]
+            _save_library()
+        self._json({'play_count': play_count, 'last_played': now})
 
     def _handle_playlist_create(self, body):
         name = (body.get('name') or '').strip()

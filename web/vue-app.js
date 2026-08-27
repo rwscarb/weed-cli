@@ -83,7 +83,19 @@ const app = createApp({
       // /api/playlists/* endpoints hand back plus a couple of purely
       // client-side UI fields (_editing/_nameDraft) for the inline rename
       // control, same pattern discoverResults already uses for _dl/_verify.
-      library: { downloads: {}, likes: new Set(), subscriptions: new Set(), playlists: [] },
+      // history: newest-first log of plays, {content_hash, title, played_at}
+      // -- see web_ui.py's _handle_play for why this is separate from each
+      // download record's own play_count/last_played (aggregate vs. log)
+      library: { downloads: {}, likes: new Set(), subscriptions: new Set(), playlists: [], history: [] },
+
+      // Discover sort -- 'default' is discoverResults' own arrival order
+      // (whatever the relay(s) returned), the rest read off each row's
+      // library.downloads entry (nothing plays without downloading first
+      // in this app, so that's always where play data lives -- see
+      // sortedDiscoverResults). Persisted across a refresh via the same
+      // hash-based tab memory pattern activeTab already uses would be
+      // nice but is more than this needed; a plain default is fine.
+      discoverSortBy: 'default',
 
       hostForm: {
         archiveDir: '', fileName: '', port: 9201, price: 0, lightningNode: null,
@@ -189,9 +201,28 @@ const app = createApp({
         return true;
       });
     },
+    // Applied after filtering, not before -- sorting doesn't change which
+    // rows show, just their order. 'default' is a no-op copy rather than
+    // skipping .slice() so this always returns a fresh array Vue can key
+    // off cleanly. Play data lives on each row's own library.downloads
+    // entry (a Discover result itself never carries play stats -- nothing
+    // plays here without being downloaded first), so unplayed/undownloaded
+    // rows read as 0/no-timestamp and sort last on both play-based orders.
+    sortedDiscoverResults() {
+      const list = this.filteredDiscoverResults.slice();
+      const rec = (r) => this.library.downloads[r.content_hash];
+      if (this.discoverSortBy === 'title') {
+        list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+      } else if (this.discoverSortBy === 'plays') {
+        list.sort((a, b) => (rec(b)?.play_count || 0) - (rec(a)?.play_count || 0));
+      } else if (this.discoverSortBy === 'recent') {
+        list.sort((a, b) => (rec(b)?.last_played || 0) - (rec(a)?.last_played || 0));
+      }
+      return list;
+    },
     highlightedIndex() {
       if (!this.searchHighlightHash) return -1;
-      return this.filteredDiscoverResults.findIndex(r => r.content_hash === this.searchHighlightHash);
+      return this.sortedDiscoverResults.findIndex(r => r.content_hash === this.searchHighlightHash);
     },
     // what the browser tab shows -- a playing video wins over an active
     // download (you're far more likely to be glancing at the tab to
@@ -300,6 +331,7 @@ const app = createApp({
     this.library.likes = new Set(lib.likes || []);
     this.library.subscriptions = new Set(lib.subscriptions || []);
     this.library.playlists = (lib.playlists || []).map(p => ({ ...p, _editing: false, _nameDraft: '' }));
+    this.library.history = lib.history || [];
     for (const d of lib.downloads || []) {
       this.jobs.push({
         job_id: d.job_id, content_hash: d.content_hash, pct: 0, status: 'done',
@@ -332,6 +364,19 @@ const app = createApp({
     },
     shortHash(h, n = 10) {
       return h ? h.slice(0, n) + '…' : '';
+    },
+    // ts is epoch seconds (Python's time.time(), straight off
+    // last_played/played_at) or falsy (never played) -- coarse buckets
+    // are enough for a table cell; the exact timestamp is still available
+    // in the title attribute wherever this is used.
+    relativeTime(ts) {
+      if (!ts) return '—';
+      const secs = Date.now() / 1000 - ts;
+      if (secs < 60) return 'just now';
+      if (secs < 3600) return Math.floor(secs / 60) + 'm ago';
+      if (secs < 86400) return Math.floor(secs / 3600) + 'h ago';
+      if (secs < 2592000) return Math.floor(secs / 86400) + 'd ago';
+      return Math.floor(secs / 2592000) + 'mo ago';
     },
     // the captured log (see web_ui.py's _job_logs) is every real line
     // node.py printed so far -- discovery/auction/challenge detail, not
@@ -439,6 +484,26 @@ const app = createApp({
         video.src = '/api/stream/' + jobId;
         video.autoplay = true;
       });
+      this.recordPlay(contentHash, this.player.title);
+    },
+    // Every real "start watching this" funnels through openPlayer above
+    // (Discover's ▶ Play, a Downloads row, a playlist item, onPlayerEnded's
+    // auto-advance) -- one call site here means play_count/last_played/
+    // history can't drift out of sync from some path bumping one but not
+    // the other. Deliberately NOT hooked off the <video>'s own play/pause
+    // events: those fire on every seek/buffer-recovery/tab-refocus, which
+    // would wildly overcount a single sit-down-and-watch as dozens of
+    // "plays." Fire-and-forget -- a lost play-history entry from a flaky
+    // request is not worth blocking or erroring playback over.
+    recordPlay(contentHash, title) {
+      if (!contentHash) return;
+      const rec = this.library.downloads[contentHash];
+      if (rec) {
+        rec.play_count = (rec.play_count || 0) + 1;
+        rec.last_played = Date.now() / 1000;
+      }
+      this.library.history.unshift({ content_hash: contentHash, title, played_at: Date.now() / 1000 });
+      this.apiPost('/api/play', { content_hash: contentHash, title }).catch(() => {});
     },
     closePlayer() {
       if (document.fullscreenElement === this.$refs.globalPlayer) document.exitFullscreen();
@@ -627,7 +692,7 @@ const app = createApp({
     // yet, so this is the closest equivalent to hitting that row's own
     // primary button)
     onSearchKeydown(e) {
-      const list = this.filteredDiscoverResults;
+      const list = this.sortedDiscoverResults;
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         if (!list.length) return;

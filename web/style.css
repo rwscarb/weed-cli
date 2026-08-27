@@ -1087,7 +1087,9 @@ code {
   #discover-table th:nth-child(4), #discover-table td:nth-child(4),
   #discover-table th:nth-child(5), #discover-table td:nth-child(5),
   #discover-table th:nth-child(6), #discover-table td:nth-child(6),
-  #discover-table th:nth-child(7), #discover-table td:nth-child(7) {
+  #discover-table th:nth-child(7), #discover-table td:nth-child(7),
+  #discover-table th:nth-child(8), #discover-table td:nth-child(8),
+  #discover-table th:nth-child(9), #discover-table td:nth-child(9) {
     display: none;
   }
   #hosts-table th:nth-child(4), #hosts-table td:nth-child(4),
