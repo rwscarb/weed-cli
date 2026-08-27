@@ -378,6 +378,17 @@
   </div>
   <pre class="error-dialog-message">{{ errorDialog.message }}</pre>
 </div>
+
+<!-- v-if, not v-show/:class="hidden" -- this is a Web Audio synth
+     running inside the iframe; leaving it in the DOM just visually
+     hidden would keep its audio context (and whatever's mid-playback)
+     alive in the background. v-if actually tears the iframe down. -->
+<template v-if="easterEggVisible">
+  <div id="orbit-egg-backdrop" @click="easterEggVisible = false"></div>
+  <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Sequencer">
+    <iframe src="orbit_sequencer.html" title="Orbit Sequencer" allow="autoplay"></iframe>
+  </div>
+</template>
 </div>
 
 <script src="vendor/vue.global.prod.js"></script>

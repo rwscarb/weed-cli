@@ -1,0 +1,1793 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>ORBIT SEQUENCER</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+:root {
+  --bg:#080808; --fg:#c0c0c4; --dim:#181818; --cyan:#5ab8e0;
+  --orng:#d4845a; --muted:#68686e; --panel:#0d0d0e; --accent:#00ff88;
+}
+body {
+  background:var(--bg); color:var(--fg);
+  font-family:'Courier New',monospace;
+  display:flex; flex-direction:column;
+  height:100vh; overflow:hidden;
+}
+/* ── Header ── */
+header {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 16px;
+  border-bottom:1px solid var(--dim);
+  background:var(--panel);
+}
+header h1 { font-size:10px; letter-spacing:.22em; color:var(--cyan); opacity:.75; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; flex:1; min-width:0; }
+.transport { display:flex; gap:8px; align-items:center; flex-shrink:0; white-space:nowrap; }
+canvas { display:block; }
+/* ── Panel ── */
+.panel {
+  background:var(--panel);
+  display:flex; flex-direction:column; gap:0; overflow-y:scroll; flex:1;
+  overflow-anchor:none;
+}
+.section { padding:10px 14px; border-bottom:1px solid var(--dim); }
+/* .section-group wraps a .section-title + a .section-row so the whole
+   group collapses as one unit — reuses the existing generic .section-title
+   click handler (querySelectorAll('.section-title'), toggles .collapsed on
+   parentElement) for free, since the group title's parentElement is now
+   .section-group instead of .section. No new JS needed for this. */
+.section-group { border-bottom:1px solid var(--dim); }
+.section-group > .section-title { padding:10px 14px 8px; margin-bottom:0; }
+.section-group.collapsed > .section-title { padding-bottom:10px; }
+.section-group.collapsed .section-row { display:none !important; }
+.section-row { display:flex; flex-direction:row; }
+.section-row > .section { flex:1; min-width:0; border-bottom:none; border-right:1px solid var(--dim); padding-top:0; }
+.section-row > .section:last-child { border-right:none; }
+/* FILTERS carries an extra fixed-width <select> per row that SYNTH/EQ
+   don't have, which eats into the range slider's share of the column —
+   give it more flex-grow so its slider tracks read as roughly the same
+   length as SYNTH/EQ's instead of visibly shorter. */
+.section-row > .section-wide { flex:1.5; }
+.section-title {
+  font-size:9px; color:var(--muted); letter-spacing:.15em; margin-bottom:8px;
+  cursor:pointer; user-select:none; display:flex; justify-content:space-between; align-items:center;
+}
+.section-title::after { content:'▾'; opacity:0.35; font-size:8px; }
+.section.collapsed .section-title { margin-bottom:0; }
+.section.collapsed .section-title::after { content:'▸'; }
+.section.collapsed > *:not(.section-title) { display:none !important; }
+/* ── Controls ── */
+.row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+.row label { font-size:9px; color:var(--muted); width:58px; flex-shrink:0; }
+.row input[type=range] {
+  flex:1; accent-color:var(--accent);
+  height:3px; background:var(--dim); appearance:none;
+  touch-action:none; -webkit-user-select:none; user-select:none;
+}
+.row input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:10px; height:10px;
+  border-radius:50%; background:var(--accent);
+}
+.row .val { font-size:9px; color:var(--fg); width:48px; text-align:right; white-space:nowrap; overflow:hidden; }
+.row select {
+  font-family:'Courier New',monospace; font-size:9px; letter-spacing:.06em;
+  background:var(--dim); border:1px solid var(--muted); color:var(--fg);
+  padding:2px 3px; width:78px; flex-shrink:0;
+}
+.row select:hover { border-color:var(--accent); }
+/* ── Buttons ── */
+btn, .btn {
+  font-family:'Courier New',monospace; font-size:9px; letter-spacing:.10em;
+  background:none; border:1px solid var(--muted); color:var(--muted);
+  padding:4px 10px; cursor:pointer; transition:all .12s;
+}
+.btn:hover { border-color:var(--accent); color:var(--accent); }
+.btn.lit   { border-color:var(--accent); color:#fff; background:#00ff8818; box-shadow:0 0 7px #00ff8830; }
+.btn.play  { border-color:var(--accent); color:var(--accent); font-size:11px; padding:5px 16px; }
+.btn.play.lit { background:#00ff8828; color:#fff; }
+/* ── Step sequencer grid (melody) ── */
+.seq-grid {
+  display:grid;
+  grid-template-rows:repeat(6,26px);
+  grid-template-columns:repeat(16,1fr);
+  gap:2px;
+}
+.seq-cell {
+  border-radius:2px; cursor:pointer;
+  background:var(--dim); border:1px solid #181820;
+  transition:background .08s;
+}
+.seq-cell.on { background:var(--on-col,#00ff8880); border-color:var(--on-col,#00ff88); }
+.seq-cell.cursor { outline:1px solid #fff; }
+.seq-cell.on.cursor { outline:2px solid #fff; }
+/* ── Drum grid ── */
+.drum-grid {
+  display:grid;
+  /* 40px × 4 rows + 3×2px gaps = 166px, exactly matching .seq-grid's
+     6×26px + 5×2px — same total height so the two grids (now siblings in
+     the same row) don't leave one looking shorter than the other. */
+  grid-template-rows:repeat(4,40px);
+  grid-template-columns:repeat(16,1fr);
+  gap:2px;
+}
+.drum-cell {
+  border-radius:2px; cursor:pointer;
+  background:var(--dim); border:1px solid #181820;
+  transition:background .08s;
+  position:relative;
+}
+.drum-cell.on  { background:var(--d-col,#ff662280); border-color:var(--d-col,#ff6622); }
+.drum-cell.cursor { outline:1px solid rgba(255,255,255,0.45); }
+.drum-cell.on.cursor { outline:2px solid #fff; }
+/* ── Waveform buttons ── */
+.wave-row { display:flex; gap:4px; flex-wrap:wrap; }
+/* ── Presets ── */
+.preset-row { display:flex; gap:4px; flex-wrap:wrap; }
+/* ── Freq bar ── */
+.freq-bars {
+  display:flex; gap:2px; align-items:flex-end; height:36px;
+  padding:4px 0;
+}
+.freq-bar {
+  flex:1; background:var(--accent); border-radius:1px 1px 0 0;
+  transition:height .08s;
+  min-height:1px; opacity:0.6;
+}
+/* ── Note labels ── */
+.note-names { display:flex; gap:2px; }
+.note-name {
+  flex:1; font-size:7px; color:var(--muted); text-align:center;
+  border-top:1px solid var(--dim); padding-top:2px;
+}
+.note-name.active { color:var(--accent); }
+/* ── Visualizer pane ── */
+#vizCanvas { image-rendering:pixelated; cursor:grab; }
+#vizSection:fullscreen,#vizSection:-webkit-full-screen {
+  background:#000; display:flex; flex-direction:column; padding:8px 14px;
+}
+#vizSection:fullscreen #vizCanvas,#vizSection:-webkit-full-screen #vizCanvas {
+  flex:1; height:auto !important;
+}
+#vizResizeHandle {
+  position:absolute; top:0; left:0; right:0; height:7px;
+  cursor:row-resize; z-index:10; background:transparent;
+  border-top:1px solid var(--dim); transition:background .15s;
+}
+#vizResizeHandle:hover, #vizResizeHandle.dragging { background:#00ff8812; border-top-color:#00ff8840; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>ORBIT SEQUENCER &nbsp;·&nbsp; {1,2,4,8,7,5} × 55 Hz &nbsp;·&nbsp; TR-808</h1>
+  <div class="transport">
+    <button class="btn" id="backBtn" onclick="window.parent?.postMessage('orbit:back','*')" style="opacity:0.5;padding:4px 8px">← BACK</button>
+    <span id="bpmVal" style="font-size:9px;color:var(--muted)">120 BPM</span>
+    <input type="range" id="bpmSlider" min="60" max="240" value="120" style="width:80px">
+    <button class="btn play" id="playBtn">▶ PLAY</button>
+    <button class="btn" id="fireBtn" title="Drone + off-grid pluck + measure-boundary pop — the fire scene">FIRE</button>
+    <span style="display:flex;align-items:center;gap:5px;font-size:9px;color:var(--muted);margin-left:8px" title="Real-time clip diagnostics — measures the actual output signal, not source code">
+      <span id="clipLed" style="width:8px;height:8px;border-radius:50%;border:1px solid var(--muted);display:inline-block;transition:background .05s"></span>
+      clips: <span id="clipCount" style="color:var(--fg)">0</span>
+      &nbsp;|&nbsp; comp: <span id="reductionVal" style="color:var(--fg)">0.0 dB</span>
+    </span>
+  </div>
+</header>
+
+<canvas id="main" style="display:none"></canvas>
+
+<div class="panel">
+  <!-- Waveform -->
+  <div class="section">
+    <div class="section-title">WAVEFORM</div>
+    <div class="wave-row" id="waveRow">
+      <button class="btn lit" data-wave="triangle">TRI</button>
+      <button class="btn" data-wave="sine">SINE</button>
+      <button class="btn" data-wave="sawtooth">SAW</button>
+      <button class="btn" data-wave="square">SQ</button>
+    </div>
+  </div>
+
+  <!-- Synth / EQ / Filters — one row, was three stacked sections eating height -->
+  <div class="section-group">
+  <div class="section-title">SYNTH · EQ · FILTERS</div>
+  <div class="section-row">
+  <div class="section">
+    <div class="section-title">SYNTH</div>
+    <div class="row"><label>octave</label>
+      <button class="btn" id="octDn">−</button>
+      <span id="octVal" style="font-size:10px;color:var(--fg);width:24px;text-align:center">0</span>
+      <button class="btn" id="octUp">+</button>
+    </div>
+    <div class="row"><label>reverb</label>
+      <input type="range" id="reverbSlider" min="0" max="1" step=".01" value=".25">
+      <span class="val" id="reverbVal">25%</span>
+    </div>
+    <div class="row"><label>bass</label>
+      <input type="range" id="bassSlider" min="0" max="1" step=".01" value=".18">
+      <span class="val" id="bassVal">18%</span>
+    </div>
+    <div class="row"><label>detune</label>
+      <input type="range" id="detuneSlider" min="0" max="20" step=".5" value="3">
+      <span class="val" id="detuneVal">3¢</span>
+    </div>
+    <div class="row"><label>attack</label>
+      <input type="range" id="attackSlider" min="0.1" max="4" step=".1" value="1">
+      <span class="val" id="attackVal">1.0x</span>
+    </div>
+  </div>
+
+  <!-- EQ -->
+  <div class="section">
+    <div class="section-title">EQ</div>
+    <div class="row"><label>bass</label>
+      <input type="range" id="eqBassSlider" min="-12" max="12" step="0.5" value="0">
+      <span class="val" id="eqBassVal">0 dB</span>
+    </div>
+    <div class="row"><label>mid</label>
+      <input type="range" id="eqMidSlider" min="-12" max="12" step="0.5" value="0">
+      <span class="val" id="eqMidVal">0 dB</span>
+    </div>
+    <div class="row"><label>treble</label>
+      <input type="range" id="eqTrebSlider" min="-12" max="12" step="0.5" value="0">
+      <span class="val" id="eqTrebVal">0 dB</span>
+    </div>
+  </div>
+
+  <!-- Per-voice filters -->
+  <div class="section section-wide">
+    <div class="section-title">FILTERS &nbsp;<span style="color:#1e1e28;font-size:8px">per voice — type + cutoff</span></div>
+    <div class="row"><label>melody</label>
+      <select id="filterType_melody"></select>
+      <input type="range" id="filterFreq_melody" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_melody">20000Hz</span>
+    </div>
+    <div class="row"><label>bass</label>
+      <select id="filterType_bass"></select>
+      <input type="range" id="filterFreq_bass" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_bass">20000Hz</span>
+    </div>
+    <div class="row"><label>kick</label>
+      <select id="filterType_kick"></select>
+      <input type="range" id="filterFreq_kick" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_kick">20000Hz</span>
+    </div>
+    <div class="row"><label>snare tone</label>
+      <select id="filterType_snareTone"></select>
+      <input type="range" id="filterFreq_snareTone" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_snareTone">20000Hz</span>
+    </div>
+    <div class="row"><label>snare noise</label>
+      <select id="filterType_snareNoise"></select>
+      <input type="range" id="filterFreq_snareNoise" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_snareNoise">1800Hz</span>
+    </div>
+    <div class="row"><label>hihat</label>
+      <select id="filterType_hihat"></select>
+      <input type="range" id="filterFreq_hihat" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_hihat">9500Hz</span>
+    </div>
+    <div class="row"><label>clap</label>
+      <select id="filterType_clap"></select>
+      <input type="range" id="filterFreq_clap" min="0" max="100" step="1" value="50">
+      <span class="val" id="filterFreqVal_clap">1100Hz</span>
+    </div>
+  </div>
+  </div>
+  </div>
+
+  <!-- TR-808 Drums + Step Sequencer — one row, one collapsible group -->
+  <div class="section-group">
+  <div class="section-title">TR-808 · STEP SEQUENCER</div>
+  <div class="section-row">
+  <div class="section">
+    <div class="section-title">TR-808 &nbsp;<span style="color:#1e1e28;font-size:8px">kick · snare · hat · clap</span></div>
+    <div class="row">
+      <label>vol</label>
+      <input type="range" id="drumVolSlider" min="0" max="1" step=".01" value=".70">
+      <span class="val" id="drumVolVal">70%</span>
+    </div>
+    <div class="row" style="margin-bottom:6px">
+      <button class="btn" data-dpreset="four4">4/4</button>
+      <button class="btn" data-dpreset="waltz">WALTZ</button>
+      <button class="btn" data-dpreset="orbit_d">ORBIT</button>
+      <button class="btn" data-dpreset="clear_d">CLEAR</button>
+    </div>
+    <div style="display:grid;grid-template-columns:34px 1fr;gap:4px">
+      <div id="drumRowLabels" style="display:flex;flex-direction:column;gap:2px"></div>
+      <div class="drum-grid" id="drumSeqGrid"></div>
+    </div>
+  </div>
+  <div class="section">
+    <div class="section-title">STEP SEQUENCER &nbsp;<span style="color:#1e1e2e">16 steps · 6 orbit notes</span></div>
+    <div class="preset-row" id="presets" style="margin-bottom:6px">
+      <button class="btn" data-preset="zen">ZEN</button>
+      <button class="btn" data-preset="orbit">ORBIT</button>
+      <button class="btn" data-preset="bass">BASS</button>
+      <button class="btn" data-preset="scatter">SCATTER</button>
+      <button class="btn" data-preset="clear">CLEAR</button>
+    </div>
+    <div style="display:grid;grid-template-columns:34px 1fr;gap:4px">
+      <div id="rowLabels" style="display:flex;flex-direction:column;gap:2px"></div>
+      <div class="seq-grid" id="seqGrid"></div>
+    </div>
+  </div>
+  </div>
+  </div>
+
+  <!-- Keyboard + Saved Presets — one row, one collapsible group -->
+  <div class="section-group">
+  <div class="section-title">KEYBOARD · SAVED PRESETS</div>
+  <div class="section-row">
+  <div class="section">
+    <div class="section-title">KEYBOARD</div>
+    <canvas id="keyCanvas" style="width:100%;height:56px;display:block;border-radius:2px"></canvas>
+  </div>
+  <div class="section">
+    <div class="section-title">SAVED PRESETS</div>
+    <div class="row" style="gap:4px">
+      <input id="presetNameIn" type="text" placeholder="name…" maxlength="40"
+        style="flex:1;background:var(--dim);border:1px solid var(--muted);color:var(--fg);font-family:'Courier New',monospace;font-size:9px;padding:3px 6px;outline:none;">
+      <button class="btn" id="savePresetBtn">SAVE</button>
+    </div>
+    <div id="savedPresetList" style="display:flex;flex-direction:column;gap:3px;margin-top:4px"></div>
+  </div>
+  </div>
+  </div>
+
+  <!-- Visualizer -->
+  <div class="section" id="vizSection" style="padding:0 14px 10px;flex-shrink:0;position:relative">
+    <div id="vizResizeHandle" title="Drag to resize"></div>
+    <div class="section-title" style="padding-top:8px">
+      <span>VISUALIZER</span>
+      <button id="vizFsBtn" onclick="toggleVizFullscreen();event.stopPropagation()"
+        style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;padding:0 2px;opacity:0.55;line-height:1"
+        title="Fullscreen (F)">⛶</button>
+    </div>
+    <div class="preset-row" id="vizModes" style="margin-bottom:5px">
+      <button class="btn lit" data-viz="tunnel">TUNNEL</button>
+      <button class="btn" data-viz="bars">BARS</button>
+      <button class="btn" data-viz="mirror">MIRROR</button>
+      <button class="btn" data-viz="scope">SCOPE</button>
+      <button class="btn" data-viz="spiral">SPIRAL</button>
+    </div>
+    <canvas id="vizCanvas" style="width:100%;height:160px;display:block;border-radius:2px;background:#000"></canvas>
+    <div style="font-size:7px;color:var(--muted);opacity:.4;margin-top:3px;letter-spacing:.08em">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset</div>
+  </div>
+</div>
+
+<script>
+// ── Orbit ─────────────────────────────────────────────────────────────────────
+const ORBIT      = [1,2,4,8,7,5];
+const BASE       = 55;
+const FREQS      = ORBIT.map(v => v * BASE);
+const NOTE_NAMES = ['A1','A2','A3','A4','G4♮','C#4'];
+const ORBIT_KEYS = [
+  { row:0, isBlack:false, wkIdx:5   },
+  { row:1, isBlack:false, wkIdx:12  },
+  { row:2, isBlack:false, wkIdx:19  },
+  { row:3, isBlack:false, wkIdx:26  },
+  { row:4, isBlack:false, wkIdx:25  },
+  { row:5, isBlack:true,  bkPos:21.5},
+];
+const STEP_HUES = [0.33,0.50,0.62,0.83,0.10,0.23];
+function stepColor(i, l=0.55) {
+  const h=STEP_HUES[i]; return `hsl(${Math.round(h*360)},90%,${Math.round(l*100)}%)`;
+}
+
+// ── Sequencer state ───────────────────────────────────────────────────────────
+const ROWS=6, STEPS=16;
+let grid = Array.from({length:ROWS}, () => Array(STEPS).fill(false));
+let curStep = 0;
+let octave  = 0;
+
+// ── Drum state ────────────────────────────────────────────────────────────────
+const DRUM_NAMES = ['KICK','SNR','HAT','CLAP'];
+const DRUM_COLS  = ['#ff6622','#ffcc22','#44bbff','#ff66cc'];
+const D_ROWS = 4;
+let drumSeq = Array.from({length:D_ROWS}, () => Array(STEPS).fill(false));
+let drumVol = 0.70;
+const drumCells = [];
+
+// ── FIRE mode ────────────────────────────────────────────────────────────────
+// Built from tonight's back-to-back/pressure-relaxation math (same formula
+// as WALTZ in s7.js), reused here as audio instead of angle. "Temperature
+// oscillation" = a drone's filter cutoff exponentially approaching one of
+// two targets, alternating every measure, never quite arriving before it
+// flips — the same never-settles character the visual drag has. "Pluck
+// offset by the golden angle" = a second voice landing at a fixed
+// fractional-step offset derived from GLD instead of on the beat grid, so
+// it never locks into the main rhythm. "Popping" = a real decrepitation
+// event (the properly zero-start-ramped noise burst technique from
+// tonight's actual click bugfixes) fired at each measure boundary, on
+// purpose this time.
+const GLD = Math.PI * (3 - Math.sqrt(5));          // golden angle — same constant as s7.js
+const FIRE_MEASURE_STEPS = 4;                       // one "measure" = 4 steps, matches the existing bass phrase length
+const FIRE_K = 0.12;                                // relaxation rate for setTargetAtTime (time constant = 1/FIRE_K)
+let fireMode = false;
+let fireDrone = null;   // { osc, filt, gain }
+let fireMeasureN = 0;
+
+function startFireDrone() {
+  if (!audioCtx || fireDrone) return;
+  const osc = audioCtx.createOscillator();
+  const filt = audioCtx.createBiquadFilter();
+  const gain = audioCtx.createGain();
+  osc.type = 'sawtooth';
+  osc.frequency.value = BASE / 2;   // an octave under the root — the hum, not a note
+  filt.type = 'lowpass';
+  filt.frequency.value = 400;       // starting "cool" — first measure boundary will start the oscillation
+  filt.Q.value = 0.7;
+  gain.gain.value = 0;
+  osc.connect(filt); filt.connect(gain); gain.connect(dryGain);
+  osc.start();
+  // Drone fades in over a real attack, not a click — same reasoning as
+  // every other voice tonight, this one's just much longer since it's
+  // meant to sit underneath everything, not announce itself.
+  gain.gain.setValueAtTime(0, audioCtx.currentTime);
+  gain.gain.linearRampToValueAtTime(0.05, audioCtx.currentTime + 0.8);
+  fireDrone = { osc, filt, gain };
+}
+
+function stopFireDrone() {
+  if (!fireDrone) return;
+  const { osc, filt, gain } = fireDrone;
+  const t = audioCtx.currentTime;
+  gain.gain.cancelScheduledValues(t);
+  gain.gain.setValueAtTime(gain.gain.value, t);
+  gain.gain.linearRampToValueAtTime(0, t + 0.3);
+  osc.stop(t + 0.35);
+  fireDrone = null;
+}
+
+// Fires once per measure from scheduleStep. Flips the drone's filter
+// target and fires a pop at the same instant — tension closing and the
+// bell striking are the same event, same as the TANGO changeup.
+function fireMeasureBoundary(time) {
+  if (!fireDrone) return;
+  const hot = (fireMeasureN % 2 === 0);
+  const target = hot ? 2200 : 400;
+  // cancelAndHoldAtTime, not cancelScheduledValues — the plain cancel call
+  // only removes future automation events, it doesn't guarantee the
+  // AudioParam holds its current interpolated value at the cancel point.
+  // Starting a new setTargetAtTime right after a plain cancel is a known
+  // discontinuity risk across browsers — exactly an extra, unintended pop
+  // layered on top of the deliberate one, every single measure.
+  fireDrone.filt.frequency.cancelAndHoldAtTime(time);
+  fireDrone.filt.frequency.setTargetAtTime(target, time, 1 / FIRE_K);
+  fireMeasureN++;
+
+  // The pop — reuses the exact zero-start-ramp pattern from the earlier
+  // click bugfix, now used on purpose as the decrepitation hit.
+  const frames = Math.floor(audioCtx.sampleRate * 0.06);
+  const buf = audioCtx.createBuffer(1, frames, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0; i<frames; i++) d[i] = Math.random()*2-1;
+  const src = audioCtx.createBufferSource();
+  const bpf = audioCtx.createBiquadFilter(); bpf.type='bandpass'; bpf.frequency.value=hot?3000:900; bpf.Q.value=2;
+  const env = audioCtx.createGain();
+  src.buffer = buf;
+  env.gain.setValueAtTime(0, time);
+  env.gain.linearRampToValueAtTime(0.30, time + 0.001);
+  env.gain.exponentialRampToValueAtTime(0.001, time + 0.055);
+  src.connect(bpf); bpf.connect(env); env.connect(masterGain);
+  src.start(time); src.stop(time + 0.06);
+}
+
+// The offset pluck — never lands on the beat grid. Fires once per measure
+// (same cadence as the bass) but at a fixed fractional-measure offset
+// derived from the golden angle rather than on any of the 4 step
+// positions, so its timing relationship to the main grid never lines up
+// with a subdivision — the same non-resonant reasoning GLD is used for
+// everywhere else tonight.
+function firePluck(measureStartTime, measureDuration) {
+  const offsetFrac = (GLD % (Math.PI*2)) / (Math.PI*2);   // GLD as a fraction of a full turn, ~0.382
+  const t = measureStartTime + offsetFrac * measureDuration;
+  const freq = FREQS[Math.floor(Math.random()*ROWS)] * 2;  // an octave up — the pluck rides above the drone
+  const osc = audioCtx.createOscillator();
+  const filt = audioCtx.createBiquadFilter();
+  const env = audioCtx.createGain();
+  osc.type = 'triangle'; osc.frequency.value = freq;
+  filt.type = 'bandpass'; filt.frequency.value = freq*2; filt.Q.value = 4;
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(0.10, t + attackTime(freq, 0.18));
+  env.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+  osc.connect(filt); filt.connect(env); env.connect(dryGain); env.connect(wetGain);
+  osc.start(t); osc.stop(t + 0.2);
+}
+
+// ── Melody presets ────────────────────────────────────────────────────────────
+const PRESETS = {
+  orbit: [
+    [0,0],[1,2],[2,4],[3,6],[4,10],[5,12],
+    [0,8],[1,10],[2,12],[3,14],
+  ],
+  zen: [
+    [0,0],[0,4],[0,6],
+    [1,1],[1,5],
+    [2,2],[2,7],
+    [3,3],
+    [5,8],[5,10],
+    [4,9],[4,13],
+    [3,11],[3,15],
+    [2,12],
+    [1,14],
+    [0,8],[0,12],
+  ],
+  bass: [
+    [0,0],[0,4],[0,8],[0,12],
+    [1,2],[1,6],[1,10],[1,14],
+    [2,1],[2,9],
+  ],
+  scatter: [
+    [5,0],[4,1],[3,2],[2,3],[1,4],[0,5],
+    [5,6],[4,7],[3,8],[2,9],[1,10],[0,11],
+    [5,12],[4,13],[3,14],[2,15],
+  ],
+  clear: [],
+};
+
+function applyPreset(name) {
+  grid = Array.from({length:ROWS}, () => Array(STEPS).fill(false));
+  (PRESETS[name]||[]).forEach(([r,s]) => { if(r<ROWS&&s<STEPS) grid[r][s]=true; });
+  renderGrid();
+}
+
+// ── Drum presets ──────────────────────────────────────────────────────────────
+const DRUM_PRESETS = {
+  // Classic 4/4: kick on 1&3, snare on 2&4, hi-hat on 8th notes
+  four4: [
+    [0,0],[0,8],
+    [1,4],[1,12],
+    [2,0],[2,2],[2,4],[2,6],[2,8],[2,10],[2,12],[2,14],
+    [3,4],[3,12],
+  ],
+  // 6/8 waltz: kick on beats 1 & 4, snare light, hat on each dotted-quarter pulse
+  waltz: [
+    [0,0],[0,6],
+    [1,9],
+    [2,0],[2,3],[2,6],[2,9],[2,12],[2,15],
+    [3,6],
+  ],
+  // Orbit-mapped: drums follow the orbit's ×2 mod 9 step positions
+  orbit_d: [
+    [0,0],[0,4],[0,10],
+    [1,8],[1,13],
+    [2,0],[2,2],[2,6],[2,8],[2,12],[2,14],
+    [3,4],[3,10],
+  ],
+  clear_d: [],
+};
+
+function applyDrumPreset(name) {
+  drumSeq = Array.from({length:D_ROWS}, () => Array(STEPS).fill(false));
+  (DRUM_PRESETS[name]||[]).forEach(([r,s]) => { if(r<D_ROWS&&s<STEPS) drumSeq[r][s]=true; });
+  renderDrumGrid();
+}
+
+// ── Active preset tracking ────────────────────────────────────────────────────
+let _activePreset = { name: null, source: null };
+
+function setPresetActive(name, source) {
+  _activePreset = { name, source };
+  updatePresetGlows();
+}
+function clearPresetActive() {
+  if (!_activePreset.name) return;
+  _activePreset = { name: null, source: null };
+  updatePresetGlows();
+}
+function updatePresetGlows() {
+  document.querySelectorAll('[data-preset]').forEach(b => {
+    b.classList.toggle('lit', _activePreset.source === 'melody' && b.dataset.preset === _activePreset.name);
+  });
+  document.querySelectorAll('.preset-load-btn').forEach(b => {
+    b.classList.toggle('lit', _activePreset.source === 'saved' && b.dataset.presetName === _activePreset.name);
+  });
+}
+
+// ── Build melody sequencer UI ─────────────────────────────────────────────────
+const seqGrid   = document.getElementById('seqGrid');
+const rowLabels = document.getElementById('rowLabels');
+const cells     = [];
+
+for (let r=0; r<ROWS; r++) {
+  const lbl = document.createElement('div');
+  lbl.style.cssText=`height:26px;display:flex;align-items:center;justify-content:flex-end;padding-right:6px;font-size:8px;color:${stepColor(r,.55)}`;
+  lbl.textContent = `${ORBIT[r]}×`;
+  rowLabels.appendChild(lbl);
+
+  cells.push([]);
+  for (let s=0; s<STEPS; s++) {
+    const cell = document.createElement('div');
+    cell.className='seq-cell';
+    cell.style.setProperty('--on-col', stepColor(r,.55));
+    cell.dataset.r=r; cell.dataset.s=s;
+    cell.addEventListener('click', () => { grid[r][s]=!grid[r][s]; renderGrid(); clearPresetActive(); });
+    seqGrid.appendChild(cell);
+    cells[r].push(cell);
+  }
+}
+
+function renderGrid() {
+  for (let r=0; r<ROWS; r++)
+    for (let s=0; s<STEPS; s++) {
+      cells[r][s].classList.toggle('on', grid[r][s]);
+      cells[r][s].classList.toggle('cursor', s===curStep);
+    }
+}
+
+// ── Build drum sequencer UI ───────────────────────────────────────────────────
+const drumSeqGrid   = document.getElementById('drumSeqGrid');
+const drumRowLabels = document.getElementById('drumRowLabels');
+
+for (let dr=0; dr<D_ROWS; dr++) {
+  const lbl = document.createElement('div');
+  lbl.style.cssText=`height:20px;display:flex;align-items:center;justify-content:flex-end;padding-right:5px;font-size:7px;color:${DRUM_COLS[dr]};opacity:0.75`;
+  lbl.textContent = DRUM_NAMES[dr];
+  drumRowLabels.appendChild(lbl);
+
+  drumCells.push([]);
+  for (let s=0; s<STEPS; s++) {
+    const cell = document.createElement('div');
+    cell.className='drum-cell';
+    cell.style.setProperty('--d-col', DRUM_COLS[dr]+'99');
+    cell.dataset.dr=dr; cell.dataset.s=s;
+    cell.addEventListener('click', () => { drumSeq[dr][s]=!drumSeq[dr][s]; renderDrumGrid(); clearPresetActive(); });
+    drumSeqGrid.appendChild(cell);
+    drumCells[dr].push(cell);
+  }
+}
+
+function renderDrumGrid() {
+  for (let dr=0; dr<D_ROWS; dr++)
+    for (let s=0; s<STEPS; s++) {
+      drumCells[dr][s].classList.toggle('on', drumSeq[dr][s]);
+      drumCells[dr][s].classList.toggle('cursor', s===curStep);
+    }
+}
+
+// ── Note level tracker ────────────────────────────────────────────────────────
+const barLevels = Array(ROWS).fill(0);
+
+// ── Keyboard canvas ───────────────────────────────────────────────────────────
+const keyCanvas = document.getElementById('keyCanvas');
+const kctx = keyCanvas ? keyCanvas.getContext('2d') : null;
+function resizeKeyCanvas() {
+  if (!keyCanvas) return;
+  keyCanvas.width  = Math.round(keyCanvas.offsetWidth  * devicePixelRatio);
+  keyCanvas.height = Math.round(keyCanvas.offsetHeight * devicePixelRatio);
+}
+resizeKeyCanvas();
+if (keyCanvas) new ResizeObserver(resizeKeyCanvas).observe(keyCanvas);
+
+function drawKeys() {
+  if (!kctx || !keyCanvas.width) return;
+  const KW = keyCanvas.width, KH = keyCanvas.height;
+  kctx.clearRect(0, 0, KW, KH);
+  const kw = KW / ROWS;
+  const textH = Math.ceil(KH * 0.30);
+  const keyH  = KH - textH;
+  for (let i = 0; i < ROWS; i++) {
+    const lv = Math.min(barLevels[i], 1);
+    const x  = Math.round(i * kw) + 1;
+    const w  = Math.round((i + 1) * kw) - x - 1;
+    kctx.fillStyle = stepColor(i, 0.09 + lv * 0.52);
+    kctx.fillRect(x, 0, w, keyH);
+    if (lv > 0.05) {
+      kctx.fillStyle = stepColor(i, 0.78);
+      kctx.fillRect(x, 0, w, Math.max(2, keyH * lv * 0.32));
+    }
+    kctx.fillStyle = lv > 0.15 ? '#ffffff' : stepColor(i, 0.42);
+    kctx.font = `${Math.max(7, Math.round(KH * 0.18))}px "Courier New"`;
+    kctx.textAlign = 'center'; kctx.textBaseline = 'middle';
+    kctx.fillText(NOTE_NAMES[i], x + w / 2, keyH + textH / 2);
+  }
+}
+
+// ── Web Audio ─────────────────────────────────────────────────────────────────
+let audioCtx=null, masterGain, wetGain, dryGain, delayL, delayR, limiter, hardLimiter;
+let eqBass, eqMid, eqTreb;
+let analyser=null, freqData=null, waveData=null;
+let waveform='triangle', reverbAmt=0.25, bassAmt=0.18, detuneAmt=3, attackScale=1.0;
+
+// ── Clip diagnostics ─────────────────────────────────────────────────────────
+// Four rounds of source-reading fixes and it's reportedly still happening —
+// time to stop guessing and actually measure the real output signal instead
+// of theorizing about it. Two separate things get watched, because "clips/
+// pops/grating" could mean either or both:
+//   1. True digital ceiling hits on the FINAL signal, after the waveshaper.
+//      The tanh curve mathematically bounds output to exactly [-1,1] at its
+//      domain edges, so real overs here should be rare-to-none — UNLESS the
+//      WaveShaperNode's 4x oversampling is causing overshoot/ringing from
+//      its internal upsampling filter, which is a real, documented
+//      possibility distinct from anything fixed so far.
+//   2. How much the compressor is squashing at any given moment
+//      (DynamicsCompressorNode.reduction, a live readable dB value). If
+//      it's constantly engaged rather than only on real peaks, that's
+//      audible as coloration/"grating" even with zero true clipping —
+//      a completely different failure mode than an unprevented over.
+let clipCount = 0, clipDetector = null;
+function installClipDetector() {
+  if (!audioCtx || !hardLimiter || clipDetector) return;
+  const sp = audioCtx.createScriptProcessor(1024, 1, 1);
+  let lastLogTime = -1;
+  sp.onaudioprocess = (e) => {
+    const data = e.inputBuffer.getChannelData(0);
+    let peak = 0;
+    for (let i = 0; i < data.length; i++) {
+      const a = Math.abs(data[i]);
+      if (a > peak) peak = a;
+    }
+    const led = document.getElementById('clipLed');
+    const countEl = document.getElementById('clipCount');
+    const redEl = document.getElementById('reductionVal');
+    if (redEl && limiter) redEl.textContent = limiter.reduction.toFixed(1) + ' dB';
+    if (peak >= 0.98) {
+      clipCount++;
+      if (countEl) countEl.textContent = clipCount;
+      const now = audioCtx.currentTime;
+      if (now - lastLogTime > 0.05) {  // throttle console spam, not detection
+        console.warn('[CLIP]', now.toFixed(3) + 's', 'peak=' + peak.toFixed(4), 'reduction=' + (limiter?limiter.reduction.toFixed(1):'?') + 'dB');
+        lastLogTime = now;
+      }
+      if (led) {
+        led.style.background = '#ff3333';
+        clearTimeout(led._t);
+        led._t = setTimeout(() => { led.style.background = ''; }, 150);
+      }
+    }
+  };
+  // Output is left unwritten (silent) — this taps the signal for measurement
+  // only, it does not add anything audible back into the chain. Still has
+  // to route to destination for onaudioprocess to fire reliably in every
+  // browser — a known ScriptProcessorNode quirk, not a design choice.
+  hardLimiter.connect(sp);
+  sp.connect(audioCtx.destination);
+  clipDetector = sp;
+}
+
+function initAudio() {
+  if (audioCtx) { if (audioCtx.state==='suspended') audioCtx.resume(); return; }
+  audioCtx = new (window.AudioContext||window.webkitAudioContext)();
+  masterGain = audioCtx.createGain(); masterGain.gain.value=0.60;
+  eqBass = audioCtx.createBiquadFilter();
+  eqBass.type='lowshelf'; eqBass.frequency.value=100; eqBass.gain.value=0;
+  eqMid = audioCtx.createBiquadFilter();
+  eqMid.type='peaking'; eqMid.frequency.value=1000; eqMid.Q.value=1; eqMid.gain.value=0;
+  eqTreb = audioCtx.createBiquadFilter();
+  eqTreb.type='highshelf'; eqTreb.frequency.value=8000; eqTreb.gain.value=0;
+  // Limiter on the master bus — kick+snare+hats+bass+melody(+octave layer)
+  // can all land on the same beat and sum well past 0dBFS with nothing to
+  // catch it, which is what hard-clips into that harsh, low-bitrate-mp3-ish
+  // crunch. The step sequencer has 6 rows that can all fire on the same
+  // step (chords), each with its own detuned octave layer, plus drums and
+  // bass on top — worst case that's 2-3x full scale hitting this node, and
+  // -6dB/12:1 alone doesn't give a DynamicsCompressorNode enough headroom
+  // to tame that without still passing through overs on fast transients
+  // (a compressor has real attack time, however short; a kick hit can be
+  // faster than 3ms). Lower threshold buys more room for the compressor to
+  // work with before things get audibly squashed.
+  limiter = audioCtx.createDynamicsCompressor();
+  // release was 0.15s — longer than a 16th-note step at the default 120bpm
+  // (60/(120*4) = 0.125s), so the compressor never fully recovered between
+  // consecutive hits and rode gain reduction up and down in sync with the
+  // beat: audible pumping, which reads as a rhythmic, bassy thump rather
+  // than the sharp click the earlier envelope fix addressed — two
+  // different artifacts, this is the second one. Faster release clears
+  // well within one step at any reasonable tempo; softer ratio/threshold
+  // since the waveshaper after this is already the hard ceiling, so the
+  // compressor doesn't need to work as hard on its own.
+  // Measured, not guessed: with the settings below at -18/8:1, the clip
+  // detector showed reduction jumping -2 to -6dB rapidly on ordinary
+  // material while true clips stayed at 0 the whole time — meaning the
+  // waveshaper safety net was already catching every real peak on its
+  // own, and the compressor was doing constant, audible, unnecessary work
+  // on normal-level hits. That fast reduction cycling is what read as
+  // "grating." Threshold raised close to the waveshaper's own ceiling so
+  // the compressor only engages on genuinely loud moments (chords+drums
+  // stacking), not on everyday hits; ratio eased since the waveshaper
+  // remains the real backstop regardless of what happens here.
+  limiter.threshold.value = -6; limiter.knee.value = 6;
+  limiter.ratio.value = 4; limiter.attack.value = 0.002; limiter.release.value = 0.04;
+  // Safety net after the compressor: a soft-clip waveshaper. Unlike a
+  // compressor, a WaveShaperNode applies its curve per-sample with zero
+  // attack/lookahead — it cannot pass an over through, no matter how fast
+  // the transient. tanh saturates smoothly rather than hard-clipping, so
+  // on the rare beat where the compressor still isn't enough this rounds
+  // the peak off instead of the harsh flat-top digital clip that started
+  // this whole conversation.
+  hardLimiter = audioCtx.createWaveShaper();
+  const N = 4096, curve = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const x = (i / (N - 1)) * 2 - 1;
+    curve[i] = Math.tanh(x * 1.5) / Math.tanh(1.5);
+  }
+  hardLimiter.curve = curve;
+  hardLimiter.oversample = '4x';
+  masterGain.connect(eqBass); eqBass.connect(eqMid); eqMid.connect(eqTreb);
+  eqTreb.connect(limiter); limiter.connect(hardLimiter); hardLimiter.connect(audioCtx.destination);
+  installClipDetector();
+  analyser = audioCtx.createAnalyser();
+  analyser.fftSize = 2048; analyser.smoothingTimeConstant = 0.82;
+  masterGain.connect(analyser);
+  freqData = new Uint8Array(analyser.frequencyBinCount);
+  waveData = new Uint8Array(analyser.fftSize);
+  dryGain = audioCtx.createGain(); dryGain.gain.value=1.0; dryGain.connect(masterGain);
+  wetGain = audioCtx.createGain(); wetGain.gain.value=reverbAmt;
+  delayL = audioCtx.createDelay(0.6); delayL.delayTime.value=0.22;
+  delayR = audioCtx.createDelay(0.6); delayR.delayTime.value=0.31;
+  const fbL=audioCtx.createGain(); fbL.gain.value=0.40;
+  const fbR=audioCtx.createGain(); fbR.gain.value=0.36;
+  delayL.connect(fbL); fbL.connect(delayL);
+  delayR.connect(fbR); fbR.connect(delayR);
+  wetGain.connect(delayL); wetGain.connect(delayR);
+  delayL.connect(masterGain); delayR.connect(masterGain);
+}
+
+// Attack scaled to the note's own period, not a flat constant — a fixed
+// 15ms ramp covers 3+ cycles at a normal-register note but only ~1/5 of a
+// cycle down at octave -2 (13.75Hz, 72.7ms period). Gating an oscillator
+// faster than its own period injects real broadband energy — audible as
+// clicking/static, worse the lower the note, which is exactly the pattern
+// reported. Target half a cycle, floor at the original 15ms so normal and
+// high notes are unaffected, cap at a fraction of the note's own duration
+// so a short low note's attack can't run past where its release needs to
+// start.
+// attackScale (user slider) only scales the target-cycle-count portion —
+// the floor and the dur*0.35 cap stay fixed regardless of the slider, so
+// no setting can reintroduce the sub-cycle click this was built to fix,
+// or push the ramp past where the sustain checkpoint needs to land.
+function attackTime(freq, dur, floor=0.015) {
+  return Math.min(Math.max(floor, (0.5 / freq) * attackScale), dur * 0.35);
+}
+
+// Per-voice filters. melody/bass/kick/snareTone had no filter at all before
+// this — default lowpass at 20000Hz is effectively transparent, so adding
+// the control doesn't change how anything already sounded. snareNoise/
+// hihat/clap already had a fixed, hardcoded filter; their defaults here
+// are exactly those old hardcoded values (highpass 1800, highpass 9500,
+// bandpass 1100), same reasoning — the new control shouldn't change the
+// default sound, only make it adjustable. Q is fixed per voice (not user-
+// exposed — one more control per voice was more than this panel needed);
+// clap keeps its original Q=0.7, everything else uses the Web Audio
+// default of 1.
+const voiceFilters = {
+  melody:     { type: 'lowpass',  freq: 20000, q: 1 },
+  bass:       { type: 'lowpass',  freq: 20000, q: 1 },
+  kick:       { type: 'lowpass',  freq: 20000, q: 1 },
+  snareTone:  { type: 'lowpass',  freq: 20000, q: 1 },
+  snareNoise: { type: 'highpass', freq: 1800,  q: 1 },
+  hihat:      { type: 'highpass', freq: 9500,  q: 1 },
+  clap:       { type: 'bandpass', freq: 1100,  q: 0.7 },
+};
+
+function makeVoiceFilter(voiceName) {
+  const cfg = voiceFilters[voiceName];
+  const f = audioCtx.createBiquadFilter();
+  f.type = cfg.type;
+  f.frequency.value = cfg.freq;
+  f.Q.value = cfg.q;
+  return f;
+}
+
+function playNote(freq, startTime, dur, vol=0.28, wt=waveform) {
+  const osc=audioCtx.createOscillator(), env=audioCtx.createGain();
+  osc.type=wt; osc.frequency.value=freq;
+  const atk = attackTime(freq, dur);
+  if (detuneAmt>0) {
+    const osc2=audioCtx.createOscillator(), env2=audioCtx.createGain();
+    osc2.type=wt; osc2.frequency.value=freq*(1+detuneAmt/1200);
+    env2.gain.value=0.45;
+    osc2.connect(env2); env2.connect(env);
+    osc2.start(startTime); osc2.stop(startTime+dur+0.1);
+  }
+  const filt = makeVoiceFilter('melody');
+  osc.connect(env); env.connect(filt); filt.connect(dryGain); filt.connect(wetGain);
+  env.gain.setValueAtTime(0,startTime);
+  env.gain.linearRampToValueAtTime(vol,startTime+atk);
+  // atk can be clamped up to dur*0.35 for very low notes, past the old
+  // fixed dur*0.30 sustain checkpoint — keeping that checkpoint anchored
+  // to a time before the attack finishes would put automation events out
+  // of chronological order and truncate the ramp mid-flight.
+  env.gain.setValueAtTime(vol*0.80,startTime+Math.max(dur*0.30, atk));
+  env.gain.linearRampToValueAtTime(0,startTime+dur);
+  osc.start(startTime); osc.stop(startTime+dur+0.1);
+}
+
+function playBass(freq, startTime, dur) {
+  const osc=audioCtx.createOscillator(), env=audioCtx.createGain();
+  osc.type='sine'; osc.frequency.value=freq;
+  const filt = makeVoiceFilter('bass');
+  osc.connect(env); env.connect(filt); filt.connect(dryGain);
+  const atk = attackTime(freq, dur, 0.05);
+  env.gain.setValueAtTime(0,startTime);
+  env.gain.linearRampToValueAtTime(bassAmt*0.35,startTime+atk);
+  env.gain.linearRampToValueAtTime(bassAmt*0.15,startTime+Math.max(dur*0.7, atk));
+  env.gain.linearRampToValueAtTime(0,startTime+dur);
+  osc.start(startTime); osc.stop(startTime+dur+0.1);
+}
+
+// ── TR-808 Synthesis ──────────────────────────────────────────────────────────
+// Kick: pitched sine sweep 160→50 Hz with soft saturation (the 808 thump)
+function play808Kick(t) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const env = audioCtx.createGain();
+  const shaper = audioCtx.createWaveShaper();
+  const curve = new Float32Array(256);
+  for (let i=0;i<256;i++) { const x=i/128-1; curve[i]=x/(1+Math.abs(x)*1.8); }
+  shaper.curve = curve;
+
+  osc.type = 'sine';
+  osc.frequency.setValueAtTime(160, t);
+  osc.frequency.exponentialRampToValueAtTime(50, t + 0.38);
+
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(drumVol * 1.15, t + 0.004);
+  env.gain.exponentialRampToValueAtTime(0.001, t + 0.68);
+
+  const filt = makeVoiceFilter('kick');
+  osc.connect(env); env.connect(shaper); shaper.connect(filt); filt.connect(masterGain);
+  osc.start(t); osc.stop(t + 0.72);
+}
+
+// Snare: triangle tone + high-passed noise blend
+function play808Snare(t) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator(), tEnv = audioCtx.createGain();
+  osc.type = 'triangle'; osc.frequency.value = 200;
+  tEnv.gain.setValueAtTime(0, t);
+  tEnv.gain.linearRampToValueAtTime(drumVol * 0.45, t + 0.001);
+  tEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.13);
+  const tFilt = makeVoiceFilter('snareTone');
+  osc.connect(tEnv); tEnv.connect(tFilt); tFilt.connect(masterGain);
+  osc.start(t); osc.stop(t + 0.16);
+
+  const frames = Math.floor(audioCtx.sampleRate * 0.20);
+  const buf = audioCtx.createBuffer(1, frames, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0; i<frames; i++) d[i] = Math.random()*2-1;
+  const src = audioCtx.createBufferSource();
+  const hpf = makeVoiceFilter('snareNoise');
+  const nEnv = audioCtx.createGain();
+  src.buffer = buf;
+  nEnv.gain.setValueAtTime(0, t);
+  nEnv.gain.linearRampToValueAtTime(drumVol * 0.52, t + 0.001);
+  nEnv.gain.exponentialRampToValueAtTime(0.001, t + 0.19);
+  src.connect(hpf); hpf.connect(nEnv); nEnv.connect(masterGain);
+  src.start(t); src.stop(t + 0.22);
+}
+
+// Hi-hat: very short filtered white noise
+function play808Hat(t) {
+  if (!audioCtx) return;
+  const dur = 0.042;
+  const frames = Math.floor(audioCtx.sampleRate * dur);
+  const buf = audioCtx.createBuffer(1, frames, audioCtx.sampleRate);
+  const d = buf.getChannelData(0);
+  for (let i=0; i<frames; i++) d[i] = Math.random()*2-1;
+  const src = audioCtx.createBufferSource();
+  const hpf = makeVoiceFilter('hihat');
+  const env = audioCtx.createGain();
+  src.buffer = buf;
+  env.gain.setValueAtTime(0, t);
+  env.gain.linearRampToValueAtTime(drumVol * 0.35, t + 0.001);
+  env.gain.exponentialRampToValueAtTime(0.001, t + dur * 0.85);
+  src.connect(hpf); hpf.connect(env); env.connect(masterGain);
+  src.start(t); src.stop(t + dur + 0.01);
+}
+
+// Clap: four staggered noise bursts through bandpass (Roland's multi-layer clap)
+function play808Clap(t) {
+  if (!audioCtx) return;
+  [0, 0.008, 0.018, 0.032].forEach(off => {
+    const frames = Math.floor(audioCtx.sampleRate * 0.048);
+    const buf = audioCtx.createBuffer(1, frames, audioCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i=0; i<frames; i++) d[i] = Math.random()*2-1;
+    const src = audioCtx.createBufferSource();
+    const bpf = makeVoiceFilter('clap');
+    const env = audioCtx.createGain();
+    src.buffer = buf;
+    const st = t + off;
+    env.gain.setValueAtTime(0, st);
+    env.gain.linearRampToValueAtTime(drumVol * 0.52, st + 0.001);
+    env.gain.exponentialRampToValueAtTime(0.001, st + 0.052);
+    src.connect(bpf); bpf.connect(env); env.connect(masterGain);
+    src.start(st); src.stop(st + 0.06);
+  });
+}
+
+function schedDrum(row, t) {
+  if (row===0) play808Kick(t);
+  else if (row===1) play808Snare(t);
+  else if (row===2) play808Hat(t);
+  else if (row===3) play808Clap(t);
+}
+
+// ── Scheduler ─────────────────────────────────────────────────────────────────
+let bpm=120, playing=false, schedTimer=null, nextAt=0, schedStepN=0;
+const LOOK=0.12;
+
+function stepDur() { return 60/(bpm*4); }
+
+function scheduleStep(step, time) {
+  const dur = stepDur();
+  // Melody notes
+  for (let r=0; r<ROWS; r++) {
+    if (!grid[r][step]) continue;
+    const mult = Math.pow(2, octave);
+    playNote(FREQS[r]*mult, time, dur*0.85);
+    barLevels[r]=1.0;
+    // Geiss ring pulse at the orbit node for this row
+    const delay = Math.max(0, (time - (audioCtx?.currentTime||0)) * 1000);
+    setTimeout(() => {
+      const [px, py] = orbitXY(r);
+      pulses.push({ x: px, y: py, r: 4, maxR: 130 + Math.random()*60, color: stepColor(r, 0.65) });
+    }, delay);
+  }
+  // Complement-strand bass (3× and 6× base — the violin's ground)
+  if (step%4===0) {
+    const bassFreq=(step<8)?[3*BASE,6*BASE][Math.floor(step/4)%2]:[6*BASE,3*BASE][Math.floor((step-8)/4)%2];
+    playBass(bassFreq*Math.pow(2,octave-1), time, dur*4);
+  }
+  // TR-808 drums
+  for (let dr=0; dr<D_ROWS; dr++) {
+    if (drumSeq[dr][step]) schedDrum(dr, time);
+  }
+  // FIRE mode — measure boundary drives the drone's temperature swing and
+  // the pop; the pluck fires once per measure at its golden-angle offset.
+  if (fireMode && step % FIRE_MEASURE_STEPS === 0) {
+    fireMeasureBoundary(time);
+    firePluck(time, dur * FIRE_MEASURE_STEPS);
+  }
+}
+
+function runSched() {
+  while (nextAt < audioCtx.currentTime + LOOK) {
+    scheduleStep(schedStepN % STEPS, nextAt);
+    schedStepN++;
+    nextAt += stepDur();
+  }
+  schedTimer = setTimeout(runSched, 25);
+}
+
+function startPlay() {
+  initAudio();
+  schedStepN=0; nextAt=audioCtx.currentTime+0.05;
+  runSched(); playing=true;
+}
+function stopPlay() {
+  if(schedTimer) clearTimeout(schedTimer);
+  playing=false; curStep=0; renderGrid(); renderDrumGrid();
+}
+
+// ── Canvas: orbit ring + C60 ──────────────────────────────────────────────────
+const canvas=document.getElementById('main');
+const ctx=canvas.getContext('2d');
+
+const phi=(1+Math.sqrt(5))/2;
+function* signCombos(v){
+  const nz=v.reduce((a,x,i)=>x!==0?[...a,i]:a,[]);
+  for(let m=0;m<(1<<nz.length);m++){const r=[...v];nz.forEach((j,k)=>{if(m&(1<<k))r[j]=-r[j]});yield r}
+}
+function cyc(v){return[[v[0],v[1],v[2]],[v[1],v[2],v[0]],[v[2],v[0],v[1]]]}
+const C60V=[];
+for(const t of[[0,1,3*phi],[1,2+phi,2*phi],[2,1+2*phi,phi]])
+  for(const s of signCombos(t))for(const p of cyc(s))C60V.push(p);
+const C60E=[];
+for(let i=0;i<C60V.length;i++)for(let j=i+1;j<C60V.length;j++){
+  const[a,b,c]=C60V[i],[d,e,f]=C60V[j];
+  if(Math.abs((a-d)**2+(b-e)**2+(c-f)**2-4)<0.01)C60E.push([i,j]);
+}
+
+let c60Ang=0, c60Hue=STEP_HUES[0];
+const CRX=Math.cos(0.38), SRX=Math.sin(0.38);
+
+const OR=90;
+let OX=720, OY=220;
+
+function orbitXY(i){
+  const a=(i/6)*Math.PI*2-Math.PI/2;
+  return[OX+Math.cos(a)*OR,OY+Math.sin(a)*OR];
+}
+
+let W=0,H=0;
+
+// ── Feedback buffer (Geiss warp) ──────────────────────────────────────────────
+const feedCanvas = document.createElement('canvas');
+const feedCtx    = feedCanvas.getContext('2d');
+let   feedReady  = false;
+let   warpPhase  = 0;
+
+// Expanding ring pulses triggered by note/drum hits
+const pulses = []; // { x, y, r, maxR, color }
+
+function resize(){
+  W=800; H=600;
+  feedCanvas.width=W; feedCanvas.height=H;
+  feedReady=false;
+  OX=Math.round(W*0.65); OY=Math.round(H*0.28);
+}
+resize();
+
+let animStep=-1, lastFrame=null;
+// Drum hit flash levels (per row)
+const drumLevels = Array(D_ROWS).fill(0);
+
+function drawFrame(ts) {
+  requestAnimationFrame(drawFrame);
+  const dt=lastFrame?Math.min((ts-lastFrame)/1000,0.05):0;
+  lastFrame=ts;
+  _updateDrumDots();
+
+  if (playing && audioCtx) {
+    const elapsed=(audioCtx.currentTime-(nextAt-schedStepN*stepDur()));
+    animStep = Math.max(0, Math.floor(elapsed/stepDur()) % STEPS);
+  }
+
+  // ── Geiss feedback warp ───────────────────────────────────────────────────
+  warpPhase = (warpPhase + dt * 0.35) % (Math.PI * 2);
+  const audioAct  = barLevels.reduce((a,b)=>a+b,0) / ROWS;
+  const drumAct   = drumLevels.reduce((a,b)=>a+b,0) / D_ROWS;
+  const warpZoom  = 1.0025 + audioAct * 0.004;
+  const warpRot   = Math.sin(warpPhase) * 0.0018 + drumAct * 0.0025;
+  const warpDX    = Math.sin(warpPhase * 0.6) * 0.9;
+  const warpDY    = Math.cos(warpPhase * 0.4) * 0.7;
+
+  ctx.clearRect(0, 0, W, H);
+
+  if (feedReady) {
+    ctx.save();
+    ctx.globalAlpha = 0.80;
+    ctx.translate(W/2 + warpDX, H/2 + warpDY);
+    ctx.rotate(warpRot);
+    ctx.scale(warpZoom, warpZoom);
+    ctx.translate(-W/2, -H/2);
+    ctx.drawImage(feedCanvas, 0, 0);
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  // ── C60 ──────────────────────────────────────────────────────────────────
+  const C60_S=0.33, C60X=W*0.30, C60Y=H*0.50;
+  c60Ang=(c60Ang+dt*0.25)%(Math.PI*2);
+
+  let activeRow=-1;
+  for(let r=0;r<ROWS;r++){if(grid[r][animStep%STEPS]){activeRow=r;break;}}
+  const targetHue=activeRow>=0?STEP_HUES[activeRow]:STEP_HUES[0];
+  let dh=targetHue-c60Hue; if(dh>.5)dh-=1;if(dh<-.5)dh+=1;
+  c60Hue=(c60Hue+dh*Math.min(1,dt*2)+1)%1;
+
+  const cosY=Math.cos(c60Ang),sinY=Math.sin(c60Ang);
+  const rotV=C60V.map(([vx,vy,vz])=>{
+    const y1=vy*CRX-vz*SRX,z1=vy*SRX+vz*CRX;
+    const x2=vx*cosY+z1*sinY,z2=-vx*sinY+z1*cosY;
+    return[x2,y1,z2];
+  });
+  let zMin=Infinity,zMax=-Infinity;
+  for(const[,,z]of rotV){if(z<zMin)zMin=z;if(z>zMax)zMax=z;}
+  const zR=zMax-zMin||1;
+
+  for(let i=0;i<ROWS;i++) barLevels[i]=Math.max(0,barLevels[i]-dt*3.5);
+  for(let i=0;i<D_ROWS;i++) drumLevels[i]=Math.max(0,drumLevels[i]-dt*6);
+
+  const se=C60E.map(([i,j])=>({i,j,z:(rotV[i][2]+rotV[j][2])/2})).sort((a,b)=>a.z-b.z);
+  for(const{i,j,z}of se){
+    const depth=(z-zMin)/zR;
+    const hue=(c60Hue+depth*0.16-0.08+1)%1;
+    // Kick flash pulses the C60
+    const kickPulse = drumLevels[0] * 0.3;
+    const lum=0.04+depth*0.48+kickPulse;
+    ctx.beginPath();
+    ctx.moveTo(C60X+rotV[i][0]*C60_S*W*0.12,C60Y+rotV[i][1]*C60_S*H*0.19);
+    ctx.lineTo(C60X+rotV[j][0]*C60_S*W*0.12,C60Y+rotV[j][1]*C60_S*H*0.19);
+    ctx.strokeStyle=`hsl(${Math.round(hue*360)},90%,${Math.round(lum*100)}%)`;
+    ctx.lineWidth=0.6+depth*0.9; ctx.stroke();
+  }
+  ctx.font='11px "Courier New"'; ctx.fillStyle='rgba(0,255,136,0.25)';
+  ctx.textAlign='center'; ctx.textBaseline='top';
+  ctx.fillText('C₆₀',C60X,C60Y+H*0.19*0.9+8);
+
+  // ── Orbit ring ────────────────────────────────────────────────────────────
+  const curOrbitStep = playing ? Math.floor(animStep / (STEPS/6)) % 6 : -1;
+
+  ctx.beginPath(); ctx.arc(OX,OY,OR,0,Math.PI*2);
+  ctx.strokeStyle='#080810'; ctx.lineWidth=16; ctx.stroke();
+
+  for(let i=0;i<6;i++){
+    const[fx,fy]=orbitXY(i),[tx,ty]=orbitXY((i+1)%6);
+    const mx=(fx+tx)/2,my=(fy+ty)/2;
+    const dx=tx-fx,dy=ty-fy,len=Math.hypot(dx,dy);
+    const cx2=mx+(-dy/len)*OR*0.20,cy2=my+(dx/len)*OR*0.20;
+    const active=(i===curOrbitStep);
+    ctx.beginPath(); ctx.moveTo(fx,fy); ctx.quadraticCurveTo(cx2,cy2,tx,ty);
+    ctx.strokeStyle=active?'#fff':`hsl(${Math.round(STEP_HUES[i]*360)},90%,50%)`;
+    ctx.globalAlpha=active?.88:.30; ctx.lineWidth=active?2.0:1.0; ctx.stroke();
+    ctx.globalAlpha=1;
+  }
+  for(let i=0;i<6;i++){
+    const[x,y]=orbitXY(i);
+    const active=(i===curOrbitStep);
+    const col=`hsl(${Math.round(STEP_HUES[i]*360)},90%,58%)`;
+    if(active){
+      ctx.beginPath();ctx.arc(x,y,22,0,Math.PI*2);
+      const g=ctx.createRadialGradient(x,y,0,x,y,22);
+      g.addColorStop(0,col.replace('hsl','hsla').replace(')',',0.3)'));
+      g.addColorStop(1,'rgba(0,0,0,0)');
+      ctx.fillStyle=g;ctx.fill();
+    }
+    ctx.beginPath();ctx.arc(x,y,active?10:6.5,0,Math.PI*2);
+    ctx.fillStyle=active?'#fff':'#061408'; ctx.strokeStyle=col;
+    ctx.lineWidth=1.5; ctx.fill();ctx.stroke();
+    ctx.font=`bold ${active?14:10}px 'Courier New'`;
+    ctx.fillStyle=active?'#06060e':col;
+    ctx.textAlign='center';ctx.textBaseline='middle';
+    ctx.fillText(String(ORBIT[i]),x,y);
+    if(active){
+      ctx.font='9px "Courier New"'; ctx.fillStyle='rgba(255,255,255,0.55)';
+      ctx.textBaseline='top';
+      ctx.fillText(`${FREQS[i]}Hz`,x,y+14);
+    }
+  }
+  ctx.font='8px "Courier New"'; ctx.fillStyle='rgba(0,229,255,0.35)';
+  ctx.textAlign='center'; ctx.textBaseline='middle';
+  ctx.fillText('×2',OX,OY-7); ctx.fillText('mod 9',OX,OY+7);
+
+  // ── Drum hit indicator (small dots below orbit) ───────────────────────────
+  if (playing) {
+    const drumDotY = OY + OR + 30;
+    const drumDotX = [OX-45, OX-15, OX+15, OX+45];
+    DRUM_COLS.forEach((col, dr) => {
+      const lv = drumLevels[dr];
+      if (lv > 0.02) {
+        ctx.beginPath();
+        ctx.arc(drumDotX[dr], drumDotY, 4+lv*6, 0, Math.PI*2);
+        ctx.fillStyle = col + Math.round(lv*220).toString(16).padStart(2,'0');
+        ctx.fill();
+      }
+      ctx.beginPath();
+      ctx.arc(drumDotX[dr], drumDotY, 3, 0, Math.PI*2);
+      ctx.fillStyle = lv>0.1 ? col : '#0c0c18';
+      ctx.strokeStyle = col+'44';
+      ctx.lineWidth=0.8; ctx.fill(); ctx.stroke();
+      ctx.font='6px "Courier New"'; ctx.textAlign='center';
+      ctx.fillStyle=col+'88'; ctx.textBaseline='top';
+      ctx.fillText(DRUM_NAMES[dr].slice(0,1), drumDotX[dr], drumDotY+6);
+    });
+  }
+
+  // ── Step cursor ───────────────────────────────────────────────────────────
+  curStep = animStep;
+  renderGrid(); renderDrumGrid();
+
+  // ── Keyboard update ───────────────────────────────────────────────────────
+  drawKeys();
+
+  // ── Expanding ring pulses (Geiss) ─────────────────────────────────────────
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i];
+    p.r += (55 + audioAct * 35) * dt;
+    const alpha = Math.max(0, 1 - p.r / p.maxR);
+    if (alpha <= 0) { pulses.splice(i, 1); continue; }
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+    ctx.strokeStyle = p.color.replace(')', `,${(alpha * 0.9).toFixed(2)})`).replace('hsl(','hsla(');
+    ctx.lineWidth = 1.5 * alpha + 0.5;
+    ctx.stroke();
+  }
+
+  // ── Capture frame to feedback buffer ─────────────────────────────────────
+  feedCtx.clearRect(0, 0, W, H);
+  feedCtx.drawImage(canvas, 0, 0);
+  feedReady = true;
+}
+requestAnimationFrame(drawFrame);
+
+
+// ── Intercept drum scheduling to update drumLevels + Geiss pulses ─────────────
+const _origSchedDrum = schedDrum;
+// Dynamic — read current OX/OY which update on resize
+const _drumDotX = [0,0,0,0];
+let _drumDotY = 0;
+function _updateDrumDots(){ _drumDotX[0]=OX-45;_drumDotX[1]=OX-15;_drumDotX[2]=OX+15;_drumDotX[3]=OX+45; _drumDotY=OY+OR+30; }
+function schedDrumWithLevel(row, t) {
+  _origSchedDrum(row, t);
+  const delay = Math.max(0, (t - (audioCtx?.currentTime||0)) * 1000);
+  setTimeout(() => {
+    drumLevels[row] = 1.0;
+    pulses.push({ x: _drumDotX[row], y: _drumDotY, r: 3, maxR: 90 + Math.random()*50, color: `hsl(${[15,45,200,310][row]},90%,65%)` });
+  }, delay);
+}
+
+// ── Control wiring ────────────────────────────────────────────────────────────
+document.getElementById('playBtn').addEventListener('click', function() {
+  if(playing){stopPlay();this.textContent='▶ PLAY';this.classList.remove('lit');}
+  else{startPlay();this.textContent='■ STOP';this.classList.add('lit');}
+});
+
+document.getElementById('fireBtn').addEventListener('click', function() {
+  initAudio();
+  fireMode = !fireMode;
+  this.classList.toggle('lit', fireMode);
+  if (fireMode) { fireMeasureN = 0; startFireDrone(); }
+  else { stopFireDrone(); }
+});
+
+document.getElementById('bpmSlider').addEventListener('input', function() {
+  bpm=+this.value; document.getElementById('bpmVal').textContent=bpm+' BPM';
+});
+
+document.getElementById('reverbSlider').addEventListener('input', function() {
+  reverbAmt=+this.value;
+  document.getElementById('reverbVal').textContent=Math.round(reverbAmt*100)+'%';
+  if(wetGain && audioCtx) wetGain.gain.setTargetAtTime(reverbAmt, audioCtx.currentTime, 0.015);
+});
+document.getElementById('bassSlider').addEventListener('input', function() {
+  bassAmt=+this.value;
+  document.getElementById('bassVal').textContent=Math.round(bassAmt*100)+'%';
+});
+document.getElementById('detuneSlider').addEventListener('input', function() {
+  detuneAmt=+this.value;
+  document.getElementById('detuneVal').textContent=this.value+'¢';
+});
+
+document.getElementById('attackSlider').addEventListener('input', function() {
+  attackScale=+this.value;
+  document.getElementById('attackVal').textContent=attackScale.toFixed(1)+'x';
+});
+
+// ── Per-voice filter controls ───────────────────────────────────────────────
+// Log-scale slider (0-100) mapped to 20Hz-20000Hz — filter cutoff is
+// perceived logarithmically, so a linear slider would waste most of its
+// range on frequencies above what most of these voices ever use.
+const FILTER_TYPES = ['lowpass','highpass','bandpass','notch','allpass','lowshelf','highshelf','peaking'];
+const FILTER_FREQ_MIN = 20, FILTER_FREQ_MAX = 20000;
+function sliderToFreq(v) { return FILTER_FREQ_MIN * Math.pow(FILTER_FREQ_MAX/FILTER_FREQ_MIN, v/100); }
+function freqToSlider(f) { return 100 * Math.log(f/FILTER_FREQ_MIN) / Math.log(FILTER_FREQ_MAX/FILTER_FREQ_MIN); }
+
+function initFilterControls() {
+  Object.keys(voiceFilters).forEach(voice => {
+    const cfg = voiceFilters[voice];
+    const sel = document.getElementById('filterType_'+voice);
+    const rng = document.getElementById('filterFreq_'+voice);
+    const val = document.getElementById('filterFreqVal_'+voice);
+    if (!sel || !rng || !val) return;
+    FILTER_TYPES.forEach(t => {
+      const o = document.createElement('option');
+      o.value = t; o.textContent = t;
+      sel.appendChild(o);
+    });
+    sel.value = cfg.type;
+    rng.value = freqToSlider(cfg.freq);
+    val.textContent = Math.round(cfg.freq)+'Hz';
+
+    sel.addEventListener('change', function() {
+      voiceFilters[voice].type = this.value;
+    });
+    rng.addEventListener('input', function() {
+      const f = sliderToFreq(+this.value);
+      voiceFilters[voice].freq = f;
+      val.textContent = Math.round(f)+'Hz';
+    });
+  });
+}
+initFilterControls();
+
+document.getElementById('drumVolSlider').addEventListener('input', function() {
+  drumVol=+this.value;
+  document.getElementById('drumVolVal').textContent=Math.round(drumVol*100)+'%';
+});
+
+document.getElementById('waveRow').addEventListener('click', function(e) {
+  const btn=e.target.closest('[data-wave]'); if(!btn) return;
+  waveform=btn.dataset.wave;
+  this.querySelectorAll('.btn').forEach(b=>b.classList.toggle('lit',b===btn));
+});
+
+document.getElementById('octDn').addEventListener('click', () => {
+  if(octave>-2){octave--;document.getElementById('octVal').textContent=octave>0?'+'+octave:octave;}
+});
+document.getElementById('octUp').addEventListener('click', () => {
+  if(octave<2){octave++;document.getElementById('octVal').textContent=octave>0?'+'+octave:octave;}
+});
+
+document.getElementById('presets').addEventListener('click', function(e) {
+  const btn=e.target.closest('[data-preset]'); if(!btn) return;
+  applyPreset(btn.dataset.preset);
+  setPresetActive(btn.dataset.preset, 'melody');
+  if(playing){stopPlay();startPlay();}
+});
+
+// Drum preset buttons (in the DRUMS section row)
+document.querySelectorAll('[data-dpreset]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    applyDrumPreset(btn.dataset.dpreset);
+  });
+});
+
+document.getElementById('eqBassSlider').addEventListener('input', function() {
+  const v = +this.value;
+  document.getElementById('eqBassVal').textContent = (v>0?'+':'')+v+' dB';
+  if (eqBass && audioCtx) eqBass.gain.setTargetAtTime(v, audioCtx.currentTime, 0.015);
+});
+document.getElementById('eqMidSlider').addEventListener('input', function() {
+  const v = +this.value;
+  document.getElementById('eqMidVal').textContent = (v>0?'+':'')+v+' dB';
+  if (eqMid && audioCtx) eqMid.gain.setTargetAtTime(v, audioCtx.currentTime, 0.015);
+});
+document.getElementById('eqTrebSlider').addEventListener('input', function() {
+  const v = +this.value;
+  document.getElementById('eqTrebVal').textContent = (v>0?'+':'')+v+' dB';
+  if (eqTreb && audioCtx) eqTreb.gain.setTargetAtTime(v, audioCtx.currentTime, 0.015);
+});
+
+// ── Saved presets (localStorage) ──────────────────────────────────────────────
+const STORAGE_KEY = 'orbitSavedPresets';
+
+function getStoredPresets() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}'); } catch(e) { return {}; }
+}
+
+function captureState() {
+  return { grid: grid.map(r=>[...r]), drumSeq: drumSeq.map(r=>[...r]),
+           bpm, waveform, octave, reverbAmt, bassAmt, detuneAmt, attackScale,
+           voiceFilters: JSON.parse(JSON.stringify(voiceFilters)) };
+}
+
+function restoreState(s) {
+  if (s.grid)   { grid   = s.grid.map(r=>[...r]);   }
+  if (s.drumSeq){ drumSeq= s.drumSeq.map(r=>[...r]); }
+  if (s.bpm !== undefined) {
+    bpm = s.bpm;
+    document.getElementById('bpmSlider').value = bpm;
+    document.getElementById('bpmVal').textContent = bpm+' BPM';
+  }
+  if (s.waveform) {
+    waveform = s.waveform;
+    document.querySelectorAll('[data-wave]').forEach(b => b.classList.toggle('lit', b.dataset.wave===waveform));
+  }
+  if (s.octave !== undefined) {
+    octave = s.octave;
+    document.getElementById('octVal').textContent = octave>0?'+'+octave:octave;
+  }
+  if (s.reverbAmt !== undefined) {
+    reverbAmt = s.reverbAmt;
+    document.getElementById('reverbSlider').value = reverbAmt;
+    document.getElementById('reverbVal').textContent = Math.round(reverbAmt*100)+'%';
+    if (wetGain) wetGain.gain.value = reverbAmt;
+  }
+  if (s.bassAmt !== undefined) {
+    bassAmt = s.bassAmt;
+    document.getElementById('bassSlider').value = bassAmt;
+    document.getElementById('bassVal').textContent = Math.round(bassAmt*100)+'%';
+  }
+  if (s.detuneAmt !== undefined) {
+    detuneAmt = s.detuneAmt;
+    document.getElementById('detuneSlider').value = detuneAmt;
+    document.getElementById('detuneVal').textContent = detuneAmt+'¢';
+  }
+  if (s.attackScale !== undefined) {
+    attackScale = s.attackScale;
+    document.getElementById('attackSlider').value = attackScale;
+    document.getElementById('attackVal').textContent = attackScale.toFixed(1)+'x';
+  }
+  if (s.voiceFilters) {
+    // voiceFilters is const — mutate the existing per-voice objects in
+    // place rather than reassigning, and only touch voices the saved
+    // state actually has (forward-compatible if voices are ever added).
+    Object.keys(s.voiceFilters).forEach(voice => {
+      if (!voiceFilters[voice]) return;
+      Object.assign(voiceFilters[voice], s.voiceFilters[voice]);
+      const sel = document.getElementById('filterType_'+voice);
+      const rng = document.getElementById('filterFreq_'+voice);
+      const val = document.getElementById('filterFreqVal_'+voice);
+      if (sel) sel.value = voiceFilters[voice].type;
+      if (rng) rng.value = freqToSlider(voiceFilters[voice].freq);
+      if (val) val.textContent = Math.round(voiceFilters[voice].freq)+'Hz';
+    });
+  }
+  renderGrid(); renderDrumGrid();
+}
+
+function renderSavedPresets() {
+  const list  = document.getElementById('savedPresetList');
+  const saved = getStoredPresets();
+  list.innerHTML = '';
+  const names = Object.keys(saved);
+  if (!names.length) {
+    list.innerHTML = '<span style="font-size:8px;color:var(--muted);opacity:.5">no presets saved</span>';
+    return;
+  }
+  names.forEach(name => {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:4px;align-items:center;';
+    const nameEl = document.createElement('span');
+    nameEl.style.cssText = 'flex:1;font-size:9px;color:var(--fg);letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+    nameEl.textContent = name;
+    const loadBtn = document.createElement('button');
+    loadBtn.className='btn preset-load-btn'; loadBtn.textContent='LOAD';
+    loadBtn.dataset.presetName = name;
+    if (_activePreset.source === 'saved' && _activePreset.name === name) loadBtn.classList.add('lit');
+    loadBtn.addEventListener('click', () => {
+      restoreState(saved[name]);
+      setPresetActive(name, 'saved');
+      if (playing) { stopPlay(); startPlay();
+        document.getElementById('playBtn').textContent='■ STOP';
+        document.getElementById('playBtn').classList.add('lit');
+      }
+    });
+    const delBtn = document.createElement('button');
+    delBtn.className='btn'; delBtn.textContent='✕'; delBtn.style.padding='4px 6px';
+    delBtn.addEventListener('click', () => {
+      const s = getStoredPresets(); delete s[name];
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(s)); } catch(e){}
+      renderSavedPresets();
+    });
+    row.appendChild(nameEl); row.appendChild(loadBtn); row.appendChild(delBtn);
+    list.appendChild(row);
+  });
+}
+
+document.getElementById('savePresetBtn').addEventListener('click', () => {
+  const name = document.getElementById('presetNameIn').value.trim();
+  if (!name) return;
+  const saved = getStoredPresets();
+  saved[name] = captureState();
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(saved)); } catch(e){}
+  document.getElementById('presetNameIn').value = '';
+  renderSavedPresets();
+});
+
+// ── Defaults ─────────────────────────────────────────────────────────────────
+applyPreset('zen');
+applyDrumPreset('four4');
+renderSavedPresets();
+
+// ── Visualizer canvas ─────────────────────────────────────────────────────────
+const vizCanvas = document.getElementById('vizCanvas');
+const vctx = vizCanvas.getContext('2d');
+const vizOff = document.createElement('canvas');
+const voffCtx = vizOff.getContext('2d');
+let VW=0, VH=0;
+let vizPanX=0, vizPanY=0, vizUserScale=1.0, vizRot=0;
+let vizMode = 'tunnel';
+
+function resetVizNav() { vizPanX=0; vizPanY=0; vizUserScale=1.0; }
+
+function applyVizH(h) {
+  h = Math.round(Math.min(Math.max(60, h), 420));
+  vizCanvas.style.height = h+'px';
+  resizeVizCanvas();
+  try { localStorage.setItem('orbitVizH', h); } catch(e){}
+}
+
+function resizeVizCanvas() {
+  VW = Math.round(vizCanvas.offsetWidth * devicePixelRatio);
+  VH = Math.round(vizCanvas.offsetHeight * devicePixelRatio);
+  vizCanvas.width = VW; vizCanvas.height = VH;
+  vizOff.width = VW; vizOff.height = VH;
+}
+resizeVizCanvas();
+new ResizeObserver(resizeVizCanvas).observe(vizCanvas);
+try { const h=localStorage.getItem('orbitVizH'); if(h) applyVizH(+h); } catch(e){}
+
+// Viz pane vertical resize
+(function(){
+  const handle = document.getElementById('vizResizeHandle');
+  let dragging=false, startY=0, startH=0;
+  handle.addEventListener('mousedown', e => {
+    dragging=true; startY=e.clientY; startH=vizCanvas.offsetHeight;
+    handle.classList.add('dragging'); e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    applyVizH(startH - (e.clientY - startY));
+  });
+  document.addEventListener('mouseup', () => { if(!dragging) return; dragging=false; handle.classList.remove('dragging'); });
+})();
+
+// Viz pan/zoom
+(function(){
+  let panning=false, lastX=0, lastY=0;
+  vizCanvas.addEventListener('wheel', e => {
+    e.preventDefault();
+    vizUserScale = Math.min(Math.max(0.15, vizUserScale * (e.deltaY>0 ? 0.93 : 1.07)), 8.0);
+  }, {passive:false});
+  vizCanvas.addEventListener('mousedown', e => {
+    if(e.button!==0) return; panning=true; lastX=e.clientX; lastY=e.clientY;
+    vizCanvas.style.cursor='grabbing';
+  });
+  vizCanvas.addEventListener('dblclick', () => resetVizNav());
+  document.addEventListener('mousemove', e => {
+    if(!panning) return;
+    vizPanX+=(e.clientX-lastX)*devicePixelRatio; vizPanY+=(e.clientY-lastY)*devicePixelRatio;
+    lastX=e.clientX; lastY=e.clientY;
+  });
+  document.addEventListener('mouseup', () => { if(!panning) return; panning=false; vizCanvas.style.cursor='grab'; });
+})();
+
+// Viz mode switching
+document.getElementById('vizModes').addEventListener('click', function(e){
+  const btn = e.target.closest('[data-viz]'); if(!btn) return;
+  vizMode = btn.dataset.viz;
+  this.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b===btn));
+  resetVizNav();
+});
+
+// Draw loop
+function drawViz() {
+  requestAnimationFrame(drawViz);
+  if (!VW || !VH) return;
+  if (!analyser || !freqData) { vctx.clearRect(0,0,VW,VH); return; }
+
+  analyser.getByteFrequencyData(freqData);
+  analyser.getByteTimeDomainData(waveData);
+  vizRot += 0.006;
+
+  const cx = VW/2 + vizPanX, cy = VH/2 + vizPanY;
+  const maxBin = Math.floor(freqData.length * 0.70);
+  const hueBase = c60Hue * 360;
+
+  if (vizMode === 'tunnel') {
+    voffCtx.clearRect(0,0,VW,VH);
+    voffCtx.drawImage(vizCanvas,0,0);
+    vctx.fillStyle=`hsla(${hueBase|0},70%,8%,0.10)`; vctx.fillRect(0,0,VW,VH);
+    vctx.save(); vctx.globalAlpha=0.92;
+    vctx.translate(cx,cy);
+    vctx.scale(1.024*vizUserScale*0.004+1.018, 1.024*vizUserScale*0.004+1.018);
+    vctx.rotate(0.006); vctx.translate(-cx,-cy);
+    vctx.drawImage(vizOff,0,0); vctx.restore();
+    const R_INNER=Math.max(4,Math.min(Math.min(VW,VH)*0.08*vizUserScale,Math.min(VW,VH)*0.35));
+    const R_MAX=R_INNER*3.5;
+    vctx.save(); vctx.translate(cx,cy);
+    for(let i=0;i<128;i++){
+      const t=i/128, angle=t*Math.PI*2-Math.PI/2+vizRot*0.15;
+      const v=freqData[Math.floor(t*maxBin)]/255; if(v<0.015) continue;
+      const hue=(hueBase+t*120+vizRot*8)%360;
+      vctx.beginPath();
+      vctx.moveTo(Math.cos(angle)*R_INNER,Math.sin(angle)*R_INNER);
+      vctx.lineTo(Math.cos(angle)*(R_INNER+v*R_MAX),Math.sin(angle)*(R_INNER+v*R_MAX));
+      vctx.strokeStyle=`hsla(${hue|0},100%,${62+v*30|0}%,${(0.75+v*0.25).toFixed(2)})`;
+      vctx.lineWidth=1.6; vctx.stroke();
+    }
+    vctx.beginPath();
+    for(let i=0;i<=waveData.length;i++){
+      const t=i/waveData.length, angle=t*Math.PI*2-Math.PI/2+vizRot*0.15;
+      const r=R_INNER+(waveData[i%waveData.length]/128-1)*R_INNER*0.55;
+      i===0?vctx.moveTo(Math.cos(angle)*r,Math.sin(angle)*r):vctx.lineTo(Math.cos(angle)*r,Math.sin(angle)*r);
+    }
+    vctx.strokeStyle=`hsla(${hueBase|0},55%,80%,0.28)`; vctx.lineWidth=devicePixelRatio; vctx.stroke();
+    vctx.restore();
+
+  } else if (vizMode === 'bars') {
+    vctx.fillStyle=`hsla(${hueBase|0},65%,6%,0.14)`; vctx.fillRect(0,0,VW,VH);
+    const bw=VW/maxBin;
+    for(let i=0;i<maxBin;i++){
+      const v=freqData[i]/255; if(v<0.01) continue;
+      const x=i*bw, h=v*VH*0.92;
+      const hue=(hueBase+i/maxBin*120)%360;
+      vctx.fillStyle=`hsla(${hue|0},88%,${45+v*32|0}%,${(0.55+v*0.4).toFixed(2)})`;
+      vctx.fillRect(x,VH-h,Math.max(1,bw-0.5),h);
+    }
+
+  } else if (vizMode === 'mirror') {
+    vctx.fillStyle=`hsla(${(hueBase+180)|0},65%,6%,0.12)`; vctx.fillRect(0,0,VW,VH);
+    const bw=VW/maxBin, half=VH/2;
+    for(let i=0;i<maxBin;i++){
+      const v=freqData[i]/255; if(v<0.01) continue;
+      const x=i*bw, h=v*half*0.95;
+      const hue=(hueBase+i/maxBin*180+vizRot*20)%360;
+      vctx.fillStyle=`hsla(${hue|0},90%,${48+v*30|0}%,${(0.5+v*0.45).toFixed(2)})`;
+      vctx.fillRect(x,half-h,Math.max(1,bw-0.5),h*2);
+    }
+    vctx.beginPath();
+    for(let i=0;i<waveData.length;i++){
+      const x=i/waveData.length*VW;
+      const y=half+(waveData[i]/128-1)*half*0.38;
+      i===0?vctx.moveTo(x,y):vctx.lineTo(x,y);
+    }
+    vctx.strokeStyle=`hsla(${hueBase|0},55%,80%,0.35)`; vctx.lineWidth=devicePixelRatio; vctx.stroke();
+
+  } else if (vizMode === 'scope') {
+    voffCtx.clearRect(0,0,VW,VH);
+    voffCtx.drawImage(vizCanvas,0,0);
+    vctx.fillStyle=`hsla(${hueBase|0},70%,6%,0.10)`; vctx.fillRect(0,0,VW,VH);
+    vctx.save(); vctx.globalAlpha=0.90;
+    vctx.translate(cx,cy); vctx.scale(1.018,1.018); vctx.translate(-cx,-cy);
+    vctx.drawImage(vizOff,0,0); vctx.restore();
+    const R=Math.min(VW,VH)*0.42*vizUserScale;
+    vctx.save(); vctx.translate(cx,cy);
+    vctx.beginPath();
+    const shift=Math.floor(waveData.length/4);
+    for(let i=0;i<waveData.length;i++){
+      const x=(waveData[i]/128-1)*R;
+      const y=(waveData[(i+shift)%waveData.length]/128-1)*R;
+      i===0?vctx.moveTo(x,y):vctx.lineTo(x,y);
+    }
+    vctx.strokeStyle=`hsla(${hueBase|0},80%,65%,0.70)`; vctx.lineWidth=1.2; vctx.stroke();
+    vctx.restore();
+
+  } else if (vizMode === 'spiral') {
+    vctx.fillStyle=`hsla(${(hueBase+60)|0},70%,7%,0.11)`; vctx.fillRect(0,0,VW,VH);
+    // Golden-angle sunflower — true Fibonacci point distribution
+    const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5)); // ≈ 137.5°
+    // Audio energy drives breathe: low energy = tight (inward), high = loose (expanded)
+    const energy = freqData.slice(0, Math.floor(freqData.length * 0.55))
+                           .reduce((a,b)=>a+b,0) / (freqData.length * 0.55 * 255);
+    const breathe = 0.45 + energy * 1.10; // 0.45 (tight/silent) → 1.55 (loose/loud)
+    const rMax = Math.min(VW,VH) * 0.48 * vizUserScale * breathe;
+    vctx.save(); vctx.translate(cx,cy);
+    for(let i=0;i<maxBin;i++){
+      const t = i/maxBin;
+      const r = Math.sqrt(t) * rMax;  // sqrt = even radial density (sunflower)
+      const angle = i * GOLDEN_ANGLE + vizRot;
+      const v = freqData[i]/255;
+      if (v < 0.01) continue;
+      const x = Math.cos(angle)*r, y = Math.sin(angle)*r;
+      const size = Math.max(0.8, v * 6 * vizUserScale);
+      const hue = (hueBase + t*200 + vizRot*40) % 360;
+      vctx.beginPath();
+      vctx.arc(x,y,size,0,Math.PI*2);
+      vctx.fillStyle=`hsla(${hue|0},90%,${48+v*30|0}%,${(0.35+v*0.60).toFixed(2)})`;
+      vctx.fill();
+    }
+    vctx.restore();
+  }
+}
+drawViz();
+
+// ── Visualizer fullscreen ─────────────────────────────────────────────────────
+const vizSection = document.getElementById('vizSection');
+function toggleVizFullscreen() {
+  if (!document.fullscreenElement) {
+    (vizSection.requestFullscreen || vizSection.webkitRequestFullscreen).call(vizSection);
+  } else {
+    (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  resizeVizCanvas();
+  const btn = document.getElementById('vizFsBtn');
+  if (btn) btn.textContent = document.fullscreenElement ? '✕' : '⛶';
+});
+
+// ── Space → Play/Stop ────────────────────────────────────────────────────────
+document.addEventListener('keydown', function(e) {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); document.getElementById('playBtn').click(); }
+  if (e.code === 'KeyF') toggleVizFullscreen();
+  if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
+    e.preventDefault();
+    const modes = ['tunnel','bars','mirror','scope','spiral'];
+    const idx = modes.indexOf(vizMode);
+    vizMode = modes[(idx + (e.code === 'ArrowRight' ? 1 : -1) + modes.length) % modes.length];
+    document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === vizMode));
+    resetVizNav();
+  }
+});
+
+// ── Prevent focus-scroll on sliders (stops panel bounce) ─────────────────────
+(function() {
+  const panel = document.querySelector('.panel');
+  document.querySelectorAll('input[type=range]').forEach(el => {
+    el.addEventListener('focus', function() {
+      if (!panel) return;
+      const top = panel.scrollTop;
+      requestAnimationFrame(() => { panel.scrollTop = top; });
+    }, { passive: true });
+    // Prevent slider drag from leaking as scroll events
+    el.addEventListener('pointerdown', e => e.stopPropagation(), { passive: true });
+  });
+})();
+
+// ── Collapsible sections ──────────────────────────────────────────────────────
+document.querySelectorAll('.section-title').forEach(title => {
+  title.addEventListener('click', () => title.parentElement.classList.toggle('collapsed'));
+});
+
+</script>
+</body>
+</html>

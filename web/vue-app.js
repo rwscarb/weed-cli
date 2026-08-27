@@ -160,6 +160,10 @@ const app = createApp({
         { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
         { keys: '?', desc: 'Toggle this list' },
       ],
+
+      // easter egg -- deliberately not listed in `shortcuts` above (see
+      // onGlobalKeydown's own comment on the trigger)
+      easterEggVisible: false,
     };
   },
 
@@ -253,6 +257,13 @@ const app = createApp({
       if (this.tabs.some(t => t.id === id)) this.activeTab = id;
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
+    // orbit_sequencer.html's own "< BACK" button posts this to whatever
+    // parent embedded it (harmless no-op if nothing's listening, see its
+    // own onclick) -- this is that listener, so the button it already
+    // ships with actually closes the easter egg here too
+    window.addEventListener('message', e => {
+      if (e.data === 'orbit:back') this.easterEggVisible = false;
+    });
 
     const { pubkey } = await this.apiGet('/api/whoami');
     this.pubkey = pubkey;
@@ -556,6 +567,7 @@ const app = createApp({
         // closest-thing-first: only ever undoes one layer per press, same
         // as a browser's own Esc-closes-the-topmost-thing convention
         if (this.qr.visible) { this.qr.visible = false; return; }
+        if (this.easterEggVisible) { this.easterEggVisible = false; return; }
         if (this.player.visible) { this.closePlayer(); return; }
         if (this.errorDialog.visible) { this.closeError(); return; }
         if (this.shortcutsVisible) { this.shortcutsVisible = false; return; }
@@ -581,6 +593,28 @@ const app = createApp({
         this.discoverFiltersOpen = true;
         this.$nextTick(() => this.$refs.searchInput && this.$refs.searchInput.focus());
         return;
+      }
+
+      // Easter egg: type the mod-9 orbit {1,2,4,8,7,5} and the sequence
+      // is consumed digit-by-digit as long as it keeps matching a valid
+      // prefix -- none of 1/2/4/8/7/5 reach the tab-switcher below while
+      // a correct run is in progress, so typing it clean doesn't also
+      // flicker through tabs 1/2/4 on the way. A wrong digit resets the
+      // buffer and falls through to whatever that key normally does
+      // (including tab-switching), so mistyping never gets stuck.
+      // Deliberately not in the `shortcuts` list above -- it's a secret.
+      const ORBIT_CODE = '124875';
+      if (/^[0-9]$/.test(e.key)) {
+        const nextBuffer = (this._orbitBuffer || '') + e.key;
+        if (ORBIT_CODE.startsWith(nextBuffer)) {
+          this._orbitBuffer = nextBuffer;
+          if (this._orbitBuffer === ORBIT_CODE) {
+            this._orbitBuffer = '';
+            this.easterEggVisible = true;
+          }
+          return;
+        }
+        this._orbitBuffer = '';
       }
 
       const tabByDigit = { '1': 'discover', '2': 'host', '3': 'downloads', '4': 'playlists', '5': 'identity-tab' };
