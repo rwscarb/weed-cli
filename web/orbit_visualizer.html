@@ -66,6 +66,7 @@ btn, .btn {
     <button class="btn" data-viz="mirror">MIRROR</button>
     <button class="btn" data-viz="scope">SCOPE</button>
     <button class="btn" data-viz="spiral">SPIRAL</button>
+    <button class="btn" data-viz="pixels">PIXELS</button>
   </div>
   <canvas id="vizCanvas"></canvas>
   <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen)</div>
@@ -90,18 +91,37 @@ let waveData = new Uint8Array(2048);
 let hasSignal = false;
 const idleNote = document.getElementById('idleNote');
 
+// PIXELS mode's source frame -- the parent samples weed's own <video>
+// onto a small offscreen canvas (drawImage + getImageData) and posts
+// the raw pixels here every couple of frames, since Web Audio nodes
+// aren't the only thing that can't cross a frame boundary directly: an
+// HTMLVideoElement can't either, and this doesn't need the real one,
+// just its pixels. videoFrame stays null until the first real frame
+// arrives -- readyState/videoWidth checks on the parent side mean this
+// only ever gets a genuine decoded frame, never a premature black one.
+let videoFrame = null;
+const vpixOff = document.createElement('canvas');
+const vpixOffCtx = vpixOff.getContext('2d');
+
 window.addEventListener('message', e => {
   const msg = e.data;
-  if (!msg || msg.type !== 'orbit-audio') return;
-  freqData = msg.freq;
-  waveData = msg.wave;
-  // the feed posts a message every frame regardless of whether the
-  // video is actually playing anything -- silence still "arrives," it's
-  // just all near-zero -- so "a message showed up" alone can't tell
-  // idle from playing. Real aggregate energy across the spectrum can.
-  const energy = freqData.reduce((a, b) => a + b, 0);
-  if (energy > 400 && !hasSignal) { hasSignal = true; idleNote.style.display = 'none'; }
-  else if (energy <= 100 && hasSignal) { hasSignal = false; idleNote.style.display = ''; }
+  if (!msg) return;
+  if (msg.type === 'orbit-audio') {
+    freqData = msg.freq;
+    waveData = msg.wave;
+    // the feed posts a message every frame regardless of whether the
+    // video is actually playing anything -- silence still "arrives," it's
+    // just all near-zero -- so "a message showed up" alone can't tell
+    // idle from playing. Real aggregate energy across the spectrum can.
+    const energy = freqData.reduce((a, b) => a + b, 0);
+    if (energy > 400 && !hasSignal) { hasSignal = true; idleNote.style.display = 'none'; }
+    else if (energy <= 100 && hasSignal) { hasSignal = false; idleNote.style.display = ''; }
+  } else if (msg.type === 'orbit-video') {
+    if (vpixOff.width !== msg.w || vpixOff.height !== msg.h) {
+      vpixOff.width = msg.w; vpixOff.height = msg.h;
+    }
+    videoFrame = { w: msg.w, h: msg.h, imageData: new ImageData(msg.data, msg.w, msg.h) };
+  }
 });
 
 const vizCanvas = document.getElementById('vizCanvas');
@@ -271,6 +291,42 @@ function drawViz() {
       vctx.fill();
     }
     vctx.restore();
+
+  } else if (vizMode === 'pixels') {
+    vctx.fillStyle = '#000'; vctx.fillRect(0,0,VW,VH);
+    if (!videoFrame) {
+      vctx.fillStyle = `hsla(${hueBase|0},40%,55%,0.5)`;
+      vctx.font = `${Math.max(10, Math.round(VH*0.04))}px 'Courier New',monospace`;
+      vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+      vctx.fillText('— no video playing —', VW/2, VH/2);
+      vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
+    } else {
+      // putImageData paints the low-res sample 1:1; the actual scale-up
+      // to fill the canvas happens in the drawImage below, with
+      // smoothing off, so it reads as a chunky mosaic instead of a
+      // blurred re-scale of a small image
+      vpixOffCtx.putImageData(videoFrame.imageData, 0, 0);
+      vctx.imageSmoothingEnabled = false;
+      const dw = VW * vizUserScale, dh = VH * vizUserScale;
+      vctx.drawImage(vpixOff, 0, 0, videoFrame.w, videoFrame.h, cx-dw/2, cy-dh/2, dw, dh);
+      vctx.imageSmoothingEnabled = true;
+      // a ring of audio-reactive glow dots around the mosaic -- same
+      // per-bin language bars/spiral already use, so this still reads
+      // as part of the same family instead of just being a video window
+      const R = Math.min(VW,VH) * 0.46 * vizUserScale;
+      for (let i=0;i<48;i++){
+        const t = i/48;
+        const v = freqData[Math.floor(t*maxBin)]/255;
+        if (v < 0.12) continue;
+        const angle = t*Math.PI*2 + vizRot;
+        const x = cx+Math.cos(angle)*R, y = cy+Math.sin(angle)*R;
+        const hue = (hueBase + t*200) % 360;
+        vctx.beginPath();
+        vctx.arc(x,y,2+v*5,0,Math.PI*2);
+        vctx.fillStyle=`hsla(${hue|0},95%,65%,${(0.3+v*0.5).toFixed(2)})`;
+        vctx.fill();
+      }
+    }
   }
 }
 drawViz();
@@ -293,7 +349,7 @@ document.addEventListener('keydown', function(e) {
   if (e.code === 'KeyF') toggleVizFullscreen();
   if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
     e.preventDefault();
-    const modes = ['tunnel','bars','mirror','scope','spiral'];
+    const modes = ['tunnel','bars','mirror','scope','spiral','pixels'];
     const idx = modes.indexOf(vizMode);
     vizMode = modes[(idx + (e.code === 'ArrowRight' ? 1 : -1) + modes.length) % modes.length];
     document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === vizMode));

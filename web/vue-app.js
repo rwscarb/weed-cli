@@ -960,6 +960,21 @@ const app = createApp({
       };
       return this._orbitAnalyser;
     },
+    // Small (64x36) offscreen sample of the actual video frame, cached
+    // like the analyser above -- same-origin video (this app only ever
+    // streams from its own /api/stream/<job_id>), so drawImage +
+    // getImageData here never hits a tainted-canvas security error.
+    // Kept tiny on purpose: this gets read back and posted every couple
+    // of frames, and the "orbit visualization" a viewer actually wants
+    // is a low-res color/motion impression, not a full-res copy of the
+    // video the iframe already can't show behind this dialog anyway.
+    _ensureOrbitVideoCanvas() {
+      if (this._orbitVideoCanvas) return this._orbitVideoCanvas;
+      const canvas = document.createElement('canvas');
+      canvas.width = 64; canvas.height = 36;
+      this._orbitVideoCanvas = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }) };
+      return this._orbitVideoCanvas;
+    },
     // Web Audio nodes themselves can't cross the iframe boundary (each
     // window/realm has its own AudioContext universe), but the plain
     // Uint8Array snapshots getByteFrequencyData/getByteTimeDomainData
@@ -975,7 +990,9 @@ const app = createApp({
       if (this._orbitVizRunning) return;
       const { ctx, analyser, freq, wave } = this._ensureOrbitAnalyser();
       if (ctx.state === 'suspended') ctx.resume();
+      const { canvas: vcanvas, ctx: vctx } = this._ensureOrbitVideoCanvas();
       this._orbitVizRunning = true;
+      let frameCount = 0;
       const tick = () => {
         if (!this._orbitVizRunning) return;
         analyser.getByteFrequencyData(freq);
@@ -983,6 +1000,24 @@ const app = createApp({
         const frame = this.$refs.orbitVizFrame;
         if (frame && frame.contentWindow) {
           frame.contentWindow.postMessage({ type: 'orbit-audio', freq, wave }, '*');
+          // video frames don't need 60fps to look good and drawImage+
+          // getImageData is real per-frame cost, unlike the audio
+          // analysis above -- every other frame (~30fps) is still
+          // plenty smooth for a background visualization
+          if (frameCount++ % 2 === 0) {
+            const video = this.$refs.playerVideo;
+            // readyState >= 2 (HAVE_CURRENT_DATA) is "there's an actual
+            // decoded frame to draw" -- before that (nothing loaded, or
+            // between openPlayer() setting src and the first frame
+            // decoding) drawImage would just paint black, which the
+            // visualizer can't tell apart from "a genuinely dark video"
+            if (video && video.readyState >= 2 && video.videoWidth > 0) {
+              vctx.drawImage(video, 0, 0, vcanvas.width, vcanvas.height);
+              const imageData = vctx.getImageData(0, 0, vcanvas.width, vcanvas.height);
+              frame.contentWindow.postMessage(
+                { type: 'orbit-video', w: vcanvas.width, h: vcanvas.height, data: imageData.data }, '*');
+            }
+          }
         }
         requestAnimationFrame(tick);
       };
