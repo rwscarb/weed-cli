@@ -164,6 +164,13 @@ const app = createApp({
       // easter egg -- deliberately not listed in `shortcuts` above (see
       // onGlobalKeydown's own comment on the trigger)
       easterEggVisible: false,
+      // Once someone's actually typed the code and seen what it opens,
+      // there's no real secret left to protect by making them retype it
+      // every single time -- a player-header icon appears from then on
+      // (see index.html) as a normal, discoverable way back in. Persisted
+      // across reloads (same reasoning as the code itself: found once,
+      // not lost again) rather than living only in this session's state.
+      orbitEggUnlocked: localStorage.getItem('orbitEggUnlocked') === '1',
     };
   },
 
@@ -619,6 +626,10 @@ const app = createApp({
           if (this._orbitBuffer === ORBIT_CODE) {
             this._orbitBuffer = '';
             this.easterEggVisible = true;
+            if (!this.orbitEggUnlocked) {
+              this.orbitEggUnlocked = true;
+              localStorage.setItem('orbitEggUnlocked', '1');
+            }
           }
           return;
         }
