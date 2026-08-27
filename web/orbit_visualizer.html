@@ -131,6 +131,11 @@ const vizOff = document.createElement('canvas');
 const voffCtx = vizOff.getContext('2d');
 let VW=0, VH=0;
 let vizPanX=0, vizPanY=0, vizUserScale=1.0, vizRot=0;
+// PIXELS mode's own rotation/pulse state -- separate from vizRot above
+// (shared by tunnel/scope/spiral at a fixed rate) since this ring's
+// whole point is spinning *faster when the audio is more energetic*,
+// not the same constant rate every other mode already uses.
+let pixelsRingRot=0, pixelsPulse=0;
 let vizMode = 'tunnel';
 
 function resetVizNav() { vizPanX=0; vizPanY=0; vizUserScale=1.0; }
@@ -309,29 +314,69 @@ function drawViz() {
     if (!videoFrame) {
       drawNoVideoMessage(hueBase);
     } else {
+      // One shared "how energetic is this instant" number driving both
+      // the mosaic's own pulse and the ring around it, so the two never
+      // drift out of sync with each other. Bass specifically (~first
+      // 12% of bins), not the whole spectrum -- full-spectrum energy
+      // rarely drops near zero (there's almost always some mid/treble
+      // content), which smooths this into a slow wobble instead of a
+      // real beat-following punch; bass is the part that actually
+      // drops out between hits.
+      const energy = freqData.slice(0, maxBin).reduce((a,b)=>a+b,0) / (maxBin*255);
+      const bassEnd = Math.max(1, Math.floor(maxBin*0.12));
+      const bass = freqData.slice(0, bassEnd).reduce((a,b)=>a+b,0) / (bassEnd*255);
+      // smoothed toward the current bass level rather than snapping to
+      // it every frame -- a per-frame jump would flicker at 60fps; this
+      // reads as a punchy but real pulse instead
+      pixelsPulse += (bass - pixelsPulse) * 0.25;
+      // this is the actual fix for "the ring doesn't seem to react" --
+      // it was spinning at vizRot's fixed rate before (same constant
+      // speed tunnel/scope/spiral use), completely independent of
+      // whatever the audio was doing. Its own rate now, scaled by
+      // energy, so it visibly speeds up and slows down with the music.
+      pixelsRingRot += 0.004 + energy*0.05;
+
       // putImageData paints the low-res sample 1:1; the actual scale-up
       // to fill the canvas happens in the drawImage below, with
       // smoothing off, so it reads as a chunky mosaic instead of a
-      // blurred re-scale of a small image
+      // blurred re-scale of a small image. Its own size now pulses with
+      // bass too -- the other half of "doesn't do anything to the
+      // pixels": before, nothing about the mosaic itself ever moved.
       vpixOffCtx.putImageData(videoFrame.imageData, 0, 0);
       vctx.imageSmoothingEnabled = false;
-      const dw = VW * vizUserScale, dh = VH * vizUserScale;
+      const pulseScale = 1 + pixelsPulse*0.12;
+      const dw = VW * vizUserScale * pulseScale, dh = VH * vizUserScale * pulseScale;
       vctx.drawImage(vpixOff, 0, 0, videoFrame.w, videoFrame.h, cx-dw/2, cy-dh/2, dw, dh);
       vctx.imageSmoothingEnabled = true;
-      // a ring of audio-reactive glow dots around the mosaic -- same
-      // per-bin language bars/spiral already use, so this still reads
-      // as part of the same family instead of just being a video window
-      const R = Math.min(VW,VH) * 0.46 * vizUserScale;
+      // a hard bass hit also flashes a brief color wash directly over
+      // the mosaic (overlay blend, so it tints rather than just
+      // whiting it out) -- this is the part that makes a real beat
+      // visibly land ON the video, not just around it
+      if (pixelsPulse > 0.35) {
+        vctx.save();
+        vctx.globalCompositeOperation = 'overlay';
+        vctx.fillStyle = `hsla(${hueBase|0},90%,60%,${Math.min(0.35,(pixelsPulse-0.35)*0.6).toFixed(2)})`;
+        vctx.fillRect(cx-dw/2, cy-dh/2, dw, dh);
+        vctx.restore();
+      }
+
+      // ring of audio-reactive glow dots around the mosaic -- same
+      // per-bin language bars/spiral already use. Radius now breathes
+      // with overall energy instead of sitting at one fixed size, and
+      // dot size swings much further (was 2-7px, barely visible;
+      // 2-12px actually reads as pulsing at a glance) -- both of these
+      // were the "doesn't seem to change size" half of the report.
+      const R = Math.min(VW,VH) * (0.40 + energy*0.12) * vizUserScale;
       for (let i=0;i<48;i++){
         const t = i/48;
         const v = freqData[Math.floor(t*maxBin)]/255;
-        if (v < 0.12) continue;
-        const angle = t*Math.PI*2 + vizRot;
+        if (v < 0.08) continue;
+        const angle = t*Math.PI*2 + pixelsRingRot;
         const x = cx+Math.cos(angle)*R, y = cy+Math.sin(angle)*R;
         const hue = (hueBase + t*200) % 360;
         vctx.beginPath();
-        vctx.arc(x,y,2+v*5,0,Math.PI*2);
-        vctx.fillStyle=`hsla(${hue|0},95%,65%,${(0.3+v*0.5).toFixed(2)})`;
+        vctx.arc(x,y,2+v*10,0,Math.PI*2);
+        vctx.fillStyle=`hsla(${hue|0},95%,65%,${(0.25+v*0.65).toFixed(2)})`;
         vctx.fill();
       }
     }
