@@ -161,16 +161,10 @@ const app = createApp({
         { keys: '?', desc: 'Toggle this list' },
       ],
 
-      // easter egg -- deliberately not listed in `shortcuts` above (see
-      // onGlobalKeydown's own comment on the trigger)
+      // Orbit Visualizer -- toggled via the player header's own 🌀
+      // icon (always visible there, see index.html), no unlock/trigger
+      // gating it any more.
       easterEggVisible: false,
-      // Once someone's actually typed the code and seen what it opens,
-      // there's no real secret left to protect by making them retype it
-      // every single time -- a player-header icon appears from then on
-      // (see index.html) as a normal, discoverable way back in. Persisted
-      // across reloads (same reasoning as the code itself: found once,
-      // not lost again) rather than living only in this session's state.
-      orbitEggUnlocked: localStorage.getItem('orbitEggUnlocked') === '1',
     };
   },
 
@@ -608,32 +602,6 @@ const app = createApp({
         this.discoverFiltersOpen = true;
         this.$nextTick(() => this.$refs.searchInput && this.$refs.searchInput.focus());
         return;
-      }
-
-      // Easter egg: type the mod-9 orbit {1,2,4,8,7,5} and the sequence
-      // is consumed digit-by-digit as long as it keeps matching a valid
-      // prefix -- none of 1/2/4/8/7/5 reach the tab-switcher below while
-      // a correct run is in progress, so typing it clean doesn't also
-      // flicker through tabs 1/2/4 on the way. A wrong digit resets the
-      // buffer and falls through to whatever that key normally does
-      // (including tab-switching), so mistyping never gets stuck.
-      // Deliberately not in the `shortcuts` list above -- it's a secret.
-      const ORBIT_CODE = '124875';
-      if (/^[0-9]$/.test(e.key)) {
-        const nextBuffer = (this._orbitBuffer || '') + e.key;
-        if (ORBIT_CODE.startsWith(nextBuffer)) {
-          this._orbitBuffer = nextBuffer;
-          if (this._orbitBuffer === ORBIT_CODE) {
-            this._orbitBuffer = '';
-            this.easterEggVisible = true;
-            if (!this.orbitEggUnlocked) {
-              this.orbitEggUnlocked = true;
-              localStorage.setItem('orbitEggUnlocked', '1');
-            }
-          }
-          return;
-        }
-        this._orbitBuffer = '';
       }
 
       const tabByDigit = { '1': 'discover', '2': 'host', '3': 'downloads', '4': 'playlists', '5': 'identity-tab' };
