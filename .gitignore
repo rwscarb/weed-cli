@@ -18,3 +18,4 @@ relay_events.jsonl
 real_archive/*.mp4
 real_archive/.ott/objects/
 .ruff_cache/
+.pytest_cache/

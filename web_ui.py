@@ -94,7 +94,8 @@ class _JobStdout:
         return getattr(self._real, name)
 
 
-sys.stdout = _JobStdout(sys.stdout)
+_job_stdout = _JobStdout(sys.stdout)
+sys.stdout = _job_stdout
 
 
 @contextlib.contextmanager
@@ -107,13 +108,27 @@ def _quiet():
     (...)" lines (exactly the detail that explains *why* a download
     failed) used to get captured here and then thrown away unread, so the
     web UI only ever showed "no candidate host passed the possession
-    challenge" with zero indication of which candidate failed how."""
+    challenge" with zero indication of which candidate failed how.
+
+    Re-asserts sys.stdout = _job_stdout on every call rather than trusting
+    it's still set from module-import time, and manipulates _job_stdout
+    directly rather than via sys.stdout -- something else with its own
+    reason to reassign sys.stdout globally afterward (pytest's own output
+    capturing is the concrete case that surfaced this: it swaps sys.stdout
+    to its own capture object between tests, silently detaching
+    _JobStdout from the global) would otherwise make this line crash with
+    an AttributeError on whatever replaced it, instead of muting output
+    like it's supposed to. Nothing in this app's own normal run path ever
+    reassigns sys.stdout again after the module-level line above, so this
+    is a no-op there -- purely a defensive re-assert."""
+    if sys.stdout is not _job_stdout:
+        sys.stdout = _job_stdout
     buf = io.StringIO()
-    sys.stdout._local.buf = buf
+    _job_stdout._local.buf = buf
     try:
         yield buf
     finally:
-        sys.stdout._local.buf = None
+        _job_stdout._local.buf = None
 
 
 def _with_captured_detail(msg, captured):

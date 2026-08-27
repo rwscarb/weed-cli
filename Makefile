@@ -1,6 +1,6 @@
 .PHONY: help demo network stats chart reputation discovery real-archive \
         containers node node-down node-shell lightning-up lightning-down lightning-demo lightning-smoke \
-        all-stdlib clean install uninstall
+        all-stdlib clean install uninstall test test-e2e
 
 PYTHON ?= python3
 PREFIX ?= $(HOME)/.local
@@ -34,6 +34,11 @@ help:
 	@echo ""
 	@echo "Needs real_archive/ set up (see README.md 'real .ott archive' section):"
 	@echo "  make real-archive   poc_real_archive_challenge.py — real video, real 3324 chunks"
+	@echo ""
+	@echo "Needs pip install -e .[dev]:"
+	@echo "  make test           unit/integration suite (tests/) — fast, no browser, no Docker"
+	@echo "  make test-e2e       + tests/e2e/ — real browser against a real relay+host+web UI"
+	@echo "                      (needs pytest-playwright + a Chromium binary; see tests/e2e/conftest.py)"
 	@echo ""
 	@echo "  make clean          remove __pycache__, generated chart, tmp reputation stores"
 	@echo ""
@@ -88,6 +93,12 @@ lightning-smoke:
 
 real-archive:
 	$(PYTHON) poc_real_archive_challenge.py
+
+test:
+	$(PYTHON) -m pytest tests --ignore=tests/e2e
+
+test-e2e:
+	$(PYTHON) -m pytest tests
 
 clean:
 	find . -name '__pycache__' -type d -exec rm -rf {} +
