@@ -939,22 +939,40 @@ const app = createApp({
       };
       return this._orbitAnalyser;
     },
-    // Small (64x36) offscreen sample of the actual video frame, cached
-    // like the analyser above -- same-origin video (this app only ever
-    // streams from its own /api/stream/<job_id>), so drawImage +
-    // getImageData here never hits a tainted-canvas security error.
-    // 96x54 (not full video res): this gets read back and posted every
-    // couple of frames, and the "orbit visualization" a viewer actually
-    // wants is a color/motion impression, not a full-res copy of the
-    // video the iframe already can't show behind this dialog anyway --
-    // this is still ~9x the pixel count PIXELS/ASCII actually need to
-    // look meaningfully more detailed (see ASCII's own comment on why
-    // that resolution ceiling mattered enough to bump), while staying
-    // cheap: 96*54*4 = ~20KB/frame over postMessage, nothing.
-    _ensureOrbitVideoCanvas() {
-      if (this._orbitVideoCanvas) return this._orbitVideoCanvas;
-      const canvas = document.createElement('canvas');
-      canvas.width = 96; canvas.height = 54;
+    // Small offscreen sample of the actual video frame, cached like the
+    // analyser above -- same-origin video (this app only ever streams
+    // from its own /api/stream/<job_id>), so drawImage + getImageData
+    // here never hits a tainted-canvas security error. ~96x54's worth of
+    // pixels (5184, not full video res): this gets read back and posted
+    // every couple of frames, and the "orbit visualization" a viewer
+    // actually wants is a color/motion impression, not a full-res copy
+    // of the video the iframe already can't show behind this dialog
+    // anyway -- this is still ~9x the pixel count PIXELS/ASCII actually
+    // need to look meaningfully more detailed (see ASCII's own comment
+    // on why that resolution ceiling mattered enough to bump), while
+    // staying cheap: ~20KB/frame over postMessage, nothing.
+    // Sized to the video's own aspect ratio, not fixed at 96x54 -- a
+    // flat 16:9 canvas silently squashes any video that isn't already
+    // 16:9 (vertical phone footage, 4:3, ...) before orbit_visualizer.html
+    // ever sees the pixels, which is what actually caused the reported
+    // "video looks stretched" (no amount of aspect-correct drawing on
+    // the visualizer's own side can undo a distortion baked in here).
+    // Re-picks width/height (same pixel budget, same aspect ratio as the
+    // video) whenever the video's own aspect ratio has changed since the
+    // canvas was last sized, so switching to a differently-shaped video
+    // mid-session doesn't keep sampling through the previous one's shape.
+    _ensureOrbitVideoCanvas(video) {
+      const aspect = (video && video.videoWidth && video.videoHeight)
+        ? video.videoWidth / video.videoHeight : 16 / 9;
+      const PIXEL_BUDGET = 96 * 54;
+      const w = Math.max(1, Math.round(Math.sqrt(PIXEL_BUDGET * aspect)));
+      const h = Math.max(1, Math.round(Math.sqrt(PIXEL_BUDGET / aspect)));
+      if (this._orbitVideoCanvas && this._orbitVideoCanvas.canvas.width === w
+          && this._orbitVideoCanvas.canvas.height === h) {
+        return this._orbitVideoCanvas;
+      }
+      const canvas = this._orbitVideoCanvas ? this._orbitVideoCanvas.canvas : document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
       this._orbitVideoCanvas = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }) };
       return this._orbitVideoCanvas;
     },
@@ -973,7 +991,6 @@ const app = createApp({
       if (this._orbitVizRunning) return;
       const { ctx, analyser, freq, wave } = this._ensureOrbitAnalyser();
       if (ctx.state === 'suspended') ctx.resume();
-      const { canvas: vcanvas, ctx: vctx } = this._ensureOrbitVideoCanvas();
       this._orbitVizRunning = true;
       let frameCount = 0;
       const tick = () => {
@@ -995,6 +1012,10 @@ const app = createApp({
             // decoding) drawImage would just paint black, which the
             // visualizer can't tell apart from "a genuinely dark video"
             if (video && video.readyState >= 2 && video.videoWidth > 0) {
+              // resolved per-frame, not cached outside tick -- picks up
+              // the video's current aspect ratio (see this method's own
+              // comment on why that matters for avoiding stretching)
+              const { canvas: vcanvas, ctx: vctx } = this._ensureOrbitVideoCanvas(video);
               vctx.drawImage(video, 0, 0, vcanvas.width, vcanvas.height);
               const imageData = vctx.getImageData(0, 0, vcanvas.width, vcanvas.height);
               frame.contentWindow.postMessage(

@@ -259,6 +259,21 @@ function drawNoVideoMessage(hueBase) {
   vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
 }
 
+// PIXELS/ASCII both draw the sampled video frame into the VWxVH canvas,
+// which is almost never the same aspect ratio as the frame itself (the
+// dialog is a fixed box; the video can be 16:9, 9:16, 4:3, ...). Scaling
+// frameW/frameH independently to fill VW/VH separately -- which both
+// modes did before this -- stretches/squashes it to whatever the canvas
+// shape happens to be. This mirrors CSS object-fit:contain: scale
+// uniformly so the whole frame fits inside VWxVH, letterboxed rather
+// than distorted.
+function fitFrameToCanvas(frameW, frameH) {
+  const frameAspect = frameW / frameH, canvasAspect = VW / VH;
+  return frameAspect > canvasAspect
+    ? { w: VW, h: VW / frameAspect }
+    : { w: VH * frameAspect, h: VH };
+}
+
 // Draw loop -- unchanged from orbit_sequencer.html below this point,
 // same five original modes, same math, just reading freqData/waveData
 // from whatever the last postMessage set instead of an AnalyserNode.
@@ -416,7 +431,8 @@ function drawViz() {
       vpixOffCtx.putImageData(videoFrame.imageData, 0, 0);
       vctx.imageSmoothingEnabled = false;
       const pulseScale = 1 + pixelsPulse*0.12;
-      const dw = VW * vizUserScale * pulseScale, dh = VH * vizUserScale * pulseScale;
+      const fit = fitFrameToCanvas(videoFrame.w, videoFrame.h);
+      const dw = fit.w * vizUserScale * pulseScale, dh = fit.h * vizUserScale * pulseScale;
       vctx.drawImage(vpixOff, 0, 0, videoFrame.w, videoFrame.h, cx-dw/2, cy-dh/2, dw, dh);
       vctx.imageSmoothingEnabled = true;
       // a hard bass hit also flashes a brief color wash directly over
@@ -469,10 +485,11 @@ function drawViz() {
       const STRIDE = asciiStride;
       const cols = Math.floor(videoFrame.w / STRIDE);
       const rows = Math.floor(videoFrame.h / STRIDE);
-      const cellW = (VW * vizUserScale) / cols;
-      const cellH = (VH * vizUserScale) / rows;
-      const ox = cx - (VW * vizUserScale) / 2;
-      const oy = cy - (VH * vizUserScale) / 2;
+      const fit = fitFrameToCanvas(videoFrame.w, videoFrame.h);
+      const cellW = (fit.w * vizUserScale) / cols;
+      const cellH = (fit.h * vizUserScale) / rows;
+      const ox = cx - (fit.w * vizUserScale) / 2;
+      const oy = cy - (fit.h * vizUserScale) / 2;
       const px = videoFrame.imageData.data;
       vctx.font = `${Math.max(4, cellH * 1.15).toFixed(1)}px 'Courier New',monospace`;
       vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
