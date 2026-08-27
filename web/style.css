@@ -794,14 +794,14 @@ td button {
   color: var(--accent);
 }
 
-/* Orbit Sequencer easter egg -- same backdrop shape as the other
+/* Orbit Visualizer easter egg -- same backdrop shape as the other
    dialogs above, but the dialog itself is near-fullscreen instead of a
-   small centered box: the embedded page is a real instrument (step
-   grids, synth/filter/EQ panels, a canvas view), not a message, and
-   needs the room. No close button of its own in here on purpose --
-   orbit_sequencer.html already ships a "< BACK" button (wired to close
-   this via postMessage, see vue-app.js's mounted()), and the backdrop
-   click / Esc handling every other dialog already has cover the rest. */
+   small centered box: it's a real canvas view meant to be watched, not
+   a message, and needs the room. No close button of its own in here on
+   purpose -- orbit_visualizer.html already ships a "< BACK" button
+   (wired to close this via postMessage, see vue-app.js's mounted()),
+   and the backdrop click / Esc handling every other dialog already has
+   cover the rest. */
 #orbit-egg-backdrop {
   position: fixed;
   inset: 0;

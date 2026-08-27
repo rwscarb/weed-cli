@@ -245,6 +245,14 @@ const app = createApp({
     activeTab(tab) {
       history.replaceState(null, '', '#' + tab);
     },
+    // starts/stops the live audio feed to the orbit visualizer iframe --
+    // one place reacting to the flag instead of every single toggle site
+    // (the secret-code trigger, Esc, backdrop click, the iframe's own
+    // BACK button) each remembering to start/stop it themselves.
+    easterEggVisible(visible) {
+      if (visible) this.$nextTick(() => this.startOrbitVizFeed());
+      else this.stopOrbitVizFeed();
+    },
   },
 
   async mounted() {
@@ -922,6 +930,66 @@ const app = createApp({
       if (!rec) { this.player.queue = null; return; }
       this.openPlayer(rec.job_id, next.title || rec.title || this.shortHash(next.content_hash),
         next.content_hash, next.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + 1 });
+    },
+
+    // ── orbit visualizer (easter egg) ────────────────────────────────
+    // Lazy + cached forever, not per-open: createMediaElementSource can
+    // only ever be called once on a given <video> for its whole
+    // lifetime -- a second call throws -- and this app has exactly one
+    // <video>, reused for every "▶ Play" for as long as the page stays
+    // open. Once tapped here, this element's audio is permanently
+    // routed through this Web Audio graph instead of its native output;
+    // that's transparent to the ear (source connects straight through
+    // to destination, unity gain, nothing else touches the signal) but
+    // it does mean this can't be un-done for this element short of a
+    // full page reload.
+    _ensureOrbitAnalyser() {
+      if (this._orbitAnalyser) return this._orbitAnalyser;
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioContextClass();
+      const source = ctx.createMediaElementSource(this.$refs.playerVideo);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 2048;
+      analyser.smoothingTimeConstant = 0.82;
+      source.connect(analyser);
+      source.connect(ctx.destination);
+      this._orbitAnalyser = {
+        ctx, analyser,
+        freq: new Uint8Array(analyser.frequencyBinCount),
+        wave: new Uint8Array(analyser.fftSize),
+      };
+      return this._orbitAnalyser;
+    },
+    // Web Audio nodes themselves can't cross the iframe boundary (each
+    // window/realm has its own AudioContext universe), but the plain
+    // Uint8Array snapshots getByteFrequencyData/getByteTimeDomainData
+    // fill in are just data -- postMessage structured-clones those
+    // straight across every frame, which is all orbit_visualizer.html's
+    // own draw loop actually needs (see its own comment on this).
+    startOrbitVizFeed() {
+      // re-entry guard -- the easterEggVisible watch calls this
+      // automatically, so a caller that also calls it directly (or the
+      // watch itself firing twice for any reason) would otherwise stack
+      // a second concurrent rAF loop, each posting its own copy of
+      // every frame
+      if (this._orbitVizRunning) return;
+      const { ctx, analyser, freq, wave } = this._ensureOrbitAnalyser();
+      if (ctx.state === 'suspended') ctx.resume();
+      this._orbitVizRunning = true;
+      const tick = () => {
+        if (!this._orbitVizRunning) return;
+        analyser.getByteFrequencyData(freq);
+        analyser.getByteTimeDomainData(wave);
+        const frame = this.$refs.orbitVizFrame;
+        if (frame && frame.contentWindow) {
+          frame.contentWindow.postMessage({ type: 'orbit-audio', freq, wave }, '*');
+        }
+        requestAnimationFrame(tick);
+      };
+      tick();
+    },
+    stopOrbitVizFeed() {
+      this._orbitVizRunning = false;
     },
 
     // ── host ──────────────────────────────────────────────────────────
