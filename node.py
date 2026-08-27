@@ -232,7 +232,18 @@ def load_manifest_entries(archive_dir, file_name=None):
     """Every distinct file in the archive, not just one — find_manifest_entry
     collapses to a single entries[-1], which is exactly why `host <dir>` with
     no --file only ever served the single most-recently-added file out of a
-    45-video archive. Dedupes by name (last-write-wins, same convention)."""
+    45-video archive. Dedupes by name (last-write-wins, same convention).
+
+    Only 'video' entries are returned. Hosting depends on chunk data
+    (load_leaves) and per-chunk byte math (entry['chunk_size']), and ott
+    only ever writes either for video-type entries — everything else
+    (photos, or any file whose extension ott's is_video() doesn't
+    recognize, which is also where a plain .mp3 lands, since ott only has
+    two types) has chunk_size: None and no .ott/chunks/<hash>.json at all.
+    Filtering here, the one function every hosting path (weed.py,
+    shell.py, web_ui.py) goes through, means one non-video file sitting
+    in an archive_dir no longer poison-pills hosting everything else in
+    it with 'no chunks file at ...'."""
     archive_dir = os.path.expanduser(archive_dir)
     manifest_path = os.path.join(archive_dir, '.ott', 'manifest.jsonl')
     if not os.path.exists(manifest_path):
@@ -244,8 +255,15 @@ def load_manifest_entries(archive_dir, file_name=None):
     by_name = {}
     for e in raw:
         by_name[e['name']] = e
-    entries = list(by_name.values())
+    all_entries = list(by_name.values())
+    entries = [e for e in all_entries if e.get('type') == 'video']
     if not entries:
+        if all_entries:
+            n = len(all_entries)
+            sys.exit(f"no hostable video file found in {archive_dir}" +
+                     (f" matching {file_name}" if file_name else "") +
+                     f" — found {n} non-video entr{'y' if n == 1 else 'ies'} "
+                     f"(only video files can be hosted; see ott's is_video())")
         sys.exit(f"no archived file found in {archive_dir}" + (f" matching {file_name}" if file_name else ""))
     return entries
 
