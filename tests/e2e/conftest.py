@@ -25,7 +25,13 @@ import web_ui
 from testutil import free_port, wait_for_port, make_fake_archive
 
 
-CHROMIUM_PATH = os.environ.get('WEED_TEST_CHROMIUM', '/usr/bin/chromium')
+# Unset by default -- Playwright's own `playwright install chromium`
+# downloads a browser into a versioned cache dir (~/.cache/ms-playwright/),
+# and p.chromium.launch() finds it automatically with no executable_path
+# needed at all. That's the normal path (what CI uses). WEED_TEST_CHROMIUM
+# is only for a dev machine that already has a system Chromium and would
+# rather point at that than download Playwright's own copy.
+CHROMIUM_PATH = os.environ.get('WEED_TEST_CHROMIUM') or None
 
 
 @pytest.fixture()
