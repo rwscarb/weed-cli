@@ -67,6 +67,7 @@ btn, .btn {
     <button class="btn" data-viz="scope">SCOPE</button>
     <button class="btn" data-viz="spiral">SPIRAL</button>
     <button class="btn" data-viz="pixels">PIXELS</button>
+    <button class="btn" data-viz="ascii">ASCII</button>
   </div>
   <canvas id="vizCanvas"></canvas>
   <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen)</div>
@@ -171,9 +172,20 @@ document.getElementById('vizModes').addEventListener('click', function(e){
   resetVizNav();
 });
 
+// Shared fallback for the two video-based modes (pixels/ascii) when no
+// frame has arrived yet -- see videoFrame's own comment on why that can
+// be true even while a video is genuinely loaded and playing.
+function drawNoVideoMessage(hueBase) {
+  vctx.fillStyle = `hsla(${hueBase|0},40%,55%,0.5)`;
+  vctx.font = `${Math.max(10, Math.round(VH*0.04))}px 'Courier New',monospace`;
+  vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+  vctx.fillText('— no video playing —', VW/2, VH/2);
+  vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
+}
+
 // Draw loop -- unchanged from orbit_sequencer.html below this point,
-// same five modes, same math, just reading freqData/waveData from
-// whatever the last postMessage set instead of an AnalyserNode.
+// same five original modes, same math, just reading freqData/waveData
+// from whatever the last postMessage set instead of an AnalyserNode.
 function drawViz() {
   requestAnimationFrame(drawViz);
   if (!VW || !VH) return;
@@ -295,11 +307,7 @@ function drawViz() {
   } else if (vizMode === 'pixels') {
     vctx.fillStyle = '#000'; vctx.fillRect(0,0,VW,VH);
     if (!videoFrame) {
-      vctx.fillStyle = `hsla(${hueBase|0},40%,55%,0.5)`;
-      vctx.font = `${Math.max(10, Math.round(VH*0.04))}px 'Courier New',monospace`;
-      vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
-      vctx.fillText('— no video playing —', VW/2, VH/2);
-      vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
+      drawNoVideoMessage(hueBase);
     } else {
       // putImageData paints the low-res sample 1:1; the actual scale-up
       // to fill the canvas happens in the drawImage below, with
@@ -327,6 +335,49 @@ function drawViz() {
         vctx.fill();
       }
     }
+
+  } else if (vizMode === 'ascii') {
+    vctx.fillStyle = '#000'; vctx.fillRect(0,0,VW,VH);
+    if (!videoFrame) {
+      drawNoVideoMessage(hueBase);
+    } else {
+      // Classic sparse->dense brightness ramp. Sampled at every other
+      // source pixel (32x18 out of the underlying 64x36), not every
+      // one -- a real ASCII-art grid is chunkier than its source image
+      // by nature (each cell is a whole character, much wider than a
+      // pixel), and it keeps this to ~500-600 fillText calls/frame
+      // instead of ~2300, which matters since canvas text is one of
+      // the more expensive things to draw a lot of, every frame.
+      const RAMP = ' .:-=+*#%@';
+      const STRIDE = 2;
+      const cols = Math.floor(videoFrame.w / STRIDE);
+      const rows = Math.floor(videoFrame.h / STRIDE);
+      const cellW = (VW * vizUserScale) / cols;
+      const cellH = (VH * vizUserScale) / rows;
+      const ox = cx - (VW * vizUserScale) / 2;
+      const oy = cy - (VH * vizUserScale) / 2;
+      const px = videoFrame.imageData.data;
+      vctx.font = `${Math.max(4, cellH * 1.15).toFixed(1)}px 'Courier New',monospace`;
+      vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+      for (let y=0; y<rows; y++) {
+        for (let x=0; x<cols; x++) {
+          const i = ((y*STRIDE)*videoFrame.w + (x*STRIDE)) * 4;
+          const r=px[i], g=px[i+1], b=px[i+2];
+          const bright = (r*0.299 + g*0.587 + b*0.114) / 255;
+          if (bright < 0.03) continue; // near-black cells stay empty, same as real ASCII art leaving blanks
+          const ch = RAMP[Math.min(RAMP.length-1, Math.floor(bright * RAMP.length))];
+          // audio nudges brightness/alpha per column, same "ties into
+          // the same bin data every other mode reacts to" as pixels'
+          // glow ring above, just woven directly into the characters
+          // here instead of a separate overlay
+          const v = freqData[Math.floor((x/cols)*maxBin)] / 255;
+          const alpha = Math.min(1, 0.55 + bright*0.3 + v*0.25);
+          vctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+          vctx.fillText(ch, ox + x*cellW + cellW/2, oy + y*cellH + cellH/2);
+        }
+      }
+      vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
+    }
   }
 }
 drawViz();
@@ -349,7 +400,7 @@ document.addEventListener('keydown', function(e) {
   if (e.code === 'KeyF') toggleVizFullscreen();
   if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
     e.preventDefault();
-    const modes = ['tunnel','bars','mirror','scope','spiral','pixels'];
+    const modes = ['tunnel','bars','mirror','scope','spiral','pixels','ascii'];
     const idx = modes.indexOf(vizMode);
     vizMode = modes[(idx + (e.code === 'ArrowRight' ? 1 : -1) + modes.length) % modes.length];
     document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === vizMode));
