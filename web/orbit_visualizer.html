@@ -30,12 +30,23 @@ btn, .btn {
 }
 .btn:hover { border-color:var(--accent); color:var(--accent); }
 .btn.lit { border-color:var(--accent); color:#fff; background:#00ff8818; box-shadow:0 0 7px #00ff8830; }
-.preset-row { display:flex; gap:4px; flex-wrap:wrap; }
+.preset-row { display:flex; gap:4px; flex-wrap:wrap; align-items:center; }
 #vizSection {
   flex:1; display:flex; flex-direction:column;
   padding:10px 14px 14px; position:relative; min-height:0;
 }
 #vizModes { margin-bottom:8px; flex-shrink:0; }
+.ascii-controls { margin-bottom:8px; flex-shrink:0; }
+.ascii-controls-label { font-size:9px; color:var(--muted); letter-spacing:.1em; }
+.ascii-controls-val { font-size:9px; color:var(--fg); min-width:68px; }
+.ascii-controls input[type=range] {
+  width:80px; accent-color:var(--accent);
+  height:3px; background:var(--dim); appearance:none;
+}
+.ascii-controls input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance:none; width:10px; height:10px;
+  border-radius:50%; background:var(--accent);
+}
 #vizCanvas {
   image-rendering:pixelated; cursor:grab;
   width:100%; flex:1; min-height:0;
@@ -68,6 +79,13 @@ btn, .btn {
     <button class="btn" data-viz="spiral">SPIRAL</button>
     <button class="btn" data-viz="pixels">PIXELS</button>
     <button class="btn" data-viz="ascii">ASCII</button>
+  </div>
+  <div class="preset-row ascii-controls" id="asciiControls" style="display:none">
+    <span class="ascii-controls-label">RES</span>
+    <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
+    <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
+    <button class="btn lit" data-color="neon">NEON</button>
+    <button class="btn" data-color="natural">NATURAL</button>
   </div>
   <canvas id="vizCanvas"></canvas>
   <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen)</div>
@@ -121,7 +139,15 @@ window.addEventListener('message', e => {
     if (vpixOff.width !== msg.w || vpixOff.height !== msg.h) {
       vpixOff.width = msg.w; vpixOff.height = msg.h;
     }
+    const isFirstFrame = !videoFrame;
     videoFrame = { w: msg.w, h: msg.h, imageData: new ImageData(msg.data, msg.w, msg.h) };
+    // the label depends on videoFrame.w/h, which don't exist yet before
+    // the first real frame arrives (updateAsciiResLabel is a hoisted
+    // function declaration, defined further down but safe to call here
+    // -- by the time any message actually arrives the whole script has
+    // already finished its initial synchronous pass, well after that
+    // declaration ran)
+    if (isFirstFrame) updateAsciiResLabel();
   }
 });
 
@@ -137,6 +163,13 @@ let vizPanX=0, vizPanY=0, vizUserScale=1.0, vizRot=0;
 // not the same constant rate every other mode already uses.
 let pixelsRingRot=0, pixelsPulse=0;
 let vizMode = 'tunnel';
+// ASCII's own controls -- resolution (STRIDE, coarser = fewer/bigger
+// characters) and color mode (the video's real per-cell color vs. the
+// rotating neon palette added for "often quite dark" real footage).
+// Both live as plain module state read directly by ASCII's draw branch,
+// same pattern vizMode/vizUserScale/etc. already use.
+let asciiStride = 1;
+let asciiColorMode = 'neon';
 
 function resetVizNav() { vizPanX=0; vizPanY=0; vizUserScale=1.0; }
 
@@ -170,11 +203,42 @@ new ResizeObserver(resizeVizCanvas).observe(vizCanvas);
 })();
 
 // Viz mode switching
+const asciiControls = document.getElementById('asciiControls');
 document.getElementById('vizModes').addEventListener('click', function(e){
   const btn = e.target.closest('[data-viz]'); if(!btn) return;
   vizMode = btn.dataset.viz;
   this.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b===btn));
   resetVizNav();
+  asciiControls.style.display = vizMode === 'ascii' ? 'flex' : 'none';
+});
+
+// ASCII resolution slider -- STRIDE 1-4, i.e. every source pixel down
+// to every 4th one, labeled with the actual resulting character count
+// (a bare "1-4" scale means nothing on its own; the real number people
+// actually asked for is "how many characters is that")
+const asciiResSlider = document.getElementById('asciiResSlider');
+const asciiResVal = document.getElementById('asciiResVal');
+function updateAsciiResLabel() {
+  if (!videoFrame) { asciiResVal.textContent = '—'; return; }
+  const cols = Math.floor(videoFrame.w / asciiStride);
+  const rows = Math.floor(videoFrame.h / asciiStride);
+  asciiResVal.textContent = (cols*rows).toLocaleString() + ' chars';
+}
+asciiResSlider.addEventListener('input', () => {
+  asciiStride = parseInt(asciiResSlider.value, 10);
+  updateAsciiResLabel();
+});
+
+// ASCII color mode -- NATURAL (the video's own per-cell color, exactly
+// what this mode used to always do) vs NEON (the rotating HSL palette
+// added afterward for dim/desaturated real footage). Both are worth
+// having: NATURAL for footage that's already colorful and where the
+// actual colors matter, NEON for anything dark or monochrome.
+document.querySelectorAll('#asciiControls [data-color]').forEach(btn => {
+  btn.addEventListener('click', () => {
+    asciiColorMode = btn.dataset.color;
+    document.querySelectorAll('#asciiControls [data-color]').forEach(b => b.classList.toggle('lit', b===btn));
+  });
 });
 
 // Shared fallback for the two video-based modes (pixels/ascii) when no
@@ -387,15 +451,15 @@ function drawViz() {
       drawNoVideoMessage(hueBase);
     } else {
       // Classic sparse->dense brightness ramp, one character per
-      // sampled source pixel (96x54 -- see vue-app.js's own comment on
-      // why that's the source resolution, not the full video). STRIDE
-      // exists as an escape hatch if this ever needs to trade detail
-      // for frame rate on weaker hardware -- canvas text is one of the
-      // more expensive things to draw a lot of, every frame -- but
-      // measured directly at STRIDE 1 here first before assuming that
-      // trade was actually necessary.
+      // sampled source pixel by default (96x54 -- see vue-app.js's own
+      // comment on why that's the source resolution, not the full
+      // video). STRIDE is user-controlled now (the RES slider) rather
+      // than a fixed 1 -- coarser/fewer, bigger characters reads as a
+      // genuinely different, chunkier style, not just "the same thing
+      // slower," so it's worth having as a real control rather than a
+      // hidden performance escape hatch.
       const RAMP = ' .:-=+*#%@';
-      const STRIDE = 1;
+      const STRIDE = asciiStride;
       const cols = Math.floor(videoFrame.w / STRIDE);
       const rows = Math.floor(videoFrame.h / STRIDE);
       const cellW = (VW * vizUserScale) / cols;
@@ -417,23 +481,33 @@ function drawViz() {
           // glow ring above, just woven directly into the characters
           // here instead of a separate overlay
           const v = freqData[Math.floor((x/cols)*maxBin)] / 255;
-          // Neon HSL palette instead of the video's own literal RGB --
-          // real footage is often dim/desaturated, and coloring each
-          // character with its exact source pixel color meant the whole
-          // mode was only ever as bright and colorful as that one frame
-          // happened to be (Ryan's "often quite dark" report). bright
-          // still picks the character (so the video's own shapes/
-          // silhouette stay recognizable) and still nudges lightness,
-          // but the hue is now its own thing entirely: drifts across
-          // the grid (position-based offset) and over time (hueBase/
-          // vizRot, the same rotating hue every other mode already
-          // uses) for a genuinely colorful, ever-shifting rainbow
-          // rather than a muted copy of the source. Saturation stays
-          // pinned high (90%) always -- that's the actual "neon" of it.
-          const hue = (hueBase + (x/cols)*260 + (y/rows)*60 + vizRot*30) % 360;
-          const light = Math.min(85, 40 + bright*25 + v*35);
-          const alpha = Math.min(1, 0.55 + bright*0.25 + v*0.35);
-          vctx.fillStyle = `hsla(${hue|0},90%,${light|0}%,${alpha.toFixed(2)})`;
+          if (asciiColorMode === 'neon') {
+            // Neon HSL palette instead of the video's own literal RGB --
+            // real footage is often dim/desaturated, and coloring each
+            // character with its exact source pixel color meant the
+            // whole mode was only ever as bright and colorful as that
+            // one frame happened to be (Ryan's "often quite dark"
+            // report). bright still picks the character (so the video's
+            // own shapes/silhouette stay recognizable) and still nudges
+            // lightness, but the hue is its own thing entirely: drifts
+            // across the grid (position-based offset) and over time
+            // (hueBase/vizRot, the same rotating hue every other mode
+            // already uses) for a genuinely colorful, ever-shifting
+            // rainbow rather than a muted copy of the source. Saturation
+            // stays pinned high (90%) always -- that's the actual "neon."
+            const hue = (hueBase + (x/cols)*260 + (y/rows)*60 + vizRot*30) % 360;
+            const light = Math.min(85, 40 + bright*25 + v*35);
+            const alpha = Math.min(1, 0.55 + bright*0.25 + v*0.35);
+            vctx.fillStyle = `hsla(${hue|0},90%,${light|0}%,${alpha.toFixed(2)})`;
+          } else {
+            // NATURAL -- the video's own real per-cell color, exactly
+            // what this mode did before NEON existed. Worth keeping as
+            // its own option: footage that's already colorful (or where
+            // the actual colors are the point) looks better true to
+            // itself than forced through a rainbow it doesn't need.
+            const alpha = Math.min(1, 0.55 + bright*0.3 + v*0.25);
+            vctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+          }
           vctx.fillText(ch, ox + x*cellW + cellW/2, oy + y*cellH + cellH/2);
         }
       }
