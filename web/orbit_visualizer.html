@@ -85,8 +85,8 @@ btn, .btn {
     <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
     <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
     <span class="ascii-controls-label">BRI</span>
-    <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1">
-    <span class="ascii-controls-val" id="asciiBriVal">1.0x</span>
+    <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.5">
+    <span class="ascii-controls-val" id="asciiBriVal">1.5x</span>
     <button class="btn" data-color="neon">NEON</button>
     <button class="btn lit" data-color="natural">NATURAL</button>
   </div>
@@ -181,7 +181,7 @@ let asciiColorMode = 'natural';
 // quite dark", which the NEON palette only ever addressed indirectly.
 // >1 also lets genuinely dark source footage clear the bright<0.03
 // skip threshold and actually render instead of leaving blank cells.
-let asciiBrightness = 1.0;
+let asciiBrightness = 1.5;
 
 function resetVizNav() { vizPanX=0; vizPanY=0; vizUserScale=1.0; }
 
