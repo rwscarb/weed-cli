@@ -417,8 +417,23 @@ function drawViz() {
           // glow ring above, just woven directly into the characters
           // here instead of a separate overlay
           const v = freqData[Math.floor((x/cols)*maxBin)] / 255;
-          const alpha = Math.min(1, 0.55 + bright*0.3 + v*0.25);
-          vctx.fillStyle = `rgba(${r},${g},${b},${alpha.toFixed(2)})`;
+          // Neon HSL palette instead of the video's own literal RGB --
+          // real footage is often dim/desaturated, and coloring each
+          // character with its exact source pixel color meant the whole
+          // mode was only ever as bright and colorful as that one frame
+          // happened to be (Ryan's "often quite dark" report). bright
+          // still picks the character (so the video's own shapes/
+          // silhouette stay recognizable) and still nudges lightness,
+          // but the hue is now its own thing entirely: drifts across
+          // the grid (position-based offset) and over time (hueBase/
+          // vizRot, the same rotating hue every other mode already
+          // uses) for a genuinely colorful, ever-shifting rainbow
+          // rather than a muted copy of the source. Saturation stays
+          // pinned high (90%) always -- that's the actual "neon" of it.
+          const hue = (hueBase + (x/cols)*260 + (y/rows)*60 + vizRot*30) % 360;
+          const light = Math.min(85, 40 + bright*25 + v*35);
+          const alpha = Math.min(1, 0.55 + bright*0.25 + v*0.35);
+          vctx.fillStyle = `hsla(${hue|0},90%,${light|0}%,${alpha.toFixed(2)})`;
           vctx.fillText(ch, ox + x*cellW + cellW/2, oy + y*cellH + cellH/2);
         }
       }
