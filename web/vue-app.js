@@ -964,14 +964,18 @@ const app = createApp({
     // like the analyser above -- same-origin video (this app only ever
     // streams from its own /api/stream/<job_id>), so drawImage +
     // getImageData here never hits a tainted-canvas security error.
-    // Kept tiny on purpose: this gets read back and posted every couple
-    // of frames, and the "orbit visualization" a viewer actually wants
-    // is a low-res color/motion impression, not a full-res copy of the
-    // video the iframe already can't show behind this dialog anyway.
+    // 96x54 (not full video res): this gets read back and posted every
+    // couple of frames, and the "orbit visualization" a viewer actually
+    // wants is a color/motion impression, not a full-res copy of the
+    // video the iframe already can't show behind this dialog anyway --
+    // this is still ~9x the pixel count PIXELS/ASCII actually need to
+    // look meaningfully more detailed (see ASCII's own comment on why
+    // that resolution ceiling mattered enough to bump), while staying
+    // cheap: 96*54*4 = ~20KB/frame over postMessage, nothing.
     _ensureOrbitVideoCanvas() {
       if (this._orbitVideoCanvas) return this._orbitVideoCanvas;
       const canvas = document.createElement('canvas');
-      canvas.width = 64; canvas.height = 36;
+      canvas.width = 96; canvas.height = 54;
       this._orbitVideoCanvas = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }) };
       return this._orbitVideoCanvas;
     },

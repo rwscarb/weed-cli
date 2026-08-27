@@ -341,15 +341,16 @@ function drawViz() {
     if (!videoFrame) {
       drawNoVideoMessage(hueBase);
     } else {
-      // Classic sparse->dense brightness ramp. Sampled at every other
-      // source pixel (32x18 out of the underlying 64x36), not every
-      // one -- a real ASCII-art grid is chunkier than its source image
-      // by nature (each cell is a whole character, much wider than a
-      // pixel), and it keeps this to ~500-600 fillText calls/frame
-      // instead of ~2300, which matters since canvas text is one of
-      // the more expensive things to draw a lot of, every frame.
+      // Classic sparse->dense brightness ramp, one character per
+      // sampled source pixel (96x54 -- see vue-app.js's own comment on
+      // why that's the source resolution, not the full video). STRIDE
+      // exists as an escape hatch if this ever needs to trade detail
+      // for frame rate on weaker hardware -- canvas text is one of the
+      // more expensive things to draw a lot of, every frame -- but
+      // measured directly at STRIDE 1 here first before assuming that
+      // trade was actually necessary.
       const RAMP = ' .:-=+*#%@';
-      const STRIDE = 2;
+      const STRIDE = 1;
       const cols = Math.floor(videoFrame.w / STRIDE);
       const rows = Math.floor(videoFrame.h / STRIDE);
       const cellW = (VW * vizUserScale) / cols;
