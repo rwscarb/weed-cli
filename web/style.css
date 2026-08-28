@@ -480,6 +480,15 @@ td button {
      unambiguous immediately: this element handles its own gestures,
      nothing to decide. */
   touch-action: none;
+  /* a mouse mousedown+drag here otherwise starts a native text-selection
+     drag (anchored at the header's own title text) instead of just
+     moving the window -- selection tracks the same pointermove events
+     onPlayerDragMove reads, so every drag ended with the header's title
+     (and often a chunk of the rest of the page, if the drag crossed
+     over other text) highlighted blue. Blocking selection right at the
+     drag's anchor point stops it from ever starting, same fix shape as
+     touch-action: none above for the equivalent touch-gesture ambiguity. */
+  user-select: none;
 }
 
 #global-player.mode-theater {
@@ -489,6 +498,18 @@ td button {
   right: auto;
   bottom: auto;
   transform: translate(-50%, -50%);
+  /* same native resize handle mode-pip already has -- 900px is a
+     reasonable default, not everyone's preferred theater size (a big
+     external monitor has room to spare; a laptop might want smaller
+     without dropping all the way to a separate "pip" size). Growing
+     from a centered box (top/left: 50% + this translate) keeps it
+     visually centered as it resizes, rather than drifting toward one
+     corner the way it would from a plain top/left-anchored box. */
+  resize: both;
+  min-width: 320px;
+  min-height: 200px;
+  max-width: 96vw;
+  max-height: 96vh;
 }
 
 .player-header {
