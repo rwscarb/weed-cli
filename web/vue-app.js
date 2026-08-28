@@ -180,6 +180,7 @@ const app = createApp({
         { keys: 'r', desc: 'Refresh Discover' },
         { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open)' },
         { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
+        { keys: 'Space', desc: 'Play / pause (while a video is open)' },
         { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
         { keys: '?', desc: 'Toggle this list' },
       ],
@@ -745,6 +746,20 @@ const app = createApp({
       }
       if (e.key === 'p' && this.player.visible) {
         this.playQueueOffset(-1);
+        return;
+      }
+
+      if (e.key === ' ' && this.player.visible) {
+        // preventDefault matters here beyond "don't scroll the page"
+        // (Space's other native default): whatever last had focus (e.g.
+        // the Play button you just clicked) still has it, and Space's
+        // *other* native behavior is "activate the focused button" --
+        // without this, pausing here would also re-fire that button's
+        // own click right after, an entirely separate, surprising second
+        // action.
+        e.preventDefault();
+        const video = this.$refs.playerVideo;
+        if (video.paused) video.play(); else video.pause();
       }
     },
 
