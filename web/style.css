@@ -543,7 +543,8 @@ td button {
   max-height: 90vh;
 }
 
-#global-player.mode-pip .player-header {
+#global-player.mode-pip .player-header,
+#global-player.mode-theater .player-header {
   cursor: move;
   /* without this, a touch drag here is ambiguous to the browser between
      "pan the page" and "this element wants the gesture" -- it holds the

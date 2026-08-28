@@ -403,6 +403,15 @@
 <div id="playlist-picker" ref="playlistPicker" class="qr-popup playlist-picker" :class="{hidden: !playlistPicker.visible}"
      :style="playlistPickerStyle">
   <div class="playlist-picker-title">Add to playlist</div>
+  <div class="playlist-picker-list" v-if="player.visible && player.queue && !playingPlaylistId">
+    <div class="playlist-picker-item playlist-picker-item-active">
+      <button type="button" class="playlist-picker-item-add" title="Add to the current play queue"
+              @click="addToQueue(playlistPicker.item)">
+        <span class="playlist-picker-item-name">▶ Currently Playing</span>
+        <span class="muted">{{ player.queue.items.length }}</span>
+      </button>
+    </div>
+  </div>
   <div class="playlist-picker-list" v-if="library.playlists.length">
     <div class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
          :class="{'playlist-picker-item-active': pl.id === playingPlaylistId}">

@@ -502,9 +502,18 @@ const app = createApp({
     // bypasses our own button) still lands back in whichever of
     // pip/theater it was in before, with no extra JS bookkeeping.
     // queue is only ever passed by playPlaylist/onPlayerEnded -- every
-    // ordinary "▶ Play" click omits it, which correctly ends any playlist
-    // that happened to be running (manually picking a different video is
-    // exactly the "I'm done following that queue" signal)
+    // ordinary "▶ Play" click omits it -- rather than leaving player.queue
+    // null (no queue at all), that builds a fresh one-item ad-hoc queue
+    // below, with playlistId: null marking it as not backed by any saved
+    // playlist. This is the "Currently Playing" queue the playlist-picker
+    // popup offers to add to (see its own template block in index.html
+    // and addToQueue) whenever nothing explicit is driving playback --
+    // without it, playing anything outside a real playlist had no queue
+    // at all to add a "play next" onto. Manually picking a different
+    // video (any call here that isn't itself continuing an existing
+    // queue) still correctly starts a *new* one-item queue rather than
+    // appending to the old, since that's exactly the "I'm done following
+    // that queue" signal the old comment already described.
     openPlayer(jobId, title, contentHash, signerPubkey, queue = null) {
       this.player.jobId = jobId;
       this.player.title = title || jobId;
@@ -522,7 +531,10 @@ const app = createApp({
       // already chose to watch in.
       if (!this.player.visible) this.player.mode = 'pip';
       this.player.visible = true;
-      this.player.queue = queue;
+      this.player.queue = queue || {
+        items: [{ content_hash: contentHash, title: title || null, signer_pubkey: signerPubkey || null }],
+        index: 0, playlistId: null,
+      };
       this.$nextTick(() => {
         const video = this.$refs.playerVideo;
         video.src = '/api/stream/' + jobId;
@@ -563,16 +575,19 @@ const app = createApp({
       const el = this.$refs.globalPlayer;
       if (el) {
         el.classList.add('mode-transitioning');
-        // clear any manual drag/resize from the PIP mode this is leaving
-        // (or entering) -- inline styles outrank the mode-pip/
-        // mode-theater CSS rules, so a leftover drag position would
-        // otherwise still win over theater's centered layout
+        // clear any manual drag/resize from the mode this is leaving (or
+        // entering) -- inline styles outrank the mode-pip/mode-theater
+        // CSS rules, so a leftover drag position (or, for theater, the
+        // transform onPlayerHeaderPointerDown neutralizes mid-drag --
+        // see its own comment) would otherwise still win over the new
+        // mode's own layout.
         el.style.top = '';
         el.style.left = '';
         el.style.right = '';
         el.style.bottom = '';
         el.style.width = '';
         el.style.height = '';
+        el.style.transform = '';
         setTimeout(() => el.classList.remove('mode-transitioning'), 220);
       }
       this.player.mode = mode;
@@ -580,17 +595,34 @@ const app = createApp({
     togglePlayerMode() {
       this.setPlayerMode(this.player.mode === 'theater' ? 'pip' : 'theater');
     },
-    // Dragging (PIP only -- theater stays centered) shares the header
-    // with the existing click-to-toggle behavior, so pointerdown starts
-    // tracking movement and only *becomes* a drag past a small
+    // Dragging (PIP and theater both -- fullscreen is a real browser
+    // state with its own layout, not something to drag) shares the
+    // header with the existing click-to-toggle behavior, so pointerdown
+    // starts tracking movement and only *becomes* a drag past a small
     // threshold; a real drag sets a one-shot flag that suppresses the
     // click event the browser still fires afterward, so it doesn't also
     // toggle the mode on top of the move.
     onPlayerHeaderPointerDown(e) {
       if (e.target.closest('button')) return;
-      if (this.player.mode !== 'pip') return;
+      if (this.player.mode !== 'pip' && this.player.mode !== 'theater') return;
       const el = this.$refs.globalPlayer;
       const rect = el.getBoundingClientRect();
+      if (this.player.mode === 'theater') {
+        // mode-theater centers via top/left: 50% + transform:
+        // translate(-50%, -50%), so the drag math below (which moves the
+        // box by writing plain top/left pixels) would fight that
+        // transform every frame instead of tracking the cursor. Pinning
+        // the box to its own current on-screen rect and dropping the
+        // transform right now -- before the first pointermove -- swaps
+        // to the same plain top/left model PIP already uses with zero
+        // visual jump, since rect.left/top already account for the
+        // transform that's being removed.
+        el.style.left = rect.left + 'px';
+        el.style.top = rect.top + 'px';
+        el.style.right = 'auto';
+        el.style.bottom = 'auto';
+        el.style.transform = 'none';
+      }
       this._drag = { moved: false, startX: e.clientX, startY: e.clientY, startLeft: rect.left, startTop: rect.top };
       window.addEventListener('pointermove', this.onPlayerDragMove);
       window.addEventListener('pointerup', this.onPlayerDragEnd, { once: true });
@@ -947,6 +979,25 @@ const app = createApp({
     playPlaylistFromPicker(pl) {
       this.playlistPicker.visible = false;
       this.playPlaylist(pl);
+    },
+    // The playlist-picker's "▶ Currently Playing" entry (see index.html,
+    // shown only while something's playing and no *real* playlist is
+    // driving it -- see playingPlaylistId) -- purely client-side, unlike
+    // addToPlaylist: this appends to the in-memory queue actually
+    // driving playback right now (onPlayerEnded/playQueueOffset already
+    // walk player.queue.items generically, playlistId or not), not to
+    // anything saved server-side. Same eager-download nudge addToPlaylist
+    // already does, for the same reason: an item still sitting
+    // undownloaded when playback reaches it would otherwise just get
+    // silently skipped.
+    addToQueue(item) {
+      if (!this.player.queue) return;
+      this.player.queue.items.push(
+        { content_hash: item.content_hash, title: item.title || null, signer_pubkey: item.signer_pubkey || null });
+      this.playlistPicker.visible = false;
+      if (item._dl && !item._dl.downloading && !this.library.downloads[item.content_hash]) {
+        this.download(item);
+      }
     },
     async createPlaylistAndAdd() {
       const name = this.newPlaylistName.trim();

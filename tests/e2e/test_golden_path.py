@@ -7,6 +7,8 @@ records against real server state -- not a mock.
 """
 import re
 
+import pytest
+
 
 def _vm(page):
     return page.evaluate_handle(
@@ -66,6 +68,95 @@ def test_download_then_play_updates_play_history(page, golden_path_server):
     assert rec_after['last_played'] is not None
     assert len(lib_after['history']) == 1
     assert lib_after['history'][0]['content_hash'] == hash_
+
+
+def _download_and_play(page, golden_path_server):
+    """Shared setup: get the one seeded video downloaded and open in the
+    global player, same click path test_download_then_play_updates_play_history
+    already exercises (see its own comments for why the two
+    :not(.swipe-back-mirror) selectors are needed)."""
+    page.goto(golden_path_server['web_url'])
+    page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
+    row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first
+    row.locator('.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='Download').click()
+    page.wait_for_selector('#discover-table .swipe-back:not(.swipe-back-mirror) .play-btn:has-text("▶ Play")', timeout=20_000)
+    row.locator('.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='▶ Play').click()
+    page.wait_for_selector('#global-player:not(.hidden)', timeout=5_000)
+
+
+def test_solo_play_gets_an_ad_hoc_currently_playing_queue(page, golden_path_server):
+    """Real report: playing a video directly (Discover/Downloads, not a
+    saved playlist) left player.queue null -- no Prev/Next, and no way to
+    queue up something else to play next, unless you'd gone to the extra
+    trouble of first building a real saved playlist. openPlayer now seeds
+    a one-item ad-hoc queue (playlistId: null) for any solo play, and the
+    playlist-picker popup offers a "Currently Playing" entry (only while
+    nothing *explicit* is driving playback -- see playingPlaylistId) that
+    appends to it. Only one real video exists in this fixture, so this
+    queues the same content_hash again -- the point is proving the
+    plumbing (queue exists, picker offers it, click grows it), not
+    variety of content."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+
+    queue = page.evaluate("vm => vm.player.queue", vm)
+    assert queue is not None
+    assert queue['playlistId'] is None
+    assert len(queue['items']) == 1
+    assert page.evaluate("vm => vm.playingPlaylistId", vm) is None
+
+    row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first
+    row.locator('.playlist-add-btn').click()
+    page.wait_for_selector('#playlist-picker:not(.hidden)')
+    queue_entry = page.locator('.playlist-picker-item-add', has_text='Currently Playing')
+    assert queue_entry.is_visible()
+    assert '1' in queue_entry.inner_text()
+
+    queue_entry.click()
+    page.wait_for_function("vm => vm.player.queue.items.length === 2", arg=vm)
+    assert page.locator('#playlist-picker.hidden').count() == 1  # picker closes itself on add
+
+    # the transport overlay's Next button should now be enabled, since
+    # there's a real second queue slot to advance into
+    page.hover('.player-video-wrap')
+    next_btn = page.locator('.transport-overlay-btn[title^="Next"]')
+    assert not next_btn.is_disabled()
+
+
+def test_theater_window_is_draggable(page, golden_path_server):
+    """Real report: Theater mode was resizable (free native CSS `resize`)
+    but not movable -- onPlayerHeaderPointerDown bailed out immediately
+    unless player.mode === 'pip'. Theater's centered layout is
+    top/left: 50% + transform: translate(-50%, -50%), so simply lifting
+    PIP's drag restriction wouldn't have been enough on its own: without
+    also neutralizing that transform at drag start, every dragged
+    position would still be re-centered by it and the window wouldn't
+    track the cursor at all. This drags the header and checks the window
+    actually moved by the drag delta, not just that some button exists."""
+    _download_and_play(page, golden_path_server)
+    page.click('#global-player .icon-btn[title="Theater / PIP"]')
+    page.wait_for_selector('#global-player.mode-theater')
+
+    header = page.locator('#global-player .player-header')
+    box = header.bounding_box()
+    player_box_before = page.locator('#global-player').bounding_box()
+
+    # start near the left edge of the header, well clear of the
+    # like/subscribe/theater/orbit/fullscreen/close buttons clustered on
+    # its right side (see index.html's .player-controls)
+    start_x, start_y = box['x'] + 20, box['y'] + box['height'] / 2
+    dx, dy = 80, 60
+    page.mouse.move(start_x, start_y)
+    page.mouse.down()
+    page.mouse.move(start_x + dx, start_y + dy, steps=10)
+    page.mouse.up()
+
+    player_box_after = page.locator('#global-player').bounding_box()
+    assert player_box_after['x'] == pytest.approx(player_box_before['x'] + dx, abs=2)
+    assert player_box_after['y'] == pytest.approx(player_box_before['y'] + dy, abs=2)
+    # size untouched by a drag -- only position should have moved
+    assert player_box_after['width'] == pytest.approx(player_box_before['width'], abs=2)
+    assert player_box_after['height'] == pytest.approx(player_box_before['height'], abs=2)
 
 
 def test_sort_by_recently_played_reflects_a_real_play(page, golden_path_server):
