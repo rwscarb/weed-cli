@@ -316,7 +316,7 @@
       <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
            draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash, 'playlist-item-clickable': library.downloads[it.content_hash]}"
            :title="library.downloads[it.content_hash] ? 'Click to play' : 'not downloaded yet'"
-           @click="playPlaylistItem(it)"
+           @click="playPlaylistItem(pl, it)"
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
            @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
         <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
@@ -384,10 +384,12 @@
      :style="playlistPickerStyle">
   <div class="playlist-picker-title">Add to playlist</div>
   <div class="playlist-picker-list" v-if="library.playlists.length">
-    <div class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id">
+    <div class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
+         :class="{'playlist-picker-item-active': pl.id === playingPlaylistId}">
       <button type="button" class="playlist-picker-item-add" title="Add to this playlist"
               @click="addToPlaylist(pl.id)">
         <span class="playlist-picker-item-name">{{ pl.name }}</span>
+        <span class="playlist-picker-item-playing" v-if="pl.id === playingPlaylistId" title="This playlist is currently playing">▶ Playing</span>
         <span class="muted">{{ pl.items.length }}</span>
       </button>
       <button type="button" class="icon-btn playlist-picker-play-btn" title="Play this playlist now"

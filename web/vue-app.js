@@ -126,10 +126,18 @@ const app = createApp({
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false,
-        // set only when playback started from a playlist's "Play all" --
-        // { items: [...], index } into that same array. null means "just
-        // playing one thing," the ordinary case -- see openPlayer/
-        // onPlayerEnded.
+        // set whenever playback started from a playlist (its "Play all",
+        // or clicking any individual track in it -- see playPlaylist/
+        // playPlaylistItem) -- { items: [...], index, playlistId } into
+        // that same array. null means "just playing one thing," the
+        // ordinary case -- see openPlayer/onPlayerEnded. playlistId is
+        // what the "Add to playlist" picker checks (see
+        // playlistPickerActivePlaylistId) to show which playlist, if
+        // any, is the one actually driving the current queue -- carried
+        // through on every re-openPlayer() a skip does (onPlayerEnded,
+        // playQueueOffset) rather than just set once at the start, same
+        // as items/index already were, since it's still the same
+        // logical queue continuing, not a new one.
         queue: null,
       },
 
@@ -270,6 +278,14 @@ const app = createApp({
         left: this.playlistPicker.left != null ? this.playlistPicker.left + 'px' : 'auto',
         right: this.playlistPicker.right != null ? this.playlistPicker.right + 'px' : 'auto',
       };
+    },
+    // null unless the player's current queue actually came from a
+    // playlist (see player.queue's own comment) -- the "Add to playlist"
+    // picker uses this to mark whichever playlist that is, so it's clear
+    // at a glance which one (if any) is actually playing right now
+    // rather than just which playlist a track happens to also sit in.
+    playingPlaylistId() {
+      return (this.player.visible && this.player.queue) ? this.player.queue.playlistId : null;
     },
   },
 
@@ -937,11 +953,19 @@ const app = createApp({
     // .playlist-item-clickable) -- a no-op for a not-yet-downloaded item
     // rather than an error, same as the old button simply not rendering
     // for one; "not downloaded" is already shown right there on the row.
-    playPlaylistItem(it) {
+    // Builds a real queue (same downloaded-only filter playPlaylist's
+    // "Play all" already uses) rather than just opening this one track
+    // standalone -- picking any track in a playlist makes that playlist
+    // the active queue starting from there, so Prev/Next/skip (the
+    // header/overlay buttons, n/p keys) are available immediately
+    // instead of only ever working after specifically hitting "Play all".
+    playPlaylistItem(pl, it) {
       const rec = this.library.downloads[it.content_hash];
       if (!rec) return;
+      const items = pl.items.filter(x => this.library.downloads[x.content_hash]);
+      const index = items.findIndex(x => x.content_hash === it.content_hash);
       this.openPlayer(rec.job_id, it.title || rec.title || this.shortHash(it.content_hash),
-        it.content_hash, it.signer_pubkey || rec.signer_pubkey);
+        it.content_hash, it.signer_pubkey || rec.signer_pubkey, { items, index, playlistId: pl.id });
     },
     // ── playlist drag-to-reorder ──────────────────────────────────────
     // Native HTML5 drag-and-drop, not a library -- one draggable list,
@@ -1023,7 +1047,7 @@ const app = createApp({
       const first = items[0];
       const rec = this.library.downloads[first.content_hash];
       this.openPlayer(rec.job_id, first.title || rec.title || this.shortHash(first.content_hash),
-        first.content_hash, first.signer_pubkey || rec.signer_pubkey, { items, index: 0 });
+        first.content_hash, first.signer_pubkey || rec.signer_pubkey, { items, index: 0, playlistId: playlist.id });
     },
     // advances player.queue on the <video>'s own 'ended' event -- see
     // openPlayer's queue param and playPlaylist above. Only ever walks
@@ -1039,7 +1063,8 @@ const app = createApp({
       const rec = this.library.downloads[next.content_hash];
       if (!rec) { this.player.queue = null; return; }
       this.openPlayer(rec.job_id, next.title || rec.title || this.shortHash(next.content_hash),
-        next.content_hash, next.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + 1 });
+        next.content_hash, next.signer_pubkey || rec.signer_pubkey,
+        { items: q.items, index: q.index + 1, playlistId: q.playlistId });
     },
     // Manual Prev/Next (the player header's ⏮/⏭, see index.html) --
     // distinct from onPlayerEnded's own auto-advance above rather than
@@ -1058,7 +1083,8 @@ const app = createApp({
       const rec = this.library.downloads[target.content_hash];
       if (!rec) return;
       this.openPlayer(rec.job_id, target.title || rec.title || this.shortHash(target.content_hash),
-        target.content_hash, target.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + delta });
+        target.content_hash, target.signer_pubkey || rec.signer_pubkey,
+        { items: q.items, index: q.index + delta, playlistId: q.playlistId });
     },
 
     // ── orbit visualizer (easter egg) ────────────────────────────────

@@ -1172,6 +1172,22 @@ code {
   gap: 0.25rem;
 }
 
+/* marks whichever playlist (if any) is actually the one driving the
+   player's current queue -- see playingPlaylistId's own comment on why
+   that's not just "does this playlist contain the current track" */
+.playlist-picker-item-active {
+  background: rgba(110, 231, 183, 0.06);
+  border-radius: 4px;
+}
+
+.playlist-picker-item-playing {
+  font-size: 0.72rem;
+  color: var(--accent);
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
 /* resets the generic button {} look (that's what made every entry here
    render as a big bordered accent pill before this existed) into a
    plain list row */
