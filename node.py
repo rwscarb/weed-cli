@@ -412,9 +412,15 @@ def bind_host_port(port, bind_host='0.0.0.0'):
     return srv
 
 
-def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
-                     ln_node=None, sock=None):
-    archive_dir = os.path.expanduser(archive_dir)
+def _manifest_mtime(archive_dir):
+    manifest_path = os.path.join(archive_dir, '.ott', 'manifest.jsonl')
+    try:
+        return os.path.getmtime(manifest_path)
+    except OSError:
+        return None
+
+
+def _load_hostable_entries(archive_dir, file_name):
     entries = load_manifest_entries(archive_dir, file_name)
     entries_by_hash = {}
     for entry in entries:
@@ -423,7 +429,15 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
         if not os.path.exists(file_path):
             sys.exit(f"archived file not found on disk at {file_path}")
         entries_by_hash[entry['sha256']] = (entry, leaves, file_path)
+    return entries, entries_by_hash
+
+
+def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
+                     ln_node=None, sock=None):
+    archive_dir = os.path.expanduser(archive_dir)
+    entries, entries_by_hash = _load_hostable_entries(archive_dir, file_name)
     default_hash = next(iter(entries_by_hash)) if len(entries_by_hash) == 1 else None
+    manifest_mtime = _manifest_mtime(archive_dir)
 
     srv = sock if sock is not None else bind_host_port(port, bind_host)
     srv.listen(8)
@@ -443,6 +457,38 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
 
     while True:
         conn, _ = srv.accept()
+        # Real report: a file dropped into this same archive_dir via the
+        # web UI's upload feature (or `ott add` from another terminal)
+        # never showed up for anyone connecting to an *already-running*
+        # host -- entries_by_hash used to be built once, at startup, and
+        # never looked at the manifest again for the rest of this
+        # process's life. The only fix was restarting the whole host
+        # (`make node` / docker restart), which also meant freeing the
+        # port first since nothing could stop the stale one gracefully
+        # (see web_ui.py's _handle_forget_host docstring on why there's
+        # no cancellation path into this accept() loop from outside).
+        #
+        # A cheap mtime check keeps the common case (nothing changed
+        # between connections) to a single stat() instead of re-parsing
+        # the manifest and every chunk-hash file on every single accept.
+        # Reassigning entries_by_hash/default_hash here (not mutating in
+        # place) means any download already in flight, which captured
+        # the previous dict by reference in its own thread's args, keeps
+        # using a perfectly consistent snapshot for its whole lifetime --
+        # only *new* connections from this point on see the reload.
+        current_mtime = _manifest_mtime(archive_dir)
+        if current_mtime != manifest_mtime:
+            try:
+                entries, entries_by_hash = _load_hostable_entries(archive_dir, file_name)
+                default_hash = next(iter(entries_by_hash)) if len(entries_by_hash) == 1 else None
+                manifest_mtime = current_mtime
+            except (SystemExit, Exception):
+                # a transient/partial write (e.g. an upload still mid-
+                # flight) shouldn't take down an otherwise-healthy host
+                # that was serving everything else just fine -- keep
+                # going with whatever the last good load was and try
+                # again on the next connection.
+                pass
         # a whole download now lives on one connection (see serve_session) —
         # accept() must hand off to a thread per connection, or one session
         # would block every other downloader until it finished
