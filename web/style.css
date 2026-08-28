@@ -991,48 +991,47 @@ code {
 }
 
 /* "now playing" decoration for whichever playlist item matches the
-   global player's current track -- several lights running around the
-   *entire* border, chasing each other, rather than a single edge filling
-   up (that was the first version of this; a growing fill reads as "this
-   much is done", which isn't actually what a playlist wants to say --
-   there's no single "done" position on a border loop, just "this is the
-   one playing right now").
+   global player's current track. First version of this used a rotating
+   conic-gradient masked down to a border ring -- looked uneven on a row
+   this wide and short (see the screenshot that prompted this rewrite):
+   conic-gradient's equal-angle slices don't cover equal physical
+   distance on a non-square box, so the short left/right edges lit up
+   brightly while long stretches of the top/bottom edges went dark in
+   between every cycle. No amount of tuning the gradient stops fixes
+   that -- it's the wrong tool for "evenly spaced around an arbitrary
+   rectangle."
 
-   Built as a rotating conic-gradient on a ::after the exact size of the
-   row, masked down to just the border ring (mask-composite: exclude
-   punches out everything but the gap between the outer edge and the
-   padding-box inset) -- the standard CSS-only animated-gradient-border
-   technique. --chase-angle is a real animatable custom property (see the
-   @property rule below); without registering it as an <angle>, the
-   browser can't interpolate between 0deg and 360deg at all and the
-   "animation" would just be two static frames. */
+   This is the actual right tool: a small dot moving along the row's own
+   border-box path (offset-path), animating offset-distance from 0% to
+   100%. That's arc length, not angle -- constant speed around corners
+   and edges alike, no dead zones regardless of aspect ratio. The subtle,
+   always-on outline underneath means the row still reads as "current"
+   at every point around it, not just wherever the traveling light
+   currently is. */
+.playlist-item-playing {
+  box-shadow: 0 0 0 1px var(--accent-dim);
+}
+
 .playlist-item-playing::after {
   content: '';
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  padding: 2px;
-  background: conic-gradient(from var(--chase-angle),
-    var(--accent) 0deg, transparent 22deg,
-    var(--accent) 90deg, transparent 112deg,
-    var(--accent) 180deg, transparent 202deg,
-    var(--accent) 270deg, transparent 292deg,
-    var(--accent) 360deg);
-  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
+  top: 0;
+  left: 0;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  margin-left: -3px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 4px 1px var(--accent);
+  offset-path: border-box;
+  offset-distance: 0%;
   pointer-events: none;
-  animation: chase-border 2.4s linear infinite;
+  animation: catch-light-travel 7s linear infinite;
 }
 
-@property --chase-angle {
-  syntax: '<angle>';
-  inherits: false;
-  initial-value: 0deg;
-}
-
-@keyframes chase-border {
-  to { --chase-angle: 360deg; }
+@keyframes catch-light-travel {
+  to { offset-distance: 100%; }
 }
 
 .drag-handle {
