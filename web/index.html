@@ -346,13 +346,7 @@
 <div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || (easterEggVisible && player.mode === 'pip')}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
-    <template v-if="player.queue">
-      <button type="button" class="icon-btn player-transport-btn" title="Previous track" :disabled="player.queue.index <= 0"
-              @click.stop="playQueueOffset(-1)">⏮</button>
-      <span class="player-queue-pos" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
-      <button type="button" class="icon-btn player-transport-btn" title="Next track" :disabled="player.queue.index >= player.queue.items.length - 1"
-              @click.stop="playQueueOffset(1)">⏭</button>
-    </template>
+    <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
     <div class="player-controls">
       <button type="button" class="icon-btn like-icon" :class="{active: player.contentHash && library.likes.has(player.contentHash)}"
               :disabled="!player.contentHash || library.likes.has(player.contentHash)"
@@ -369,8 +363,16 @@
       <button type="button" class="icon-btn" title="Close" @click.stop="closePlayer">✕</button>
     </div>
   </div>
-  <video ref="playerVideo" controls
-         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
+  <div class="player-video-wrap">
+    <video ref="playerVideo" controls
+           @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
+    <div class="player-transport-overlay" v-if="player.queue">
+      <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="player.queue.index <= 0"
+              @click.stop="playQueueOffset(-1)">⏮</button>
+      <button type="button" class="transport-overlay-btn" title="Next track (N)" :disabled="player.queue.index >= player.queue.items.length - 1"
+              @click.stop="playQueueOffset(1)">⏭</button>
+    </div>
+  </div>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">

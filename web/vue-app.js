@@ -171,6 +171,7 @@ const app = createApp({
         { keys: 'Enter / Space', desc: 'Play or Download the highlighted row (search box focused)' },
         { keys: 'r', desc: 'Refresh Discover' },
         { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open)' },
+        { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
         { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
         { keys: '?', desc: 'Toggle this list' },
       ],
@@ -484,7 +485,17 @@ const app = createApp({
       this.player.title = title || jobId;
       this.player.contentHash = contentHash || null;
       this.player.signerPubkey = signerPubkey || null;
-      this.player.mode = 'pip';
+      // Only defaults to pip on a genuinely fresh open (the player wasn't
+      // already showing something) -- this used to reset to 'pip'
+      // unconditionally, which meant skipping to the next/previous track
+      // while watching in theater (or fullscreen) mode snapped straight
+      // back to the docked corner every single time, since Next/Prev and
+      // the auto-advance on 'ended' all route through this same method.
+      // Loading a *different* video into an already-open player keeps
+      // whatever mode it's already in for the same reason -- there's no
+      // good reason switching tracks should ever fight the size you
+      // already chose to watch in.
+      if (!this.player.visible) this.player.mode = 'pip';
       this.player.visible = true;
       this.player.queue = queue;
       this.$nextTick(() => {
@@ -706,6 +717,18 @@ const app = createApp({
 
       if (e.key === 'f' && this.player.visible) {
         this.cyclePlayerMode();
+        return;
+      }
+
+      // Next/Prev track -- playQueueOffset already no-ops without a
+      // queue or past either end, so no extra guard needed here beyond
+      // "a player is actually open"
+      if (e.key === 'n' && this.player.visible) {
+        this.playQueueOffset(1);
+        return;
+      }
+      if (e.key === 'p' && this.player.visible) {
+        this.playQueueOffset(-1);
       }
     },
 
