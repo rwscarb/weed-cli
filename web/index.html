@@ -314,7 +314,7 @@
       </div>
       <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
       <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
-           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash, 'playlist-item-clickable': library.downloads[it.content_hash]}"
+           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': pl.id === playingPlaylistId && it.content_hash === player.contentHash, 'playlist-item-clickable': library.downloads[it.content_hash]}"
            :title="library.downloads[it.content_hash] ? 'Click to play' : 'not downloaded yet'"
            @click="playPlaylistItem(pl, it)"
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
