@@ -212,11 +212,46 @@ def _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_ho
     _save_persisted_hosts()
 
 
+def _forget_persisted_host(archive_dir, file_name, port):
+    """The other half of _remember_host -- nothing previously called this
+    at all, so every host ever started (including ones from an old test,
+    a since-deleted file, or an archive_dir that predates a since-changed
+    default) stayed in ~/.weed_hosts.json and got retried, forever, on
+    every single startup. Real report: a real user saw two permanently-
+    broken "(starting…)" rows with 'no .ott/manifest.jsonl in ./share'
+    errors on every restart with no way to make them stop coming back."""
+    key = f'{archive_dir}|{file_name}|{port}'
+    if key in _persisted_hosts:
+        del _persisted_hosts[key]
+        _save_persisted_hosts()
+        return True
+    return False
+
+
+def _is_permanently_broken_host_error(message):
+    """True for the flavors of host-start failure that a restart (or a
+    retry with the exact same config) can never fix -- the manifest or
+    the specific file just isn't there. Deliberately narrow: something
+    like 'Address already in use' is routine (two configs sharing the
+    default port 9201, or this file legitimately already being hosted)
+    and retrying later, or once the conflicting host stops, can succeed
+    -- pruning on that would silently forget a perfectly good config."""
+    return ('no .ott/manifest.jsonl in' in message
+            or 'no archived file found in' in message
+            or 'archived file not found on disk at' in message)
+
+
 def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
     host_id = uuid.uuid4().hex[:12]
     with _lock:
+        # file_name kept here (not just passed to the thread below) so a
+        # host that ends in 'error' -- before ever reaching the
+        # files=[...] update on success -- still has enough on _hosts[id]
+        # to rebuild its _persisted_hosts key later (see
+        # _forget_persisted_host / _resume_persisted_hosts' auto-prune).
         _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
-                            'price': price, 'tunnel': tunnel, 'status': 'starting'}
+                            'file_name': file_name, 'price': price, 'tunnel': tunnel,
+                            'status': 'starting'}
     threading.Thread(target=_run_host_job,
                       args=(host_id, archive_dir, file_name, port, price, relay_urls,
                             advertise_host, tunnel),
@@ -253,7 +288,8 @@ def _resume_persisted_hosts():
     handful of persisted hosts got noticeably slower, for zero extra
     correctness, since the publish delay doesn't affect port ownership at
     all."""
-    for cfg in _persisted_hosts.values():
+    broken_keys = []
+    for key, cfg in list(_persisted_hosts.items()):
         host_id = _start_host_job(cfg['archive_dir'], cfg['file_name'], cfg['port'], cfg['price'],
                                    cfg['relay'], cfg['advertise_host'], cfg['tunnel'],
                                    cfg.get('lightning_node'))
@@ -263,6 +299,19 @@ def _resume_persisted_hosts():
             if status in ('bound', 'running', 'error'):
                 break
             time.sleep(0.1)
+        with _lock:
+            h = _hosts[host_id]
+        # a manifest/file that's gone isn't coming back next startup
+        # either -- prune it now instead of leaving the same red error to
+        # reappear, unexplained, every time the app starts (see
+        # _is_permanently_broken_host_error's own docstring for the real
+        # report this closes).
+        if h['status'] == 'error' and _is_permanently_broken_host_error(h.get('error') or ''):
+            broken_keys.append(key)
+    if broken_keys:
+        for key in broken_keys:
+            _persisted_hosts.pop(key, None)
+        _save_persisted_hosts()
 
 
 def _unpublish_all_hosts():
@@ -617,7 +666,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error': f'bad JSON body: {e}'}, status=400)
 
         handlers = {
-            '/api/host': self._handle_host, '/api/download': self._handle_download,
+            '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
+            '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
             '/api/verify': self._handle_verify, '/api/play': self._handle_play,
             '/api/playlists/create': self._handle_playlist_create,
@@ -781,6 +831,31 @@ class Handler(BaseHTTPRequestHandler):
         host_id = _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host,
                                    tunnel, ln_node)
         self._json({'host_id': host_id})
+
+    def _handle_forget_host(self, body):
+        """POST /api/host/forget {host_id} -- removes an *errored* host
+        entry from the Active hosts table and, if it's also in
+        ~/.weed_hosts.json, from there too, so it stops being retried on
+        every future startup. Only for 'error' status: a 'running' host
+        has a live accept() loop in run_host_server with no cancellation
+        path (see node.py) -- there's no way to actually release its port
+        from here, so forgetting it would just make the UI lie about
+        whether it's still listening."""
+        host_id = body.get('host_id')
+        if not host_id:
+            return self._json({'error': 'host_id required'}, status=400)
+        with _lock:
+            h = _hosts.get(host_id)
+            if h is None:
+                return self._json({'error': f'no such host: {host_id}'}, status=404)
+            if h['status'] not in ('error',):
+                return self._json(
+                    {'error': f"can't forget a host in status {h['status']!r} -- only an errored "
+                               'entry can be forgotten (a running host has no stop mechanism; '
+                               'restart the process to actually release its port)'}, status=400)
+            del _hosts[host_id]
+        forgotten = _forget_persisted_host(h['archive_dir'], h.get('file_name'), h['port'])
+        self._json({'ok': True, 'forgotten_from_autostart': forgotten})
 
     def _handle_download(self, body):
         content_hash = body.get('content_hash')

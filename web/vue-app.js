@@ -1317,6 +1317,20 @@ const app = createApp({
       const { hosts } = await this.apiGet('/api/hosts');
       this.hosts = hosts || [];
     },
+    // Real report: errored "(starting…)" rows for a since-deleted file or
+    // an old archive_dir stuck around forever, re-appearing with the same
+    // error on every single startup, since nothing ever removed them from
+    // ~/.weed_hosts.json. Most of that class self-heals now (see
+    // web_ui.py's _resume_persisted_hosts auto-prune), but this covers
+    // whatever doesn't -- e.g. a stale port conflict from an old config.
+    async forgetHost(h) {
+      const resp = await this.apiPost('/api/host/forget', { host_id: h.id });
+      if (resp.error) {
+        this.hostResult = 'error: ' + resp.error;
+        return;
+      }
+      this.refreshHosts();
+    },
 
     // ── drag-and-drop video upload (Host tab) ───────────────────────────
     onHostDropzoneDragOver(e) {

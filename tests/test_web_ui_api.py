@@ -9,10 +9,11 @@ read or write a real ~/.weed_* file.
 import json
 import os
 import threading
+import time
 import urllib.parse
 
 import node
-from testutil import http_get_json, http_post_json, http_post_raw
+from testutil import http_get_json, http_post_json, http_post_raw, make_fake_archive
 
 
 def test_whoami_and_empty_library(web_server):
@@ -253,6 +254,90 @@ def test_default_upload_archive_dir_unit(monkeypatch):
 
     monkeypatch.setattr(os.path, 'isdir', lambda p: False)
     assert web_ui._default_upload_archive_dir() == './share'
+
+
+def _poll_host_status(web_server, host_id, timeout=5.0):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        hosts = http_get_json(f'{web_server}/api/hosts')['hosts']
+        h = next((x for x in hosts if x['id'] == host_id), None)
+        if h and h['status'] in ('bound', 'running', 'error'):
+            return h
+        time.sleep(0.05)
+    raise AssertionError(f'host {host_id} never reached a terminal status')
+
+
+def test_hosting_a_missing_archive_fails_and_can_be_forgotten(web_server, tmp_path):
+    """Real report: a persisted host pointing at an archive_dir with no
+    manifest (a deleted file, or an old default that's since changed)
+    shows a permanent red error in Active hosts, and used to have no way
+    to make it go away short of hand-editing ~/.weed_hosts.json."""
+    archive_dir = str(tmp_path / 'nothing_here')
+    status, resp = http_post_json(f'{web_server}/api/host', {
+        'archive_dir': archive_dir, 'file_name': 'ghost.mp4', 'port': 0,
+    })
+    assert status == 200
+    host_id = resp['host_id']
+
+    h = _poll_host_status(web_server, host_id)
+    assert h['status'] == 'error'
+    assert 'no .ott/manifest.jsonl in' in h['error']
+
+    status, resp = http_post_json(f'{web_server}/api/host/forget', {'host_id': host_id})
+    assert status == 200
+    assert resp['forgotten_from_autostart'] is True
+
+    hosts = http_get_json(f'{web_server}/api/hosts')['hosts']
+    assert host_id not in [x['id'] for x in hosts]
+
+    import web_ui
+    assert web_ui._persisted_hosts == {}
+
+
+def test_forget_host_rejects_a_running_host(web_server, tmp_path):
+    """No cancellation path exists for run_host_server's accept() loop
+    (see node.py) -- forgetting a 'running' host would just make the UI
+    claim it's gone while it's still actually listening on its port."""
+    archive_dir = str(tmp_path / 'archive')
+    make_fake_archive(archive_dir)
+    status, resp = http_post_json(f'{web_server}/api/host', {
+        'archive_dir': archive_dir, 'port': 0, 'relay': [],
+    })
+    assert status == 200
+    host_id = resp['host_id']
+
+    h = _poll_host_status(web_server, host_id)
+    assert h['status'] in ('bound', 'running'), h
+
+    status, resp = http_post_json(f'{web_server}/api/host/forget', {'host_id': host_id})
+    assert status == 400
+    assert 'error' in resp['error'] or "can't forget" in resp['error']
+
+
+def test_resume_persisted_hosts_auto_prunes_permanently_broken_entries(web_server, tmp_path):
+    """web_ui._resume_persisted_hosts (run at real startup, not exercised
+    by the web_server fixture itself) should drop entries whose file is
+    permanently gone so they stop reappearing as the same red error on
+    every future startup, while leaving a genuinely still-hostable entry
+    alone."""
+    import web_ui
+
+    good_dir = str(tmp_path / 'good')
+    make_fake_archive(good_dir)
+    bad_dir = str(tmp_path / 'gone')
+
+    good_key = f'{good_dir}|None|0'
+    bad_key = f'{bad_dir}|ghost.mp4|0'
+    web_ui._persisted_hosts = {
+        good_key: {'archive_dir': good_dir, 'file_name': None, 'port': 0, 'price': 0,
+                   'relay': [], 'advertise_host': '127.0.0.1', 'tunnel': None, 'lightning_node': None},
+        bad_key: {'archive_dir': bad_dir, 'file_name': 'ghost.mp4', 'port': 0, 'price': 0,
+                  'relay': [], 'advertise_host': '127.0.0.1', 'tunnel': None, 'lightning_node': None},
+    }
+    web_ui._resume_persisted_hosts()
+
+    assert good_key in web_ui._persisted_hosts
+    assert bad_key not in web_ui._persisted_hosts
 
 
 def test_cross_origin_post_rejected(web_server):
