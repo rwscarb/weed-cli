@@ -1411,12 +1411,17 @@ const app = createApp({
       const { hosts } = await this.apiGet('/api/hosts');
       this.hosts = hosts || [];
     },
-    // Real report: errored "(starting…)" rows for a since-deleted file or
-    // an old archive_dir stuck around forever, re-appearing with the same
-    // error on every single startup, since nothing ever removed them from
-    // ~/.weed_hosts.json. Most of that class self-heals now (see
-    // web_ui.py's _resume_persisted_hosts auto-prune), but this covers
-    // whatever doesn't -- e.g. a stale port conflict from an old config.
+    // Errored "(starting…)" rows for a since-deleted file or an old
+    // archive_dir used to stick around forever, re-appearing with the
+    // same error on every startup (most of that class self-heals now,
+    // see web_ui.py's _resume_persisted_hosts auto-prune -- this covers
+    // whatever doesn't). Now also does double duty as an actual stop
+    // button for a still-running host: the backend closes its listening
+    // socket, which is the only way to free a port it already has and
+    // let a *different* host config (e.g. the whole archive instead of
+    // one stale single-file leftover) bind it without restarting the
+    // whole process -- see _handle_forget_host's own docstring for the
+    // real "Address already in use" report this closes.
     async forgetHost(h) {
       const resp = await this.apiPost('/api/host/forget', { host_id: h.id });
       if (resp.error) {

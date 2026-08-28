@@ -226,8 +226,9 @@
           <td :class="h.status === 'error' ? 'status-error' : (h.status === 'running' ? 'status-done' : 'status-running')">
             {{ h.status === 'error' ? 'error: ' + h.error : h.status }}
             <span class="dl-log" v-if="h.status === 'starting' && h.log" :title="h.log">{{ lastLogLine(h.log) }}</span>
-            <button v-if="h.status === 'error'" class="host-forget-btn" title="stop retrying this on every startup"
-                    @click="forgetHost(h)">forget</button>
+            <button class="host-forget-btn"
+                    :title="h.status === 'error' ? 'stop retrying this on every startup' : 'stop this host and free its port'"
+                    @click="forgetHost(h)">{{ h.status === 'error' ? 'forget' : 'stop' }}</button>
           </td>
         </tr>
       </tbody>

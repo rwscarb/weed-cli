@@ -13,7 +13,7 @@ import time
 import urllib.parse
 
 import node
-from testutil import http_get_json, http_post_json, http_post_raw, make_fake_archive
+from testutil import free_port, http_get_json, http_post_json, http_post_raw, make_fake_archive
 
 
 def test_whoami_and_empty_library(web_server):
@@ -294,24 +294,52 @@ def test_hosting_a_missing_archive_fails_and_can_be_forgotten(web_server, tmp_pa
     assert web_ui._persisted_hosts == {}
 
 
-def test_forget_host_rejects_a_running_host(web_server, tmp_path):
-    """No cancellation path exists for run_host_server's accept() loop
-    (see node.py) -- forgetting a 'running' host would just make the UI
-    claim it's gone while it's still actually listening on its port."""
+def test_forgetting_a_running_host_actually_frees_its_port(web_server, tmp_path):
+    """Real report: a single-file host that survived a container restart
+    (via _resume_persisted_hosts) permanently squatted on the default
+    port, and no other host config -- e.g. one covering the whole
+    archive instead of that one stale leftover -- could ever bind it
+    again short of restarting the whole process. Forgetting a
+    bound/running host now actually closes its socket (see
+    node.run_host_server's stop_event) rather than only being allowed
+    for already-errored entries."""
     archive_dir = str(tmp_path / 'archive')
-    make_fake_archive(archive_dir)
+    make_fake_archive(archive_dir, name='first.mp4')
+    port = free_port()
     status, resp = http_post_json(f'{web_server}/api/host', {
-        'archive_dir': archive_dir, 'port': 0, 'relay': [],
+        'archive_dir': archive_dir, 'port': port, 'relay': [],
     })
     assert status == 200
     host_id = resp['host_id']
-
     h = _poll_host_status(web_server, host_id)
     assert h['status'] in ('bound', 'running'), h
 
+    # confirms the port really is occupied (not just assumed to be): a
+    # second host targeting the same one genuinely can't bind while the
+    # first is still up
+    status, resp = http_post_json(f'{web_server}/api/host', {
+        'archive_dir': archive_dir, 'port': port, 'relay': [],
+    })
+    assert status == 200
+    h2 = _poll_host_status(web_server, resp['host_id'])
+    assert h2['status'] == 'error'
+    assert 'address already in use' in h2['error'].lower()
+
     status, resp = http_post_json(f'{web_server}/api/host/forget', {'host_id': host_id})
-    assert status == 400
-    assert 'error' in resp['error'] or "can't forget" in resp['error']
+    assert status == 200
+    assert resp['stopped'] is True
+
+    hosts = http_get_json(f'{web_server}/api/hosts')['hosts']
+    assert host_id not in [x['id'] for x in hosts]
+
+    # the real assertion: the port is genuinely free now, not just
+    # removed from the table -- a fresh host targeting it succeeds
+    status, resp = http_post_json(f'{web_server}/api/host', {
+        'archive_dir': archive_dir, 'port': port, 'relay': [],
+    })
+    assert status == 200
+    h3 = _poll_host_status(web_server, resp['host_id'])
+    assert h3['status'] in ('bound', 'running'), h3
 
 
 def test_resume_persisted_hosts_auto_prunes_permanently_broken_entries(web_server, tmp_path):
