@@ -49,18 +49,21 @@
         <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
         <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
         <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
-        <label>Sort
-          <select v-model="discoverSortBy">
-            <option value="default">Default</option>
-            <option value="title">Title (A–Z)</option>
-            <option value="plays">Most played</option>
-            <option value="recent">Recently played</option>
-          </select>
-        </label>
+        <filter-toggle v-model="filterPlayed" label="Played"></filter-toggle>
       </form>
     </div>
     <div class="table-wrap"><table id="discover-table">
-      <thead><tr><th>Title</th><th>Content hash</th><th>Host</th><th>Tunnel</th><th>BTC</th><th>By</th><th>Plays</th><th>Last played</th><th></th></tr></thead>
+      <thead><tr>
+        <th class="sortable" @click="setDiscoverSort('title')" title="Sort by title">Title<span class="sort-tick" v-if="discoverSortBy === 'title'">{{ discoverSortDir === 'asc' ? '▲' : '▼' }}</span></th>
+        <th>Content hash</th>
+        <th>Host</th>
+        <th>Tunnel</th>
+        <th>BTC</th>
+        <th>By</th>
+        <th class="sortable" @click="setDiscoverSort('plays')" title="Sort by play count">Plays<span class="sort-tick" v-if="discoverSortBy === 'plays'">{{ discoverSortDir === 'asc' ? '▲' : '▼' }}</span></th>
+        <th class="sortable" @click="setDiscoverSort('recent')" title="Sort by last played">Last played<span class="sort-tick" v-if="discoverSortBy === 'recent'">{{ discoverSortDir === 'asc' ? '▲' : '▼' }}</span></th>
+        <th></th>
+      </tr></thead>
       <tbody>
         <template v-if="discoverLoading && !discoverResults.length">
           <tr class="skeleton-row" v-for="n in 3" :key="'skeleton-' + n">

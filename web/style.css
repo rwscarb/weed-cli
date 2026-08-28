@@ -855,6 +855,22 @@ code {
   overflow-wrap: normal;
 }
 
+/* Sortable column headers (Title/Plays/Last played) -- click to sort,
+   click again to flip direction; the tick (▲/▼) only renders on whichever
+   one is currently active, see setDiscoverSort in vue-app.js. */
+#discover-table th.sortable {
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+}
+#discover-table th.sortable:hover {
+  color: var(--accent);
+}
+#discover-table .sort-tick {
+  margin-left: 0.35em;
+  font-size: 0.85em;
+}
+
 .table-wrap {
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;

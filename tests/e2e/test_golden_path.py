@@ -61,13 +61,14 @@ def test_download_then_play_updates_play_history(page, golden_path_server):
 
 
 def test_sort_by_recently_played_reflects_a_real_play(page, golden_path_server):
-    """Regression coverage for this session's Discover sort feature against
-    a real (single-item) dataset -- the multi-item ordering itself is
-    covered more cheaply in the frontend unit-style checks below, this
-    just confirms the real play event actually reaches the sort's data
-    source end to end."""
+    """Regression coverage for the sortable-column-header UI (clicking
+    "Last played" instead of the dropdown it replaced) against a real
+    dataset -- confirms the click both shows the active-sort tick and
+    that a real, single-item dataset with nothing played yet renders the
+    "never played" dash cleanly rather than crashing."""
     page.goto(golden_path_server['web_url'])
     page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
-    page.select_option('.discover-filters select', 'recent')
+    page.click('#discover-table th.sortable:has-text("Last played")')
+    assert page.locator('#discover-table th.sortable:has-text("Last played") .sort-tick').is_visible()
     # nothing played yet -- should render the "never played" dash, not crash
     assert re.search(r'—', page.locator('#discover-table tbody tr').first.inner_text())

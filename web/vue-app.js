@@ -66,6 +66,7 @@ const app = createApp({
       filterDownloaded: 'any',
       filterLiked: 'any',
       filterSubscribed: 'any',
+      filterPlayed: 'any',
       // collapses the Relay/Search/filter forms behind a toggle -- but
       // only below the mobile breakpoint (see .discover-filters in
       // style.css); the flag itself starts false unconditionally since
@@ -88,14 +89,15 @@ const app = createApp({
       // download record's own play_count/last_played (aggregate vs. log)
       library: { downloads: {}, likes: new Set(), subscriptions: new Set(), playlists: [], history: [] },
 
-      // Discover sort -- 'default' is discoverResults' own arrival order
-      // (whatever the relay(s) returned), the rest read off each row's
-      // library.downloads entry (nothing plays without downloading first
-      // in this app, so that's always where play data lives -- see
-      // sortedDiscoverResults). Persisted across a refresh via the same
-      // hash-based tab memory pattern activeTab already uses would be
-      // nice but is more than this needed; a plain default is fine.
-      discoverSortBy: 'default',
+      // Discover sort -- clickable column headers (Title/Plays/Last
+      // played), not a dropdown: discoverSortBy is null until a header's
+      // been clicked (discoverResults' own arrival order, whatever the
+      // relay(s) returned), then 'title' | 'plays' | 'recent'. plays/
+      // recent read off each row's library.downloads entry (nothing
+      // plays without downloading first in this app, so that's always
+      // where play data lives -- see sortedDiscoverResults/setDiscoverSort).
+      discoverSortBy: null,
+      discoverSortDir: 'desc',
 
       hostForm: {
         archiveDir: '', fileName: '', port: 9201, price: 0, lightningNode: null,
@@ -184,7 +186,7 @@ const app = createApp({
     discoverRelaysList() {
       return this.splitRelays(this.discoverRelays);
     },
-    // search + the three tri-state toggles all narrow the same list
+    // search + the four tri-state toggles all narrow the same list
     // together (AND, not OR) -- each one set away from 'any' must hold
     // for a row to show
     filteredDiscoverResults() {
@@ -198,25 +200,31 @@ const app = createApp({
         if (!matchesTriState(this.filterDownloaded, !!this.library.downloads[r.content_hash])) return false;
         if (!matchesTriState(this.filterLiked, this.library.likes.has(r.content_hash))) return false;
         if (!matchesTriState(this.filterSubscribed, this.library.subscriptions.has(r.signer_pubkey))) return false;
+        const rec = this.library.downloads[r.content_hash];
+        if (!matchesTriState(this.filterPlayed, !!(rec && rec.play_count))) return false;
         return true;
       });
     },
     // Applied after filtering, not before -- sorting doesn't change which
-    // rows show, just their order. 'default' is a no-op copy rather than
-    // skipping .slice() so this always returns a fresh array Vue can key
-    // off cleanly. Play data lives on each row's own library.downloads
-    // entry (a Discover result itself never carries play stats -- nothing
-    // plays here without being downloaded first), so unplayed/undownloaded
-    // rows read as 0/no-timestamp and sort last on both play-based orders.
+    // rows show, just their order. discoverSortBy null (no header clicked
+    // yet) is a no-op copy rather than skipping .slice() so this always
+    // returns a fresh array Vue can key off cleanly. Play data lives on
+    // each row's own library.downloads entry (a Discover result itself
+    // never carries play stats -- nothing plays here without being
+    // downloaded first), so unplayed/undownloaded rows read as 0/no-
+    // timestamp -- sorted last under descending plays/recent (the default
+    // direction those two start at, see setDiscoverSort), first under
+    // ascending.
     sortedDiscoverResults() {
       const list = this.filteredDiscoverResults.slice();
       const rec = (r) => this.library.downloads[r.content_hash];
+      const dir = this.discoverSortDir === 'asc' ? 1 : -1;
       if (this.discoverSortBy === 'title') {
-        list.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+        list.sort((a, b) => dir * (a.title || '').localeCompare(b.title || ''));
       } else if (this.discoverSortBy === 'plays') {
-        list.sort((a, b) => (rec(b)?.play_count || 0) - (rec(a)?.play_count || 0));
+        list.sort((a, b) => dir * ((rec(a)?.play_count || 0) - (rec(b)?.play_count || 0)));
       } else if (this.discoverSortBy === 'recent') {
-        list.sort((a, b) => (rec(b)?.last_played || 0) - (rec(a)?.last_played || 0));
+        list.sort((a, b) => dir * ((rec(a)?.last_played || 0) - (rec(b)?.last_played || 0)));
       }
       return list;
     },
@@ -608,6 +616,21 @@ const app = createApp({
     },
 
     // ── discover ──────────────────────────────────────────────────────
+    // Clicking a column header once activates that column (Plays/Last
+    // played default to descending -- "most/most-recently played first"
+    // is the useful direction to land on immediately; Title defaults to
+    // ascending, A-Z); clicking the *same* header again just flips
+    // direction, matching the sortable-table convention most spreadsheet/
+    // file-browser UIs already use, rather than adding a third click that
+    // clears back to unsorted.
+    setDiscoverSort(column) {
+      if (this.discoverSortBy === column) {
+        this.discoverSortDir = this.discoverSortDir === 'asc' ? 'desc' : 'asc';
+      } else {
+        this.discoverSortBy = column;
+        this.discoverSortDir = column === 'title' ? 'asc' : 'desc';
+      }
+    },
     async refreshDiscover() {
       this.discoverLoading = true;
       try {
