@@ -314,6 +314,30 @@
       No playlists yet — use the ♫+ button on any Discover or Downloads row to start one.
     </p>
 
+    <!-- the ad-hoc queue any solo "▶ Play" seeds (see openPlayer in
+         vue-app.js) -- only while it's actually the thing driving
+         playback (not a real, explicitly-selected playlist -- see
+         playingPlaylistId), same gating the playlist-picker's own
+         "Currently Playing" entry uses. -->
+    <div class="playlist-card playlist-card-current" v-if="player.visible && player.queue && !playingPlaylistId">
+      <div class="playlist-card-header">
+        <span class="playlist-name" title="The live play queue -- not a saved playlist">▶ Currently Playing</span>
+        <span class="playlist-count muted">{{ player.queue.items.length }} item{{ player.queue.items.length === 1 ? '' : 's' }}</span>
+        <div class="playlist-card-actions">
+          <button type="button" class="icon-btn" title="Clear everything queued up (keeps what's playing now)"
+                  :disabled="player.queue.items.length <= 1" @click="clearQueueExceptCurrent">🗑</button>
+        </div>
+      </div>
+      <div class="playlist-item" v-for="(it, idx) in player.queue.items" :key="idx"
+           :class="{'playlist-item-playing': idx === player.queue.index, 'playlist-item-clickable': library.downloads[it.content_hash]}"
+           :title="library.downloads[it.content_hash] ? 'Click to play' : 'not downloaded yet'"
+           @click="playQueueIndex(idx)">
+        <span class="playlist-item-title" v-marquee :title="it.title || shortHash(it.content_hash)"><span>{{ it.title || shortHash(it.content_hash) }}</span></span>
+        <span v-if="!library.downloads[it.content_hash]" class="muted playlist-item-status">not downloaded</span>
+        <button type="button" class="icon-btn" title="Remove from queue" @click.stop="removeFromQueue(idx)">✕</button>
+      </div>
+    </div>
+
     <div class="playlist-card" v-for="pl in library.playlists" :key="pl.id"
          :class="{'playlist-card-drag-over': dragOverKey === (pl.id + ':card')}"
          @dragover.prevent="onPlaylistCardDragOver($event, pl)"

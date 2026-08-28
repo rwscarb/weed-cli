@@ -999,6 +999,49 @@ const app = createApp({
         this.download(item);
       }
     },
+    // The Playlists tab's own "Currently Playing" card (see index.html)
+    // -- jumps straight to a specific position in whatever queue is
+    // actually live, ad-hoc or real playlist alike. Deliberately its own
+    // small method rather than reusing playPlaylistItem: that one
+    // re-derives the clicked item's index via a downloaded-only filter +
+    // findIndex(content_hash), which would resolve to the *first* match
+    // instead of the row actually clicked if the same content_hash was
+    // queued more than once (routine for an ad-hoc queue, since
+    // addToQueue never dedupes) -- indexing by the row's own position
+    // sidesteps that ambiguity entirely.
+    playQueueIndex(idx) {
+      const q = this.player.queue;
+      if (!q) return;
+      const target = q.items[idx];
+      if (!target) return;
+      const rec = this.library.downloads[target.content_hash];
+      if (!rec) return;
+      this.openPlayer(rec.job_id, target.title || rec.title || this.shortHash(target.content_hash),
+        target.content_hash, target.signer_pubkey || rec.signer_pubkey,
+        { items: q.items, index: idx, playlistId: q.playlistId });
+    },
+    // Removing a not-yet-reached queue slot shifts the still-playing
+    // index back by one so it keeps pointing at the same track; removing
+    // something *before* the current position never happens from this
+    // card's own UI (nothing renders a remove button for past items
+    // specially), but clamping index into range regardless costs nothing
+    // and avoids ever pointing past the new end of the array.
+    removeFromQueue(idx) {
+      const q = this.player.queue;
+      if (!q) return;
+      q.items.splice(idx, 1);
+      if (idx < q.index) q.index -= 1;
+      q.index = Math.min(q.index, q.items.length - 1);
+    },
+    // Keeps only what's actually playing right now, dropping every other
+    // queued-up track -- the ad-hoc queue's equivalent of "empty this
+    // playlist," since there's no saved playlist here to delete outright.
+    clearQueueExceptCurrent() {
+      const q = this.player.queue;
+      if (!q) return;
+      q.items = [q.items[q.index]];
+      q.index = 0;
+    },
     async createPlaylistAndAdd() {
       const name = this.newPlaylistName.trim();
       if (!name) return;

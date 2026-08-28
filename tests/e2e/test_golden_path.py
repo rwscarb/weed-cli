@@ -123,6 +123,46 @@ def test_solo_play_gets_an_ad_hoc_currently_playing_queue(page, golden_path_serv
     assert not next_btn.is_disabled()
 
 
+def test_currently_playing_queue_shows_in_playlists_tab(page, golden_path_server):
+    """Follow-up to the ad-hoc queue above: the Playlists tab should show
+    the live "Currently Playing" queue too, not just the playlist-picker
+    popup -- with enough control (jump to a queued item, remove one,
+    clear the rest) to actually be useful there, not just a read-only
+    echo of the picker's own count."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+
+    # queue a second slot the same way the previous test does, via the
+    # picker's "Currently Playing" entry -- this fixture only has one
+    # real video, so it's the same content_hash queued twice, which is
+    # exactly the "duplicate content_hash in the queue" case
+    # playQueueIndex's own docstring is written to handle correctly.
+    row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first
+    row.locator('.playlist-add-btn').click()
+    page.locator('.playlist-picker-item-add', has_text='Currently Playing').click()
+    page.wait_for_function("vm => vm.player.queue.items.length === 2", arg=vm)
+
+    page.click('.tab-btn:has-text("Playlists")')
+    card = page.locator('.playlist-card-current')
+    assert card.is_visible()
+    assert '2 items' in card.locator('.playlist-count').inner_text()
+    items = card.locator('.playlist-item')
+    assert items.count() == 2
+    assert items.nth(0).locator('.icon-btn').get_attribute('title') == 'Remove from queue'
+
+    # clicking the second (queued-up, not yet playing) row jumps playback
+    # to it -- index moves from 0 to 1, same track either way since it's
+    # a duplicate, but this proves the click routes through playQueueIndex
+    # by position rather than re-resolving by content_hash
+    items.nth(1).click()
+    page.wait_for_function("vm => vm.player.queue.index === 1", arg=vm)
+
+    # remove the now-non-current first slot -- index should shift down to
+    # stay pointing at the same (still-playing) track
+    card.locator('.playlist-item').nth(0).locator('.icon-btn').click()
+    page.wait_for_function("vm => vm.player.queue.items.length === 1 && vm.player.queue.index === 0", arg=vm)
+
+
 def test_theater_window_is_draggable(page, golden_path_server):
     """Real report: Theater mode was resizable (free native CSS `resize`)
     but not movable -- onPlayerHeaderPointerDown bailed out immediately

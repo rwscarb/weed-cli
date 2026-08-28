@@ -1117,6 +1117,16 @@ code {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+/* the ad-hoc "Currently Playing" queue (see player.queue's own comment in
+   vue-app.js) rendered as a card here too, not just the playlist-picker
+   popup -- dashed, accent-tinted border instead of the solid one real,
+   saved playlists get marks it as the live session queue, not something
+   that persists across a reload the way an actual playlist does. */
+.playlist-card-current {
+  border-style: dashed;
+  border-color: var(--accent-dim);
+}
+
 .playlist-card-header {
   display: flex;
   align-items: center;

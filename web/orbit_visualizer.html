@@ -91,7 +91,7 @@ btn, .btn {
     <button class="btn lit" data-color="natural">NATURAL</button>
   </div>
   <canvas id="vizCanvas"></canvas>
-  <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen)</div>
+  <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; 1-7 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
 </div>
 
 <script>
@@ -214,14 +214,23 @@ new ResizeObserver(resizeVizCanvas).observe(vizCanvas);
   document.addEventListener('mouseup', () => { if(!panning) return; panning=false; vizCanvas.style.cursor='grab'; });
 })();
 
-// Viz mode switching
+// Viz mode switching -- one shared setter for the three ways a mode
+// change can happen (clicking a button, arrow-key cycling, and the
+// number-key jump below), instead of three copies of the same
+// lit-class/resetVizNav/asciiControls-visibility bookkeeping drifting
+// out of sync with each other.
+const VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels','ascii'];
 const asciiControls = document.getElementById('asciiControls');
+function setVizMode(mode) {
+  if (!VIZ_MODES.includes(mode)) return;
+  vizMode = mode;
+  document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === mode));
+  resetVizNav();
+  asciiControls.style.display = mode === 'ascii' ? 'flex' : 'none';
+}
 document.getElementById('vizModes').addEventListener('click', function(e){
   const btn = e.target.closest('[data-viz]'); if(!btn) return;
-  vizMode = btn.dataset.viz;
-  this.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b===btn));
-  resetVizNav();
-  asciiControls.style.display = vizMode === 'ascii' ? 'flex' : 'none';
+  setVizMode(btn.dataset.viz);
 });
 
 // ASCII resolution slider -- STRIDE 1-4, i.e. every source pixel down
@@ -236,10 +245,15 @@ function updateAsciiResLabel() {
   const rows = Math.floor(videoFrame.h / asciiStride);
   asciiResVal.textContent = (cols*rows).toLocaleString() + ' chars';
 }
-asciiResSlider.addEventListener('input', () => {
-  asciiStride = parseInt(asciiResSlider.value, 10);
+// shared by the slider's own 'input' event and the [ / ] keyboard
+// bindings below, so both ways of changing it move the slider thumb,
+// clamp the same way, and refresh the label identically
+function setAsciiRes(stride) {
+  asciiStride = Math.min(4, Math.max(1, stride));
+  asciiResSlider.value = asciiStride;
   updateAsciiResLabel();
-});
+}
+asciiResSlider.addEventListener('input', () => setAsciiRes(parseInt(asciiResSlider.value, 10)));
 // ASCII is now the default active mode (was TUNNEL), visible from the
 // very first paint -- without this, the label sat on its static "5184
 // chars" HTML placeholder until either a video frame arrived or the
@@ -250,10 +264,14 @@ updateAsciiResLabel();
 // it actually multiplies.
 const asciiBriSlider = document.getElementById('asciiBriSlider');
 const asciiBriVal = document.getElementById('asciiBriVal');
-asciiBriSlider.addEventListener('input', () => {
-  asciiBrightness = parseFloat(asciiBriSlider.value);
+// same sharing reasoning as setAsciiRes above -- the -/= keyboard
+// bindings reuse this rather than duplicating the clamp+label logic
+function setAsciiBrightness(value) {
+  asciiBrightness = Math.min(3, Math.max(0.3, Math.round(value * 10) / 10));
+  asciiBriSlider.value = asciiBrightness;
   asciiBriVal.textContent = asciiBrightness.toFixed(1) + 'x';
-});
+}
+asciiBriSlider.addEventListener('input', () => setAsciiBrightness(parseFloat(asciiBriSlider.value)));
 
 // ASCII color mode -- NATURAL (the video's own per-cell color, exactly
 // what this mode used to always do) vs NEON (the rotating HSL palette
@@ -584,11 +602,33 @@ document.addEventListener('keydown', function(e) {
   if (e.code === 'KeyF') toggleVizFullscreen();
   if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
     e.preventDefault();
-    const modes = ['tunnel','bars','mirror','scope','spiral','pixels','ascii'];
-    const idx = modes.indexOf(vizMode);
-    vizMode = modes[(idx + (e.code === 'ArrowRight' ? 1 : -1) + modes.length) % modes.length];
-    document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === vizMode));
-    resetVizNav();
+    const idx = VIZ_MODES.indexOf(vizMode);
+    setVizMode(VIZ_MODES[(idx + (e.code === 'ArrowRight' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
+  }
+  // 1-7 jump straight to a mode, in the same left-to-right order the
+  // mode buttons themselves render in -- not gated to fullscreen like
+  // arrow-key cycling above, since these are absolute (not relative)
+  // jumps: there's no "wrong" mode to accidentally land on by pressing
+  // one twice, the way repeatedly cycling past the end could feel.
+  if (e.code.startsWith('Digit')) {
+    const n = parseInt(e.code.slice(5), 10);
+    if (n >= 1 && n <= VIZ_MODES.length) {
+      e.preventDefault();
+      setVizMode(VIZ_MODES[n - 1]);
+    }
+  }
+  // brightness / resolution -- the two ASCII-controls sliders, reachable
+  // without a mouse now. Also not fullscreen-gated: unlike mode-cycling
+  // (which reuses the same physical arrow keys fullscreen already hands
+  // to page-agnostic viz control), these are their own dedicated keys
+  // that don't collide with anything else on the page either way.
+  if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
+    e.preventDefault();
+    setAsciiBrightness(asciiBrightness + (e.code === 'ArrowUp' ? 0.1 : -0.1));
+  }
+  if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
+    e.preventDefault();
+    setAsciiRes(asciiStride + (e.code === 'BracketRight' ? 1 : -1));
   }
 });
 </script>
