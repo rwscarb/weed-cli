@@ -494,20 +494,56 @@
   <pre class="error-dialog-message">{{ errorDialog.message }}</pre>
 </div>
 
-<!-- v-if, not v-show/:class="hidden" -- while open this iframe is
-     getting a live postMessage feed every animation frame (see
-     startOrbitVizFeed in vue-app.js); v-if actually tears it down when
-     closed instead of leaving that running against a hidden iframe
-     forever. -->
+<!-- v-if, not v-show/:class="hidden" -- while open this gets a live
+     audio/video feed every animation frame (see startOrbitVizFeed in
+     vue-app.js) and owns its own document-level keydown/mouse
+     listeners (see orbit_visualizer.js's init()); v-if actually
+     destroys the DOM when closed, and the easterEggVisible watch pairs
+     that with calling orbitViz.teardown() so none of that survives
+     into the next open. No longer an <iframe>: this used to be a
+     separate document loaded into one (see orbit_visualizer.js's own
+     docstring for why that existed and why it doesn't need to anymore)
+     -- everything below is that same page's markup, inlined. -->
 <template v-if="easterEggVisible">
   <div id="orbit-egg-backdrop" @click="easterEggVisible = false"></div>
   <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Visualizer">
-    <iframe ref="orbitVizFrame" src="orbit_visualizer.html" title="Orbit Visualizer" allow="autoplay"></iframe>
+    <header>
+      <h1>ORBIT VISUALIZER</h1>
+      <div class="transport">
+        <button class="btn" style="opacity:0.5;padding:4px 8px" @click="easterEggVisible = false">← BACK</button>
+        <button id="vizFsBtn" class="btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
+      </div>
+    </header>
+    <div id="vizSection">
+      <div class="idle-note" id="idleNote">reacts to whatever's playing in the weed player — nothing playing right now, so this is just idling</div>
+      <div class="preset-row" id="vizModes">
+        <button class="btn" data-viz="tunnel">TUNNEL</button>
+        <button class="btn" data-viz="bars">BARS</button>
+        <button class="btn" data-viz="mirror">MIRROR</button>
+        <button class="btn" data-viz="scope">SCOPE</button>
+        <button class="btn" data-viz="spiral">SPIRAL</button>
+        <button class="btn" data-viz="pixels">PIXELS</button>
+        <button class="btn lit" data-viz="ascii">ASCII</button>
+      </div>
+      <div class="preset-row ascii-controls" id="asciiControls" style="display:flex">
+        <span class="ascii-controls-label">RES</span>
+        <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
+        <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
+        <span class="ascii-controls-label">BRI</span>
+        <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.8">
+        <span class="ascii-controls-val" id="asciiBriVal">1.8x</span>
+        <button class="btn" data-color="neon">NEON</button>
+        <button class="btn lit" data-color="natural">NATURAL</button>
+      </div>
+      <canvas id="vizCanvas"></canvas>
+      <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; 1-7 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
+    </div>
   </div>
 </template>
 </div>
 
 <script src="vendor/vue.global.prod.js"></script>
+<script src="orbit_visualizer.js"></script>
 <script src="vue-app.js"></script>
 </body>
 </html>

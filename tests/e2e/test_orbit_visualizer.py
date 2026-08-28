@@ -1,27 +1,38 @@
 """
-orbit_visualizer.html's own keyboard bindings -- it's a fully static,
-dependency-free file (no audio/video feed needed to exercise mode
-switching or the ASCII sliders, both of which are pure JS/DOM state), so
-this navigates straight to it rather than going through the full
-player-open flow test_golden_path.py's fixtures exist for. golden_path_server
-is still the source of a real web_ui server to serve it from, since
-static files are served by the same Handler as everything else (see
-web_ui.py's _serve_static).
+The Orbit Visualizer's own keyboard bindings, now that it's inline
+markup + orbit_visualizer.js instead of a standalone page loaded into an
+<iframe> (see orbit_visualizer.js's own docstring for why that changed).
+There's no separate document to navigate to anymore -- this goes through
+the same open-the-player-then-click-🌀 flow a real user would, via
+test_golden_path's own _download_and_play helper, and asserts against
+observable DOM state (which button has .lit, what a slider's value is)
+rather than reaching into orbit_visualizer.js's internals: its per-open
+state now lives inside an IIFE closure specifically so nothing outside
+orbit_visualizer.js itself can see it, the same reason a plain
+`page.evaluate('() => vizMode')` (which the old iframe-page version of
+this test used, back when vizMode really was a page-global) doesn't work
+against it anymore.
 """
 import pytest
+
+from test_golden_path import _download_and_play
+
+
+def _open_orbit_viz(page):
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
 
 
 def test_number_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     """Real ask: number keys should jump straight to a mode instead of
     only being reachable by clicking a button or, in fullscreen, cycling
     one step at a time with arrow keys."""
-    page.goto(golden_path_server['web_url'] + '/orbit_visualizer.html')
-    page.wait_for_selector('#vizModes')
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
 
     # VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels','ascii']
     # -- '3' is the third button, MIRROR
     page.keyboard.press('Digit3')
-    assert page.evaluate('() => vizMode') == 'mirror'
     assert page.locator('[data-viz="mirror"]').evaluate('el => el.classList.contains("lit")')
     assert not page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
     # switching away from ascii hides its controls row -- confirms the
@@ -32,47 +43,82 @@ def test_number_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     # jump back to ASCII (7th button) directly, not by cycling through
     # every mode in between
     page.keyboard.press('Digit7')
-    assert page.evaluate('() => vizMode') == 'ascii'
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
     assert page.locator('#asciiControls').is_visible()
 
     # out-of-range digits (8/9/0) are simply ignored, not an error and
     # not wrapping around to some other mode
     page.keyboard.press('Digit9')
-    assert page.evaluate('() => vizMode') == 'ascii'
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
 
 
 def test_arrow_and_bracket_keys_adjust_brightness_and_resolution(page, golden_path_server):
     """Real ask: brightness (ASCII's BRI slider) and resolution (its RES
     slider) should be keyboard-adjustable, not mouse-only -- and the
-    on-screen slider itself should reflect the new value, not just the
-    underlying JS variable, since setAsciiBrightness/setAsciiRes are
-    shared with the slider's own 'input' handler for exactly that
-    reason."""
-    page.goto(golden_path_server['web_url'] + '/orbit_visualizer.html')
-    page.wait_for_selector('#vizModes')
-    assert page.evaluate('() => vizMode') == 'ascii'  # default -- no digit key needed to reach the sliders
+    on-screen slider itself should reflect the new value, since
+    setAsciiBrightness/setAsciiRes are shared with the slider's own
+    'input' handler for exactly that reason."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')  # default mode
 
-    before_bri = page.evaluate('() => asciiBrightness')
+    bri_slider = page.locator('#asciiBriSlider')
+    before_bri = float(bri_slider.input_value())
     page.keyboard.press('ArrowUp')
-    after_bri = page.evaluate('() => asciiBrightness')
+    after_bri = float(bri_slider.input_value())
     assert after_bri == pytest.approx(before_bri + 0.1, abs=0.01)
-    assert float(page.locator('#asciiBriSlider').input_value()) == pytest.approx(after_bri, abs=0.01)
+    assert page.locator('#asciiBriVal').inner_text() == f'{after_bri:.1f}x'
 
     page.keyboard.press('ArrowDown')
     page.keyboard.press('ArrowDown')
-    assert page.evaluate('() => asciiBrightness') == pytest.approx(before_bri - 0.1, abs=0.01)
+    assert float(bri_slider.input_value()) == pytest.approx(before_bri - 0.1, abs=0.01)
 
-    before_res = page.evaluate('() => asciiStride')
+    res_slider = page.locator('#asciiResSlider')
+    before_res = int(res_slider.input_value())
     page.keyboard.press('BracketRight')
-    after_res = page.evaluate('() => asciiStride')
+    after_res = int(res_slider.input_value())
     assert after_res == before_res + 1
-    assert int(page.locator('#asciiResSlider').input_value()) == after_res
 
     page.keyboard.press('BracketLeft')
-    assert page.evaluate('() => asciiStride') == before_res
+    assert int(res_slider.input_value()) == before_res
 
     # clamped, not wrapped -- five more decrements than the 1-4 range
     # allows should leave it pinned at the minimum, not go negative
     for _ in range(5):
         page.keyboard.press('BracketLeft')
-    assert page.evaluate('() => asciiStride') == 1
+    assert int(res_slider.input_value()) == 1
+
+
+def test_back_button_closes_without_a_postmessage_round_trip(page, golden_path_server):
+    """Real regression risk in this refactor: the old iframe's BACK
+    button posted 'orbit:back' up to the parent window for vue-app.js to
+    catch. Inlining the visualizer means that button is now a plain Vue
+    @click -- confirms it still actually closes the dialog, not that a
+    postMessage handler nobody's listening for anymore still no-ops
+    successfully."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#orbit-egg-dialog button:has-text("BACK")')
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+    assert page.locator('#global-player').is_visible()
+
+
+def test_reopening_the_visualizer_does_not_duplicate_document_keydown_handling(page, golden_path_server):
+    """Real risk specific to no longer being a fresh iframe load each
+    time: orbit_visualizer.js's init() attaches a document-level keydown
+    listener, and index.html's v-if destroys/recreates the dialog's DOM
+    on every open/close. Without teardown() actually removing that
+    listener on close, a second open would stack a second one, and one
+    ArrowUp press would then bump brightness by 0.2 instead of 0.1."""
+    _download_and_play(page, golden_path_server)
+
+    _open_orbit_viz(page)
+    page.locator('#orbit-egg-backdrop').click(position={'x': 5, 'y': 5})
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+
+    _open_orbit_viz(page)
+    bri_slider = page.locator('#asciiBriSlider')
+    before = float(bri_slider.input_value())
+    page.keyboard.press('ArrowUp')
+    after = float(bri_slider.input_value())
+    assert after == pytest.approx(before + 0.1, abs=0.01)

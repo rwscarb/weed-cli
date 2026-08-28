@@ -311,13 +311,25 @@ const app = createApp({
     activeTab(tab) {
       history.replaceState(null, '', '#' + tab);
     },
-    // starts/stops the live audio feed to the orbit visualizer iframe --
-    // one place reacting to the flag instead of every single toggle site
-    // (the secret-code trigger, Esc, backdrop click, the iframe's own
-    // BACK button) each remembering to start/stop it themselves.
+    // Starts/stops both halves of the visualizer -- its own DOM/listener
+    // setup (orbitViz.init(), see orbit_visualizer.js) and the audio/
+    // video feed loop that calls into it every frame -- from one place,
+    // instead of every toggle site (Esc, backdrop click, the visualizer's
+    // own BACK/close, the header's 🌀 icon) each remembering to start and
+    // stop both. $nextTick matters here specifically: index.html's v-if
+    // hasn't rendered #vizCanvas/#vizModes/etc. yet at the instant this
+    // fires, and orbitViz.init() does real document.getElementById calls
+    // against them.
     easterEggVisible(visible) {
-      if (visible) this.$nextTick(() => this.startOrbitVizFeed());
-      else this.stopOrbitVizFeed();
+      if (visible) {
+        this.$nextTick(() => {
+          window.orbitViz.init();
+          this.startOrbitVizFeed();
+        });
+      } else {
+        this.stopOrbitVizFeed();
+        window.orbitViz.teardown();
+      }
     },
   },
 
@@ -331,13 +343,6 @@ const app = createApp({
       if (this.tabs.some(t => t.id === id)) this.activeTab = id;
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
-    // orbit_sequencer.html's own "< BACK" button posts this to whatever
-    // parent embedded it (harmless no-op if nothing's listening, see its
-    // own onclick) -- this is that listener, so the button it already
-    // ships with actually closes the easter egg here too
-    window.addEventListener('message', e => {
-      if (e.data === 'orbit:back') this.easterEggVisible = false;
-    });
 
     const { pubkey } = await this.apiGet('/api/whoami');
     this.pubkey = pubkey;
@@ -1315,17 +1320,18 @@ const app = createApp({
     // analyser above -- same-origin video (this app only ever streams
     // from its own /api/stream/<job_id>), so drawImage + getImageData
     // here never hits a tainted-canvas security error. ~96x54's worth of
-    // pixels (5184, not full video res): this gets read back and posted
-    // every couple of frames, and the "orbit visualization" a viewer
-    // actually wants is a color/motion impression, not a full-res copy
-    // of the video the iframe already can't show behind this dialog
-    // anyway -- this is still ~9x the pixel count PIXELS/ASCII actually
-    // need to look meaningfully more detailed (see ASCII's own comment
-    // on why that resolution ceiling mattered enough to bump), while
-    // staying cheap: ~20KB/frame over postMessage, nothing.
+    // pixels (5184, not full video res): this gets read back and passed
+    // to orbit_visualizer.js every couple of frames, and the "orbit
+    // visualization" a viewer actually wants is a color/motion
+    // impression, not a full-res copy of the video the dialog already
+    // can't show behind itself anyway -- this is still ~9x the pixel
+    // count PIXELS/ASCII actually need to look meaningfully more
+    // detailed (see ASCII's own comment on why that resolution ceiling
+    // mattered enough to bump), while staying cheap to sample every
+    // frame.
     // Sized to the video's own aspect ratio, not fixed at 96x54 -- a
     // flat 16:9 canvas silently squashes any video that isn't already
-    // 16:9 (vertical phone footage, 4:3, ...) before orbit_visualizer.html
+    // 16:9 (vertical phone footage, 4:3, ...) before orbit_visualizer.js
     // ever sees the pixels, which is what actually caused the reported
     // "video looks stretched" (no amount of aspect-correct drawing on
     // the visualizer's own side can undo a distortion baked in here).
@@ -1348,18 +1354,16 @@ const app = createApp({
       this._orbitVideoCanvas = { canvas, ctx: canvas.getContext('2d', { willReadFrequently: true }) };
       return this._orbitVideoCanvas;
     },
-    // Web Audio nodes themselves can't cross the iframe boundary (each
-    // window/realm has its own AudioContext universe), but the plain
-    // Uint8Array snapshots getByteFrequencyData/getByteTimeDomainData
-    // fill in are just data -- postMessage structured-clones those
-    // straight across every frame, which is all orbit_visualizer.html's
-    // own draw loop actually needs (see its own comment on this).
+    // orbit_visualizer.js now lives in this same document/realm (see its
+    // own docstring on why it used to be a separate iframe'd page talking
+    // over postMessage) -- window.orbitViz.pushAudio/pushVideoFrame are
+    // called directly here instead, no serialization, no frame boundary.
     startOrbitVizFeed() {
       // re-entry guard -- the easterEggVisible watch calls this
       // automatically, so a caller that also calls it directly (or the
       // watch itself firing twice for any reason) would otherwise stack
-      // a second concurrent rAF loop, each posting its own copy of
-      // every frame
+      // a second concurrent rAF loop, each pushing its own copy of every
+      // frame
       if (this._orbitVizRunning) return;
       const { ctx, analyser, freq, wave } = this._ensureOrbitAnalyser();
       if (ctx.state === 'suspended') ctx.resume();
@@ -1369,30 +1373,26 @@ const app = createApp({
         if (!this._orbitVizRunning) return;
         analyser.getByteFrequencyData(freq);
         analyser.getByteTimeDomainData(wave);
-        const frame = this.$refs.orbitVizFrame;
-        if (frame && frame.contentWindow) {
-          frame.contentWindow.postMessage({ type: 'orbit-audio', freq, wave }, '*');
-          // video frames don't need 60fps to look good and drawImage+
-          // getImageData is real per-frame cost, unlike the audio
-          // analysis above -- every other frame (~30fps) is still
-          // plenty smooth for a background visualization
-          if (frameCount++ % 2 === 0) {
-            const video = this.$refs.playerVideo;
-            // readyState >= 2 (HAVE_CURRENT_DATA) is "there's an actual
-            // decoded frame to draw" -- before that (nothing loaded, or
-            // between openPlayer() setting src and the first frame
-            // decoding) drawImage would just paint black, which the
-            // visualizer can't tell apart from "a genuinely dark video"
-            if (video && video.readyState >= 2 && video.videoWidth > 0) {
-              // resolved per-frame, not cached outside tick -- picks up
-              // the video's current aspect ratio (see this method's own
-              // comment on why that matters for avoiding stretching)
-              const { canvas: vcanvas, ctx: vctx } = this._ensureOrbitVideoCanvas(video);
-              vctx.drawImage(video, 0, 0, vcanvas.width, vcanvas.height);
-              const imageData = vctx.getImageData(0, 0, vcanvas.width, vcanvas.height);
-              frame.contentWindow.postMessage(
-                { type: 'orbit-video', w: vcanvas.width, h: vcanvas.height, data: imageData.data }, '*');
-            }
+        window.orbitViz.pushAudio(freq, wave);
+        // video frames don't need 60fps to look good and drawImage+
+        // getImageData is real per-frame cost, unlike the audio
+        // analysis above -- every other frame (~30fps) is still
+        // plenty smooth for a background visualization
+        if (frameCount++ % 2 === 0) {
+          const video = this.$refs.playerVideo;
+          // readyState >= 2 (HAVE_CURRENT_DATA) is "there's an actual
+          // decoded frame to draw" -- before that (nothing loaded, or
+          // between openPlayer() setting src and the first frame
+          // decoding) drawImage would just paint black, which the
+          // visualizer can't tell apart from "a genuinely dark video"
+          if (video && video.readyState >= 2 && video.videoWidth > 0) {
+            // resolved per-frame, not cached outside tick -- picks up
+            // the video's current aspect ratio (see this method's own
+            // comment on why that matters for avoiding stretching)
+            const { canvas: vcanvas, ctx: vctx } = this._ensureOrbitVideoCanvas(video);
+            vctx.drawImage(video, 0, 0, vcanvas.width, vcanvas.height);
+            const imageData = vctx.getImageData(0, 0, vcanvas.width, vcanvas.height);
+            window.orbitViz.pushVideoFrame(vcanvas.width, vcanvas.height, imageData.data);
           }
         }
         requestAnimationFrame(tick);
@@ -1401,6 +1401,9 @@ const app = createApp({
     },
     stopOrbitVizFeed() {
       this._orbitVizRunning = false;
+    },
+    toggleOrbitFullscreen() {
+      window.orbitViz.toggleFullscreen();
     },
 
     // ── host ──────────────────────────────────────────────────────────

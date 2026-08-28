@@ -997,10 +997,10 @@ td button {
    dialogs above, but the dialog itself is near-fullscreen instead of a
    small centered box: it's a real canvas view meant to be watched, not
    a message, and needs the room. No close button of its own in here on
-   purpose -- orbit_visualizer.html already ships a "< BACK" button
-   (wired to close this via postMessage, see vue-app.js's mounted()),
-   and the backdrop click / Esc handling every other dialog already has
-   cover the rest. */
+   purpose -- the "< BACK" button below closes this directly (a plain
+   Vue @click now that it's not crossing an iframe boundary anymore --
+   see index.html), and the backdrop click / Esc handling every other
+   dialog already has cover the rest. */
 #orbit-egg-backdrop {
   position: fixed;
   inset: 0;
@@ -1020,21 +1020,92 @@ td button {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(1000px, calc(100vw - 1.5rem));
-  height: min(720px, calc(100vh - 1.5rem));
-  background: #080808;
+  width: min(1200px, calc(100vw - 1.5rem));
+  height: min(820px, calc(100vh - 1.5rem));
   border: 1px solid var(--border);
   border-radius: 8px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
   overflow: hidden;
 }
 
-#orbit-egg-dialog iframe {
-  width: 100%;
-  height: 100%;
-  border: none;
-  display: block;
+/* Everything below is the orbit_visualizer.html this dialog used to
+   load into an <iframe> -- ported inline (see orbit_visualizer.js's own
+   docstring on why) so it can talk to the rest of the app directly
+   instead of over postMessage. All of it is scoped under
+   #orbit-egg-dialog, including its own --orbit-* custom properties
+   (deliberately NOT reusing this app's own --bg/--accent/--muted/etc.
+   names, even though CSS custom properties would let a redeclaration at
+   this scope shadow them correctly): the visualizer's neon-green,
+   near-black palette is a completely different intentional look from
+   the rest of the app's mint/slate theme, and giving it its own
+   distinctly-named variables here makes that obvious to a reader
+   instead of relying on remembering which scope a bare var(--accent)
+   resolves to. */
+#orbit-egg-dialog {
+  --orbit-bg: #080808;
+  --orbit-fg: #c0c0c4;
+  --orbit-dim: #181818;
+  --orbit-cyan: #5ab8e0;
+  --orbit-muted: #68686e;
+  --orbit-panel: #0d0d0e;
+  --orbit-accent: #00ff88;
+  background: var(--orbit-bg);
+  color: var(--orbit-fg);
+  font-family: 'Courier New', monospace;
+  display: flex;
+  flex-direction: column;
 }
+
+#orbit-egg-dialog * { box-sizing: border-box; }
+
+#orbit-egg-dialog header {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--orbit-dim);
+  background: var(--orbit-panel);
+  flex-shrink: 0;
+}
+#orbit-egg-dialog header h1 {
+  font-size: 10px; letter-spacing: .22em; color: var(--orbit-cyan); opacity: .75;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+  margin: 0;
+}
+#orbit-egg-dialog .transport { display: flex; gap: 8px; align-items: center; flex-shrink: 0; white-space: nowrap; }
+#orbit-egg-dialog .btn {
+  font-family: 'Courier New', monospace; font-size: 9px; letter-spacing: .10em;
+  background: none; border: 1px solid var(--orbit-muted); color: var(--orbit-muted);
+  padding: 4px 10px; cursor: pointer; transition: all .12s;
+  border-radius: 0; align-self: auto;
+}
+#orbit-egg-dialog .btn:hover { border-color: var(--orbit-accent); color: var(--orbit-accent); background: none; }
+#orbit-egg-dialog .btn.lit { border-color: var(--orbit-accent); color: #fff; background: #00ff8818; box-shadow: 0 0 7px #00ff8830; }
+#orbit-egg-dialog .preset-row { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+#orbit-egg-dialog #vizSection {
+  flex: 1; display: flex; flex-direction: column;
+  padding: 10px 14px 14px; position: relative; min-height: 0;
+}
+#orbit-egg-dialog #vizModes { margin-bottom: 8px; flex-shrink: 0; }
+#orbit-egg-dialog .ascii-controls { margin-bottom: 8px; flex-shrink: 0; }
+#orbit-egg-dialog .ascii-controls-label { font-size: 9px; color: var(--orbit-muted); letter-spacing: .1em; }
+#orbit-egg-dialog .ascii-controls-val { font-size: 9px; color: var(--orbit-fg); min-width: 68px; }
+#orbit-egg-dialog .ascii-controls input[type=range] {
+  width: 80px; accent-color: var(--orbit-accent);
+  height: 3px; background: var(--orbit-dim); appearance: none;
+}
+#orbit-egg-dialog .ascii-controls input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 10px; height: 10px;
+  border-radius: 50%; background: var(--orbit-accent);
+}
+#orbit-egg-dialog #vizCanvas {
+  image-rendering: pixelated; cursor: grab;
+  width: 100%; flex: 1; min-height: 0;
+  display: block; border-radius: 2px; background: #000;
+}
+#orbit-egg-dialog #vizSection:fullscreen, #orbit-egg-dialog #vizSection:-webkit-full-screen {
+  background: #000; padding: 8px 14px;
+}
+#orbit-egg-dialog .hint { font-size: 7px; color: var(--orbit-muted); opacity: .4; margin-top: 5px; letter-spacing: .08em; flex-shrink: 0; }
+#orbit-egg-dialog .idle-note { font-size: 9px; color: var(--orbit-muted); opacity: .55; margin-bottom: 8px; flex-shrink: 0; }
 
 #host-result, #reputation-result {
   margin-top: 0.75rem;
