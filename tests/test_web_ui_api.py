@@ -6,7 +6,11 @@ identity/library/hosts file this touches is redirected into tmp_path by
 the isolated_paths fixture web_server depends on; nothing here can ever
 read or write a real ~/.weed_* file.
 """
-from testutil import http_get_json, http_post_json
+import os
+import urllib.parse
+
+import node
+from testutil import http_get_json, http_post_json, http_post_raw
 
 
 def test_whoami_and_empty_library(web_server):
@@ -107,6 +111,78 @@ def test_play_for_unknown_content_hash_still_logs_history_but_no_count(web_serve
     lib = http_get_json(f'{web_server}/api/library')
     assert len(lib['history']) == 1
     assert lib['history'][0]['title'] == 'Ghost'
+
+
+def _upload_url(web_server, name, archive_dir):
+    qs = urllib.parse.urlencode({'name': name, 'archive_dir': archive_dir})
+    return f'{web_server}/api/upload?{qs}'
+
+
+def test_upload_video_produces_a_real_hostable_archive(web_server, tmp_path):
+    """End to end: upload real bytes, then confirm node.py's own
+    manifest/chunk readers (the actual code `host` runs) can load the
+    result back correctly -- not just that the endpoint returned 200."""
+    archive_dir = str(tmp_path / 'archive')
+    data = os.urandom(200_000)
+    status, resp = http_post_raw(_upload_url(web_server, 'clip.mp4', archive_dir), data)
+
+    assert status == 200
+    assert resp['ok'] is True
+    assert resp['name'] == 'clip.mp4'
+    assert len(resp['content_hash']) == 64
+    assert resp['n_chunks'] >= 1
+
+    dest = os.path.join(archive_dir, 'clip.mp4')
+    assert os.path.isfile(dest)
+    assert os.path.getsize(dest) == len(data)
+    assert not os.path.exists(dest + '.uploading')  # tmp file cleaned up
+
+    entries = node.load_manifest_entries(archive_dir)
+    assert len(entries) == 1
+    assert entries[0]['sha256'] == resp['content_hash']
+    leaves = node.load_leaves(archive_dir, resp['content_hash'])
+    assert len(leaves) == resp['n_chunks']
+
+
+def test_upload_rejects_non_video_extension(web_server, tmp_path):
+    archive_dir = str(tmp_path / 'archive')
+    status, resp = http_post_raw(_upload_url(web_server, 'notes.txt', archive_dir), b'hello')
+    assert status == 400
+    assert 'not a recognized video extension' in resp['error']
+    assert not os.path.exists(archive_dir)  # never even created
+
+
+def test_upload_sanitizes_path_traversal_in_filename(web_server, tmp_path):
+    archive_dir = str(tmp_path / 'archive')
+    outside_target = tmp_path / 'evil.mp4'
+    status, resp = http_post_raw(
+        _upload_url(web_server, '../evil.mp4', archive_dir), os.urandom(1000))
+    assert status == 200  # basename strips the traversal, so this is just "evil.mp4" inside archive_dir
+    assert resp['name'] == 'evil.mp4'
+    assert not outside_target.exists()  # never escaped archive_dir
+    assert (tmp_path / 'archive' / 'evil.mp4').exists()
+
+
+def test_upload_requires_name_param(web_server, tmp_path):
+    conn_status, resp = http_post_raw(
+        f'{web_server}/api/upload?archive_dir=' + urllib.parse.quote(str(tmp_path)), b'data')
+    assert conn_status == 400
+    assert 'name' in resp['error']
+
+
+def test_upload_defaults_archive_dir_when_omitted(web_server, tmp_path, monkeypatch):
+    """No archive_dir query param at all -- falls back to './share',
+    matching docker-compose.node.yml's own default bind-mount target.
+    './share' is resolved relative to the server process's cwd, which is
+    also this test process (web_server runs in a background thread, not
+    a subprocess) -- monkeypatch.chdir into tmp_path first so that
+    resolves somewhere throwaway instead of this repo's own real ./share
+    (which has real, non-test content -- see the repo root)."""
+    monkeypatch.chdir(tmp_path)
+    status, resp = http_post_raw(f'{web_server}/api/upload?name=clip.mp4', os.urandom(1000))
+    assert status == 200
+    assert resp['archive_dir'] == './share'
+    assert (tmp_path / 'share' / 'clip.mp4').exists()
 
 
 def test_cross_origin_post_rejected(web_server):

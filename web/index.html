@@ -163,6 +163,20 @@
 
   <section class="tab-panel" v-show="activeTab === 'host'">
     <h2>Host a file</h2>
+    <div class="host-dropzone" :class="{'host-dropzone-active': hostDropzoneActive}"
+         @dragover.prevent="onHostDropzoneDragOver" @dragleave="onHostDropzoneDragLeave"
+         @drop.prevent="onHostFilesDropped">
+      drag video files here to copy them into an archive_dir and chunk them for hosting
+      (webm/mp4/mkv/mov/etc — see ott's own recognized extensions)
+    </div>
+    <div class="upload-list" v-if="uploads.length">
+      <div class="upload-item" v-for="(u, idx) in uploads" :key="idx">
+        <span class="upload-item-name" :title="u.name">{{ u.name }}</span>
+        <div class="progress-bar" v-if="u.status === 'uploading'"><div class="progress-fill" :style="{width: u.pct + '%'}"></div></div>
+        <span v-if="u.status === 'done'" class="status-done">done — {{ shortHash(u.contentHash, 8) }}</span>
+        <span v-if="u.status === 'error'" class="status-error" :title="u.error">error: {{ u.error }}</span>
+      </div>
+    </div>
     <form @submit.prevent="submitHost">
       <label>Archive directory (containing .ott/)
         <input type="text" v-model="hostForm.archiveDir" placeholder="real_archive" required>

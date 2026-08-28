@@ -14,6 +14,7 @@ already apply elsewhere in this repo). Pass --bind to expose it on a LAN
 at your own risk.
 """
 import contextlib
+import hashlib
 import io
 import json
 import mimetypes
@@ -578,6 +579,21 @@ class Handler(BaseHTTPRequestHandler):
         if not self._check_origin():
             return self._json({'error': 'rejected: request Origin does not match this server — '
                                          'looks like a cross-site request, not this UI'}, status=403)
+
+        # Not a JSON-body endpoint like everything else here -- the body
+        # *is* the raw file being uploaded (see _handle_upload's own
+        # docstring for why: no multipart/form-data parser exists in the
+        # stdlib, and this repo's own "no new dependency" rule already
+        # ruled one out elsewhere). Handled before _read_json_body ever
+        # runs, since that would try to json.loads() raw video bytes and
+        # fail every single upload with a confusing "bad JSON body" error
+        # before this endpoint's own code ever ran.
+        if path == '/api/upload':
+            try:
+                return self._handle_upload()
+            except Exception as e:
+                return self._json({'error': f'{type(e).__name__}: {e}'}, status=400)
+
         try:
             body = self._read_json_body()
         except Exception as e:
@@ -601,6 +617,100 @@ class Handler(BaseHTTPRequestHandler):
             handler(body)
         except Exception as e:
             self._json({'error': f'{type(e).__name__}: {e}'}, status=400)
+
+    def _handle_upload(self):
+        """POST /api/upload?name=<file>&archive_dir=<dir> -- the file's raw
+        bytes as the whole request body (application/octet-stream, not
+        multipart/form-data: there's no multipart parser in the stdlib,
+        and pulling in a dependency just for this is exactly the kind of
+        thing this file's own module docstring already rules out
+        elsewhere). Streams straight to disk in fixed-size chunks rather
+        than reading the whole body into memory first -- fine for a
+        JSON API's few-KB bodies, not for a multi-GB video.
+
+        Archives it immediately (chunks + a real manifest.jsonl entry,
+        the exact on-disk shape node.load_manifest_entries/load_leaves
+        already read) so it's hostable the moment the upload finishes,
+        with no separate `ott add` step -- same reasoning as the rest of
+        this UI existing at all: don't make someone learn a second tool
+        just to do the thing this one already knows how to do.
+        Video-only, matching ott's own is_video() -- a non-video upload
+        would just be a manifest entry that can never actually be
+        hosted (see load_manifest_entries' own video-only filter, added
+        after exactly that silently broke `host` for everything else in
+        the same archive_dir), so it's rejected up front instead."""
+        from ott import is_video, chunk_hashes, merkle_root, OttStore
+
+        qs = parse_qs(urlparse(self.path).query)
+        raw_name = (qs.get('name') or [''])[0]
+        archive_dir = (qs.get('archive_dir') or ['./share'])[0]
+        if not raw_name:
+            return self._json({'error': 'name query param required'}, status=400)
+
+        # basename only -- '..' or an absolute path in the filename
+        # can't escape archive_dir this way
+        safe_name = os.path.basename(raw_name)
+        if not safe_name or safe_name in ('.', '..'):
+            return self._json({'error': f'invalid file name: {raw_name!r}'}, status=400)
+
+        if not is_video(safe_name):
+            return self._json(
+                {'error': f'{safe_name}: not a recognized video extension -- only video '
+                           'files can be hosted (see ott.is_video)'}, status=400)
+
+        archive_dir = os.path.expanduser(archive_dir)
+        os.makedirs(archive_dir, exist_ok=True)
+        dest_path = os.path.join(archive_dir, safe_name)
+
+        length = int(self.headers.get('Content-Length', 0))
+        if length <= 0:
+            return self._json({'error': 'empty upload'}, status=400)
+
+        # write to a temp name and os.replace at the end, same reasoning
+        # as _save_library's own tmp-file-then-replace: a client
+        # disconnecting mid-upload (closed laptop lid, flaky wifi) must
+        # not leave a truncated file sitting at the real destination
+        # name, silently masquerading as a complete one later.
+        tmp_path = dest_path + '.uploading'
+        written = 0
+        try:
+            with open(tmp_path, 'wb') as f:
+                remaining = length
+                while remaining > 0:
+                    chunk = self.rfile.read(min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    written += len(chunk)
+                    remaining -= len(chunk)
+        except Exception:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+            raise
+        if written != length:
+            os.remove(tmp_path)
+            return self._json(
+                {'error': f'incomplete upload ({written:,}/{length:,} bytes) -- connection dropped?'},
+                status=400)
+        os.replace(tmp_path, dest_path)
+
+        ott_dir = os.path.join(archive_dir, '.ott')
+        os.makedirs(os.path.join(ott_dir, 'chunks'), exist_ok=True)
+        chunk_size = OttStore(ott_dir).chunk_size
+        chunks = chunk_hashes(dest_path, chunk_size)
+        digest = merkle_root(chunks) if chunks else hashlib.sha256(b'').hexdigest()
+        with open(os.path.join(ott_dir, 'chunks', f'{digest}.json'), 'w') as f:
+            json.dump(chunks, f)
+        entry = {
+            'sha256': digest, 'name': safe_name, 'orig_path': safe_name, 'last_path': dest_path,
+            'size': written, 'added': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
+            'type': 'video', 'n_chunks': len(chunks), 'chunk_size': chunk_size,
+        }
+        with open(os.path.join(ott_dir, 'manifest.jsonl'), 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+
+        self._json({'ok': True, 'name': safe_name, 'content_hash': digest,
+                     'size': written, 'n_chunks': len(chunks), 'archive_dir': archive_dir})
 
     def _handle_host(self, body):
         archive_dir = body.get('archive_dir')

@@ -66,6 +66,20 @@ def http_post_json(url, body, headers=None):
         conn.close()
 
 
+def http_post_raw(url, data, headers=None):
+    """For /api/upload -- the body is the raw file bytes, not JSON."""
+    conn_host, conn_port, path = _split_url(url)
+    conn = http.client.HTTPConnection(conn_host, conn_port, timeout=15)
+    try:
+        h = {'Content-Type': 'application/octet-stream'}
+        h.update(headers or {})
+        conn.request('POST', path, body=data, headers=h)
+        resp = conn.getresponse()
+        return resp.status, json.loads(resp.read().decode())
+    finally:
+        conn.close()
+
+
 def _split_url(url):
     # http.client wants (host, port) and a bare path, not a full URL
     assert url.startswith('http://')

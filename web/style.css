@@ -994,6 +994,50 @@ td button {
   color: var(--muted);
 }
 
+.host-dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  padding: 1.5rem 1rem;
+  margin-bottom: 1rem;
+  text-align: center;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+/* set from a real dragover event (see onHostDropzoneDragOver), not :hover
+   -- a plain mouse hover here isn't a drag, and a native OS file drag
+   doesn't trigger CSS :hover reliably across browsers anyway */
+.host-dropzone-active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: rgba(110, 231, 183, 0.06);
+}
+
+.upload-list {
+  margin-bottom: 1rem;
+}
+
+.upload-item {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0;
+  font-size: 0.85rem;
+}
+
+.upload-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.upload-item .progress-bar {
+  width: 8rem;
+  flex-shrink: 0;
+}
+
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow-wrap: anywhere;

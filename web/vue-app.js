@@ -106,6 +106,14 @@ const app = createApp({
       },
       hostResult: '',
       hosts: [],
+      // drag-and-drop video files straight onto the Host tab -- each
+      // entry tracks one in-flight (or finished) upload: {name, pct,
+      // status: 'uploading'|'done'|'error', error, contentHash}. Kept
+      // around after finishing (not spliced out) so a batch of several
+      // dropped files still shows what happened to each one, same
+      // reasoning as `jobs` below never removing a finished download.
+      uploads: [],
+      hostDropzoneActive: false,
 
       downloadForm: {
         hash: '', relays: 'http://127.0.0.1:9101', out: '', lightning: false, lightningNode: null,
@@ -1308,6 +1316,66 @@ const app = createApp({
     async refreshHosts() {
       const { hosts } = await this.apiGet('/api/hosts');
       this.hosts = hosts || [];
+    },
+
+    // ── drag-and-drop video upload (Host tab) ───────────────────────────
+    onHostDropzoneDragOver(e) {
+      e.dataTransfer.dropEffect = 'copy';
+      this.hostDropzoneActive = true;
+    },
+    onHostDropzoneDragLeave() {
+      this.hostDropzoneActive = false;
+    },
+    onHostFilesDropped(e) {
+      this.hostDropzoneActive = false;
+      // an archive_dir has to exist for the drop to mean anything -- './share'
+      // matches docker-compose.node.yml's own default bind-mount target
+      // (see its comment on WEED_SHARE_DIR), so a fresh setup with an
+      // empty form field still lands somewhere that's already correct
+      // for the common (Docker) case, not an arbitrary made-up path.
+      if (!this.hostForm.archiveDir.trim()) this.hostForm.archiveDir = './share';
+      for (const file of e.dataTransfer.files) this.uploadFile(file);
+    },
+    // XMLHttpRequest, not fetch, specifically for upload.onprogress --
+    // fetch still has no broadly-supported way to observe upload (not
+    // download) progress, and a multi-hundred-MB video with zero
+    // feedback until it's entirely done is exactly the kind of "is this
+    // actually working" moment a progress bar exists to answer.
+    uploadFile(file) {
+      const archiveDir = this.hostForm.archiveDir;
+      const entry = { name: file.name, pct: 0, status: 'uploading', error: null, contentHash: null };
+      this.uploads.push(entry);
+
+      const xhr = new XMLHttpRequest();
+      const qs = 'name=' + encodeURIComponent(file.name) + '&archive_dir=' + encodeURIComponent(archiveDir);
+      xhr.open('POST', '/api/upload?' + qs);
+      xhr.upload.onprogress = (ev) => {
+        if (ev.lengthComputable) entry.pct = Math.round((ev.loaded / ev.total) * 100);
+      };
+      xhr.onload = () => {
+        let resp;
+        try { resp = JSON.parse(xhr.responseText); } catch { resp = { error: 'malformed server response' }; }
+        if (xhr.status !== 200 || resp.error) {
+          entry.status = 'error';
+          entry.error = resp.error || `HTTP ${xhr.status}`;
+          return;
+        }
+        entry.pct = 100;
+        entry.status = 'done';
+        entry.contentHash = resp.content_hash;
+        // the newly-archived file is now the most recent thing in this
+        // archive_dir -- fills in fileName so "Start hosting" targets it
+        // specifically rather than whatever "most recent" happened to
+        // mean before this upload (see hostForm.fileName's own label:
+        // "optional, default: most recent" -- this just makes that
+        // default explicit and visible instead of implicit).
+        this.hostForm.fileName = resp.name;
+      };
+      xhr.onerror = () => {
+        entry.status = 'error';
+        entry.error = 'network error during upload';
+      };
+      xhr.send(file);
     },
 
     // ── downloads ─────────────────────────────────────────────────────
