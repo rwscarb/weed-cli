@@ -163,6 +163,36 @@ def test_currently_playing_queue_shows_in_playlists_tab(page, golden_path_server
     page.wait_for_function("vm => vm.player.queue.items.length === 1 && vm.player.queue.index === 0", arg=vm)
 
 
+def test_orbit_visualizer_hides_the_real_video_in_every_player_mode(page, golden_path_server):
+    """Real ask: don't show the normal video when the orbit visualizer is
+    open. It used to only hide the player in PIP mode (the old
+    easterEggVisible && player.mode === 'pip' condition in index.html) --
+    Theater mode left the real video visible right alongside the
+    visualizer, since neither one's centered box fully covers the
+    other."""
+    _download_and_play(page, golden_path_server)
+
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#orbit-egg-dialog')
+    assert not page.locator('#global-player').is_visible()
+
+    # close it (via the backdrop -- the player's own buttons are hidden
+    # right now) and confirm it comes back before testing the next mode.
+    # position=(5, 5): the backdrop covers the whole viewport but the
+    # centered dialog itself sits right on top of its own center, so a
+    # plain .click() lands on the iframe instead and never reaches the
+    # backdrop underneath it.
+    page.locator('#orbit-egg-backdrop').click(position={'x': 5, 'y': 5})
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+    assert page.locator('#global-player').is_visible()
+
+    page.click('#global-player .icon-btn[title="Theater / PIP"]')
+    page.wait_for_selector('#global-player.mode-theater')
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#orbit-egg-dialog')
+    assert not page.locator('#global-player').is_visible()
+
+
 def test_theater_window_is_draggable(page, golden_path_server):
     """Real report: Theater mode was resizable (free native CSS `resize`)
     but not movable -- onPlayerHeaderPointerDown bailed out immediately

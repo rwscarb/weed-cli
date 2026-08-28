@@ -392,7 +392,17 @@
 
 <div id="player-backdrop" :class="{hidden: !(player.visible && player.mode === 'theater')}"
      @click="setPlayerMode('pip')"></div>
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || (easterEggVisible && player.mode === 'pip')}]">
+<!-- easterEggVisible alone, not "&& player.mode === 'pip'" -- that used
+     to leave the real video visible right alongside the orbit
+     visualizer in Theater mode (both are centered, similarly-sized
+     boxes, so neither ever fully covered the other), and in true
+     Fullscreen the video's browser-level "top layer" rendering sits
+     above the visualizer's ordinary position:fixed dialog regardless of
+     z-index, so it could show through there too. display:none on the
+     current fullscreen element also makes the browser auto-exit
+     fullscreen (spec behavior, not something this needs to do by hand),
+     so hiding it here doubles as leaving Fullscreen cleanly as well. -->
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
