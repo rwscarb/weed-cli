@@ -278,7 +278,7 @@
             </div>
           </td>
           <td><code>{{ shortHash(j.content_hash) }}</code></td>
-          <td><div class="progress-bar"><div class="progress-fill" :style="{width: (j.status === 'done' ? 100 : j.pct) + '%'}"></div></div></td>
+          <td><div class="progress-bar" v-if="j.status === 'running'"><div class="progress-fill" :style="{width: j.pct + '%'}"></div></div></td>
           <td :class="j.status === 'done' ? 'status-done' : (j.status === 'error' ? 'status-error' : 'status-running')">{{ j.status }}</td>
         </tr>
       </tbody>

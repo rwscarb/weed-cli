@@ -290,6 +290,37 @@ td button {
   flex: none;
 }
 
+/* Downloads rows are simple enough (one action, or a short status line)
+   to fit comfortably on one line at desktop width -- the stacked front/
+   back "swipe pages" this same markup also drives (.swipe-front then
+   .swipe-back, one above the other) are a mobile-only affordance for
+   cramming a lot of controls into a phone's width (see the mobile media
+   query below, where the swipe/scroll-snap behavior actually lives);
+   nothing about a wide desktop row needs that second line at all. Scoped
+   to #jobs-table specifically, not Discover's own swipe-row (more
+   buttons/state to fit -- one line there is a separate, bigger layout
+   question this wasn't asked to touch). */
+@media (min-width: 461px) {
+  #jobs-table .swipe-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  #jobs-table .swipe-front {
+    flex: 1;
+    min-width: 0;
+  }
+  #jobs-table .swipe-back {
+    flex: none;
+  }
+  #jobs-table .actions-row {
+    /* only needed to separate it from .title-row when stacked beneath
+       it (see .actions-row's own comment) -- they're side-by-side
+       siblings here instead, so the gap above already spaces them */
+    margin-top: 0;
+  }
+}
+
 /* mobile-only front page decoration (duplicate hash + swipe affordance,
    see the HTML) -- the real Content-hash column already shows the hash
    on desktop, and .swipe-row's three-page layout below only exists at
@@ -898,7 +929,13 @@ td button {
 #orbit-egg-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.75);
+  /* transparent, not the dimmed rgba(0,0,0,0.75) this had before --
+     that dimmed the *entire* page behind the dialog, not just around it,
+     which read as "everything got a shade darker" the instant the
+     visualizer opened. Still a real element (click-outside-to-close --
+     see index.html's @click on this -- needs something to actually
+     click), just invisible now instead of dark. */
+  background: transparent;
   z-index: 300;
 }
 
