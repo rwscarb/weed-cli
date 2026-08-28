@@ -1019,10 +1019,21 @@ const app = createApp({
       this.dragOverKey = playlist.id + ':' + idx;
     },
     async onItemDrop(e, playlist, idx) {
-      this.dragOverKey = null;
+      // Must NOT touch this._dragFrom/dragOverKey before checking whose
+      // drop this actually is -- a cross-playlist drop landing on one of
+      // *this* playlist's own item rows (extremely natural to do; you're
+      // aiming at the list, not its empty padding) reaches this handler
+      // first during bubbling, before onPlaylistCardDrop on the
+      // enclosing .playlist-card ever sees the event. Clearing the
+      // shared drag state here unconditionally -- the previous version
+      // of this did exactly that -- wiped it out before the card-level
+      // handler could read it, so the highlight showed (dragover isn't
+      // destructive) but the actual move/copy silently never happened.
       const from = this._dragFrom;
+      if (!from || from.playlistId !== playlist.id) return;
+      this.dragOverKey = null;
       this._dragFrom = null;
-      if (!from || from.playlistId !== playlist.id || from.index === idx) return;
+      if (from.index === idx) return;
       const items = playlist.items.slice();
       const [moved] = items.splice(from.index, 1);
       items.splice(idx, 0, moved);
