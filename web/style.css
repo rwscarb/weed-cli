@@ -611,15 +611,23 @@ td button {
   line-height: 1.4;
 }
 
+/* the containing block for .player-transport-overlay below -- fills
+   whatever space is left after the header once the box is resized
+   (native resize can make it taller/shorter than the video's own aspect
+   ratio); video itself just fills 100% of this now instead of carrying
+   flex:1 directly, since that only ever did anything by virtue of
+   #global-player's own column flex, which this wrapper sits in instead
+   of the video now. */
+.player-video-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
 #global-player video {
   display: block;
   width: 100%;
-  /* fills whatever space is left after the header once the box is
-     resized (native resize can make it taller/shorter than the video's
-     own aspect ratio), letterboxed instead of leaving dead space or
-     overflowing */
-  flex: 1;
-  min-height: 0;
+  height: 100%;
   object-fit: contain;
   background: #000;
 }
@@ -632,11 +640,55 @@ td button {
   transform: none;
 }
 
-#global-player:fullscreen video,
-#global-player:-webkit-full-screen video {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
+/* Prev/Next as a hover-reveal overlay on the video itself, not the
+   header -- works identically at every player size (PIP included, where
+   the header has no spare room at all -- see the header rule above for
+   the fight that used to be) since it's anchored to .player-video-wrap,
+   not competing with anything else for width. pointer-events: none on
+   the row itself (auto again on the buttons) so the dead space between
+   the two buttons still passes clicks/drags through to the video and
+   its own native controls underneath, not silently eating them. */
+.player-transport-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0.5rem;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.player-video-wrap:hover .player-transport-overlay,
+.player-video-wrap:focus-within .player-transport-overlay {
+  opacity: 1;
+}
+
+.transport-overlay-btn {
+  pointer-events: auto;
+  width: 2.2rem;
+  height: 2.2rem;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.transport-overlay-btn:hover {
+  background: rgba(0, 0, 0, 0.75);
+}
+
+.transport-overlay-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
 }
 
 .qr-toggle {
