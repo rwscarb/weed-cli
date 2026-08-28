@@ -131,15 +131,6 @@ const app = createApp({
         // playing one thing," the ordinary case -- see openPlayer/
         // onPlayerEnded.
         queue: null,
-        // driven by the <video>'s own timeupdate/loadedmetadata/ended
-        // events (see onPlayerTimeUpdate) -- not Vue-reactive on their
-        // own, since these are raw DOM element properties the video
-        // engine updates internally, invisible to Vue's reactivity
-        // unless something explicitly copies them out on every tick.
-        // Used to decorate whichever playlist row matches player.contentHash
-        // with a live progress fill (see playerProgressPct).
-        currentTime: 0,
-        duration: 0,
       },
 
       // one shared QR popup, repositioned/retargeted by whichever button
@@ -278,14 +269,6 @@ const app = createApp({
         left: this.playlistPicker.left != null ? this.playlistPicker.left + 'px' : 'auto',
         right: this.playlistPicker.right != null ? this.playlistPicker.right + 'px' : 'auto',
       };
-    },
-    // 0 before metadata loads (duration is NaN/0 then) rather than NaN --
-    // NaN as a CSS %-width is simply invalid and drops the whole
-    // declaration, which would leave the *previous* --pct sitting there
-    // unchanged instead of visibly resetting to empty for the new track.
-    playerProgressPct() {
-      if (!this.player.duration) return 0;
-      return Math.min(100, (this.player.currentTime / this.player.duration) * 100);
     },
   },
 
@@ -504,12 +487,6 @@ const app = createApp({
       this.player.mode = 'pip';
       this.player.visible = true;
       this.player.queue = queue;
-      // reset immediately, not left showing the *previous* track's
-      // progress until this one's first timeupdate fires -- a playlist
-      // row's progress decoration would otherwise flash the old track's
-      // near-100% fill for a moment right as the next one starts
-      this.player.currentTime = 0;
-      this.player.duration = 0;
       this.$nextTick(() => {
         const video = this.$refs.playerVideo;
         video.src = '/api/stream/' + jobId;
@@ -545,18 +522,6 @@ const app = createApp({
       this.player.visible = false;
       this.player.isPlaying = false;
       this.player.queue = null;
-      this.player.currentTime = 0;
-      this.player.duration = 0;
-    },
-    // <video>'s currentTime/duration are raw element properties, not
-    // Vue-reactive on their own -- this copies them into player state on
-    // every timeupdate (and once metadata loads, for duration) so
-    // playerProgressPct/the playlist "now playing" row decoration
-    // actually update as playback moves, not just at start/end.
-    onPlayerTimeUpdate() {
-      const video = this.$refs.playerVideo;
-      this.player.currentTime = video.currentTime;
-      this.player.duration = video.duration || 0;
     },
     setPlayerMode(mode) {
       const el = this.$refs.globalPlayer;

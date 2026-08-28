@@ -315,7 +315,6 @@
       <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
       <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
            draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash}"
-           :style="player.visible && it.content_hash === player.contentHash ? {'--pct': playerProgressPct + '%'} : {}"
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
            @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
         <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
@@ -365,8 +364,7 @@
     </div>
   </div>
   <video ref="playerVideo" controls
-         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"
-         @timeupdate="onPlayerTimeUpdate" @loadedmetadata="onPlayerTimeUpdate"></video>
+         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">

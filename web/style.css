@@ -969,6 +969,7 @@ code {
    plus remove, so forcing it onto one line reads as a denser, more
    scannable list instead. */
 .playlist-item {
+  position: relative; /* anchors .playlist-item-playing::after below */
   display: flex;
   align-items: center;
   gap: 0.6rem;
@@ -990,21 +991,48 @@ code {
 }
 
 /* "now playing" decoration for whichever playlist item matches the
-   global player's current track -- the exact same "growing fill + chasing
-   shimmer" technique .dl-progress-row above already uses for an active
-   download (same row-progress-shimmer keyframe, reused rather than
-   duplicated), just driven by real playback position (--pct set from
-   playerProgressPct in index.html) instead of download percentage. A
-   playlist row playing all the way through a queue reads the same way a
-   download filling up does: a real, moving indicator of "something is
-   actively happening here right now," not a static "current track"
-   label. */
-.playlist-item-playing {
-  --pct: 0%;
-  background:
-    linear-gradient(90deg, transparent var(--pct), var(--bg) var(--pct)) bottom left / 100% 3px no-repeat,
-    linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)) bottom left / 200% 3px no-repeat;
-  animation: row-progress-shimmer 2.8s linear infinite;
+   global player's current track -- several lights running around the
+   *entire* border, chasing each other, rather than a single edge filling
+   up (that was the first version of this; a growing fill reads as "this
+   much is done", which isn't actually what a playlist wants to say --
+   there's no single "done" position on a border loop, just "this is the
+   one playing right now").
+
+   Built as a rotating conic-gradient on a ::after the exact size of the
+   row, masked down to just the border ring (mask-composite: exclude
+   punches out everything but the gap between the outer edge and the
+   padding-box inset) -- the standard CSS-only animated-gradient-border
+   technique. --chase-angle is a real animatable custom property (see the
+   @property rule below); without registering it as an <angle>, the
+   browser can't interpolate between 0deg and 360deg at all and the
+   "animation" would just be two static frames. */
+.playlist-item-playing::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 2px;
+  background: conic-gradient(from var(--chase-angle),
+    var(--accent) 0deg, transparent 22deg,
+    var(--accent) 90deg, transparent 112deg,
+    var(--accent) 180deg, transparent 202deg,
+    var(--accent) 270deg, transparent 292deg,
+    var(--accent) 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  animation: chase-border 2.4s linear infinite;
+}
+
+@property --chase-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@keyframes chase-border {
+  to { --chase-angle: 360deg; }
 }
 
 .drag-handle {
