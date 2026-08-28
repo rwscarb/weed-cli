@@ -253,19 +253,26 @@ def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_h
     # socket object isn't serializable at all, and stop_event has no
     # business being client-visible either.
     stop_event = threading.Event()
+    thread = threading.Thread(target=_run_host_job,
+                               args=(host_id, archive_dir, file_name, port, price, relay_urls,
+                                     advertise_host, tunnel),
+                               kwargs={'ln_node': ln_node, 'stop_event': stop_event}, daemon=True)
     with _lock:
         # file_name kept here (not just passed to the thread below) so a
         # host that ends in 'error' -- before ever reaching the
         # files=[...] update on success -- still has enough on _hosts[id]
         # to rebuild its _persisted_hosts key later (see
         # _forget_persisted_host / _resume_persisted_hosts' auto-prune).
+        # _thread is join()'d by _handle_forget_host after closing _sock,
+        # so it can confirm the port is actually free again (closing a
+        # socket another thread is blocked in accept() on doesn't
+        # necessarily release the port instantaneously from the OS's
+        # point of view -- see that function's own comment) before
+        # telling the client "stopped: true".
         _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
                             'file_name': file_name, 'price': price, 'tunnel': tunnel,
-                            'status': 'starting', '_stop_event': stop_event}
-    threading.Thread(target=_run_host_job,
-                      args=(host_id, archive_dir, file_name, port, price, relay_urls,
-                            advertise_host, tunnel),
-                      kwargs={'ln_node': ln_node, 'stop_event': stop_event}, daemon=True).start()
+                            'status': 'starting', '_stop_event': stop_event, '_thread': thread}
+    thread.start()
     return host_id
 
 
@@ -905,6 +912,19 @@ class Handler(BaseHTTPRequestHandler):
                 stopped = True
             except OSError:
                 pass
+            # closing a socket another thread is blocked in accept() on
+            # doesn't guarantee the OS has released the port back for a
+            # fresh bind() the instant close() returns here -- that other
+            # thread still has to actually wake up from its own blocked
+            # syscall first. Joining it (briefly -- this is a normal,
+            # near-instant wakeup, not something that should ever
+            # legitimately take long) before answering means a client
+            # that immediately retries "Start hosting" on this same port
+            # right after seeing stopped: true reliably finds it free,
+            # instead of racing the old thread's own teardown.
+            thread = h.get('_thread')
+            if thread is not None:
+                thread.join(timeout=2)
         forgotten = _forget_persisted_host(h['archive_dir'], h.get('file_name'), h['port'])
         self._json({'ok': True, 'forgotten_from_autostart': forgotten, 'stopped': stopped})
 
