@@ -832,7 +832,24 @@ const app = createApp({
         } else if (!r._dl.downloading) {
           this.download(r);
         }
+      } else if (e.key === 'Escape' && this.discoverSearch) {
+        // only when there's actually something to clear -- an empty
+        // search box falls through untouched, so Esc still bubbles up to
+        // its usual global job (closing the player/popups/shortcuts list)
+        // instead of eating the keystroke for nothing.
+        e.preventDefault();
+        this.clearDiscoverSearch();
       }
+    },
+    // The search box's own ✕ button, and Escape above -- one place that
+    // clears the query text, drops any stale row highlight left over
+    // from arrow-key navigation (that hash may not even match anything
+    // once the filter resets), and returns focus to the box so typing a
+    // fresh search doesn't need an extra click first.
+    clearDiscoverSearch() {
+      this.discoverSearch = '';
+      this.searchHighlightHash = null;
+      this.$nextTick(() => this.$refs.searchInput && this.$refs.searchInput.focus());
     },
 
     // Handles both the first Download and any later Re-download click for

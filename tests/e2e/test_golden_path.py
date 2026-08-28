@@ -211,3 +211,32 @@ def test_sort_by_recently_played_reflects_a_real_play(page, golden_path_server):
     assert page.locator('#discover-table th.sortable:has-text("Last played") .sort-tick').is_visible()
     # nothing played yet -- should render the "never played" dash, not crash
     assert re.search(r'—', page.locator('#discover-table tbody tr').first.inner_text())
+
+
+def test_search_clear_button_and_escape_both_empty_the_search_box(page, golden_path_server):
+    """Real ask: a little ✕ inside the search input to erase what's
+    there. It should only appear once there's actually something to
+    clear, clicking it should empty the box and hand focus back to it,
+    and Escape (while the box has text) should do the same without also
+    swallowing Escape when the box is already empty."""
+    page.goto(golden_path_server['web_url'])
+    page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
+
+    search = page.locator('input[placeholder="title or content hash"]')
+    clear_btn = page.locator('.search-clear-btn')
+    assert not clear_btn.is_visible()  # nothing typed yet -- no button to show
+
+    search.fill('nothing matches this')
+    assert clear_btn.is_visible()
+    assert 'no results match' in page.locator('#discover-table').inner_text()
+
+    clear_btn.click()
+    assert search.input_value() == ''
+    assert not clear_btn.is_visible()
+    assert golden_path_server['title'] in page.content()  # the real row is back
+    assert search.evaluate('el => el === document.activeElement')  # focus returned
+
+    search.fill('nothing matches this')
+    search.press('Escape')
+    assert search.input_value() == ''
+    assert golden_path_server['title'] in page.content()

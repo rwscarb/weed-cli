@@ -88,6 +88,42 @@ input[type="text"], input[type="number"] {
   font-size: 0.9rem;
 }
 
+/* wraps just the Discover search <input>, not the whole label -- inline-
+   block (not flex/width:100%) so it shrinks to the input's own natural
+   size exactly like the bare input already did, instead of stretching to
+   fill its row. The clear button below is positioned inside this box,
+   over the input's own right-padding rather than occupying separate
+   layout space next to it, so it reads as "part of the input" the way
+   the same pattern in every other search box does. */
+.search-input-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.search-input-wrap input {
+  padding-right: 1.7rem;
+}
+
+.search-clear-btn {
+  position: absolute;
+  right: 0.3rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1;
+  padding: 0.2rem 0.35rem;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.search-clear-btn:hover {
+  color: var(--text);
+  background: var(--border);
+}
+
 button {
   background: var(--accent-dim);
   color: var(--text);

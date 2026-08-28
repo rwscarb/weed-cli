@@ -43,8 +43,12 @@
       </form>
       <form class="inline-form" @submit.prevent>
         <label>Search
-          <input type="text" ref="searchInput" v-model="discoverSearch" placeholder="title or content hash"
-                 @keydown="onSearchKeydown">
+          <div class="search-input-wrap">
+            <input type="text" ref="searchInput" v-model="discoverSearch" placeholder="title or content hash"
+                   @keydown="onSearchKeydown">
+            <button type="button" class="search-clear-btn" v-if="discoverSearch" title="Clear search"
+                    @click="clearDiscoverSearch">✕</button>
+          </div>
         </label>
         <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
         <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
