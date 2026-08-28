@@ -699,15 +699,51 @@ class Handler(BaseHTTPRequestHandler):
         chunk_size = OttStore(ott_dir).chunk_size
         chunks = chunk_hashes(dest_path, chunk_size)
         digest = merkle_root(chunks) if chunks else hashlib.sha256(b'').hexdigest()
-        with open(os.path.join(ott_dir, 'chunks', f'{digest}.json'), 'w') as f:
-            json.dump(chunks, f)
         entry = {
             'sha256': digest, 'name': safe_name, 'orig_path': safe_name, 'last_path': dest_path,
             'size': written, 'added': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             'type': 'video', 'n_chunks': len(chunks), 'chunk_size': chunk_size,
         }
-        with open(os.path.join(ott_dir, 'manifest.jsonl'), 'a') as f:
-            f.write(json.dumps(entry) + '\n')
+
+        # _lock (not just for _jobs/_hosts/_library, see its own comment
+        # up top -- this is the same "one file, must not be torn by two
+        # threads at once" concern) since dropping several files at once
+        # in the browser fires one of these per file, concurrently, and
+        # every one of them touches this *same* manifest.jsonl.
+        #
+        # tmp-file-then-os.replace, not a bare open(path, 'a') -- a real
+        # incident: appending blindly assumes the file already ends with
+        # a newline, and it didn't. That merged this entry onto the end
+        # of the previous line into one unparseable JSON blob, and
+        # load_manifest_entries' `[json.loads(line) for line in f]` has
+        # no per-line error handling -- one bad line raises and the
+        # *entire* manifest fails to load, which is exactly "files could
+        # not be found" for everything in the archive, not just the new
+        # upload. Reading the whole file, normalizing a missing trailing
+        # newline, and writing the result to a temp file before
+        # replacing the original atomically (same pattern _save_library
+        # already uses) can't leave a half-written or malformed file on
+        # disk no matter when a crash or a second concurrent request
+        # lands, and fixes the missing-newline case outright instead of
+        # just avoiding making it worse.
+        chunks_path = os.path.join(ott_dir, 'chunks', f'{digest}.json')
+        manifest_path = os.path.join(ott_dir, 'manifest.jsonl')
+        with _lock:
+            chunks_tmp = chunks_path + '.tmp'
+            with open(chunks_tmp, 'w') as f:
+                json.dump(chunks, f)
+            os.replace(chunks_tmp, chunks_path)
+
+            existing = ''
+            if os.path.exists(manifest_path):
+                with open(manifest_path) as f:
+                    existing = f.read()
+            if existing and not existing.endswith('\n'):
+                existing += '\n'
+            manifest_tmp = manifest_path + '.tmp'
+            with open(manifest_tmp, 'w') as f:
+                f.write(existing + json.dumps(entry) + '\n')
+            os.replace(manifest_tmp, manifest_path)
 
         self._json({'ok': True, 'name': safe_name, 'content_hash': digest,
                      'size': written, 'n_chunks': len(chunks), 'archive_dir': archive_dir})

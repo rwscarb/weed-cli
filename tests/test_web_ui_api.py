@@ -6,7 +6,9 @@ identity/library/hosts file this touches is redirected into tmp_path by
 the isolated_paths fixture web_server depends on; nothing here can ever
 read or write a real ~/.weed_* file.
 """
+import json
 import os
+import threading
 import urllib.parse
 
 import node
@@ -142,6 +144,56 @@ def test_upload_video_produces_a_real_hostable_archive(web_server, tmp_path):
     assert entries[0]['sha256'] == resp['content_hash']
     leaves = node.load_leaves(archive_dir, resp['content_hash'])
     assert len(leaves) == resp['n_chunks']
+
+
+def test_upload_appends_correctly_when_existing_manifest_has_no_trailing_newline(web_server, tmp_path):
+    """Real incident, not a hypothetical: an existing manifest.jsonl that
+    doesn't end in a newline (this archive's did not) used to get a new
+    entry appended directly onto the end of the last line via a bare
+    open(path, 'a') -- merging two JSON objects into one unparseable
+    line. node.load_manifest_entries has no per-line error handling, so
+    that one bad line broke reading the *entire* manifest, not just the
+    new upload -- every pre-existing file in the archive became
+    unloadable ("files could not be found") until the manifest was
+    rebuilt from scratch."""
+    archive_dir = tmp_path / 'archive'
+    ott_dir = archive_dir / '.ott'
+    ott_dir.mkdir(parents=True)
+    pre_existing = {'sha256': 'b' * 64, 'name': 'old.mp4', 'orig_path': 'old.mp4',
+                     'last_path': str(archive_dir / 'old.mp4'), 'size': 1,
+                     'added': '2020-01-01T00:00:00Z', 'type': 'video', 'n_chunks': 1, 'chunk_size': 262144}
+    # deliberately no trailing newline -- this is the exact condition that broke it
+    (ott_dir / 'manifest.jsonl').write_text(json.dumps(pre_existing))
+
+    status, resp = http_post_raw(_upload_url(web_server, 'new.mp4', str(archive_dir)), os.urandom(50_000))
+    assert status == 200
+
+    # the real assertion: BOTH entries must still be independently
+    # loadable afterward, old and new alike
+    entries = node.load_manifest_entries(str(archive_dir))
+    names = {e['name'] for e in entries}
+    assert names == {'old.mp4', 'new.mp4'}
+
+
+def test_concurrent_uploads_to_the_same_archive_dont_lose_an_entry(web_server, tmp_path):
+    """Dropping several files at once in the browser fires one upload
+    request per file, concurrently -- all racing to read-modify-write the
+    same manifest.jsonl. Without a lock around that, two requests can
+    both read the same "before" state and whichever writes last wins,
+    silently dropping the other's entry."""
+    archive_dir = str(tmp_path / 'archive')
+    threads = [
+        threading.Thread(target=http_post_raw,
+                          args=(_upload_url(web_server, f'concurrent{i}.mp4', archive_dir), os.urandom(20_000)))
+        for i in range(8)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    entries = node.load_manifest_entries(archive_dir)
+    assert {e['name'] for e in entries} == {f'concurrent{i}.mp4' for i in range(8)}
 
 
 def test_upload_rejects_non_video_extension(web_server, tmp_path):
