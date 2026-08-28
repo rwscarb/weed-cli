@@ -1018,6 +1018,25 @@ const app = createApp({
       this.openPlayer(rec.job_id, next.title || rec.title || this.shortHash(next.content_hash),
         next.content_hash, next.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + 1 });
     },
+    // Manual Prev/Next (the player header's ⏮/⏭, see index.html) --
+    // distinct from onPlayerEnded's own auto-advance above rather than
+    // sharing it outright: running past either end there means the
+    // whole queue genuinely finished, so it clears player.queue; running
+    // past either end here just means the button got clicked at a
+    // boundary it should already be disabled at (or Prev on the very
+    // first track), and the right response is simply nothing -- the
+    // current track (and the rest of the queue) keeps playing
+    // undisturbed, not queue getting silently cleared out from under it.
+    playQueueOffset(delta) {
+      const q = this.player.queue;
+      if (!q) return;
+      const target = q.items[q.index + delta];
+      if (!target) return;
+      const rec = this.library.downloads[target.content_hash];
+      if (!rec) return;
+      this.openPlayer(rec.job_id, target.title || rec.title || this.shortHash(target.content_hash),
+        target.content_hash, target.signer_pubkey || rec.signer_pubkey, { items: q.items, index: q.index + delta });
+    },
 
     // ── orbit visualizer (easter egg) ────────────────────────────────
     // Lazy + cached forever, not per-open: createMediaElementSource can
