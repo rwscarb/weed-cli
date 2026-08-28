@@ -433,7 +433,20 @@ def _load_hostable_entries(archive_dir, file_name):
 
 
 def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
-                     ln_node=None, sock=None):
+                     ln_node=None, sock=None, stop_event=None):
+    """stop_event (optional) is how a caller like web_ui.py's
+    _handle_forget_host actually stops an already-running host --
+    closing srv from another thread is what unblocks the accept() call
+    below (it raises OSError there), and stop_event.is_set() is what
+    tells this loop that was a deliberate stop, not a real crash worth
+    reporting as one. Without this, the only way to free a port a host
+    was already bound to (e.g. to replace a single-file host with one
+    covering the whole archive) was killing the entire process -- a real
+    report, not a hypothetical: a stale single-file host surviving a
+    restart via _resume_persisted_hosts permanently squatted on the
+    default port, and every later attempt to host the whole archive_dir
+    on that same port failed with "Address already in use" with no way
+    to clear it short of restarting Docker itself."""
     archive_dir = os.path.expanduser(archive_dir)
     entries, entries_by_hash = _load_hostable_entries(archive_dir, file_name)
     default_hash = next(iter(entries_by_hash)) if len(entries_by_hash) == 1 else None
@@ -456,7 +469,16 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
                   f"— clients SELECT which one by content hash")
 
     while True:
-        conn, _ = srv.accept()
+        try:
+            conn, _ = srv.accept()
+        except OSError:
+            # closing srv from another thread (see this function's own
+            # docstring) is exactly what makes accept() raise here --
+            # stop_event.is_set() means that was deliberate, so return
+            # cleanly instead of letting it look like a crash.
+            if stop_event is not None and stop_event.is_set():
+                return
+            raise
         # Real report: a file dropped into this same archive_dir via the
         # web UI's upload feature (or `ott add` from another terminal)
         # never showed up for anyone connecting to an *already-running*

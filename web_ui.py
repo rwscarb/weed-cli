@@ -243,6 +243,16 @@ def _is_permanently_broken_host_error(message):
 
 def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
     host_id = uuid.uuid4().hex[:12]
+    # _stop_event is how _handle_forget_host actually stops an
+    # already-bound host (see node.run_host_server's own docstring) --
+    # stashed on _hosts[host_id] as soon as it exists so a forget/stop
+    # request racing against this job's own startup can still reach it.
+    # _sock is added later, once _run_host_job actually binds it (there's
+    # nothing to close before then). Both are underscore-prefixed so
+    # /api/hosts strips them before JSON-serializing this dict -- a live
+    # socket object isn't serializable at all, and stop_event has no
+    # business being client-visible either.
+    stop_event = threading.Event()
     with _lock:
         # file_name kept here (not just passed to the thread below) so a
         # host that ends in 'error' -- before ever reaching the
@@ -251,11 +261,11 @@ def _start_host_job(archive_dir, file_name, port, price, relay_urls, advertise_h
         # _forget_persisted_host / _resume_persisted_hosts' auto-prune).
         _hosts[host_id] = {'id': host_id, 'archive_dir': archive_dir, 'port': port,
                             'file_name': file_name, 'price': price, 'tunnel': tunnel,
-                            'status': 'starting'}
+                            'status': 'starting', '_stop_event': stop_event}
     threading.Thread(target=_run_host_job,
                       args=(host_id, archive_dir, file_name, port, price, relay_urls,
                             advertise_host, tunnel),
-                      kwargs={'ln_node': ln_node}, daemon=True).start()
+                      kwargs={'ln_node': ln_node, 'stop_event': stop_event}, daemon=True).start()
     return host_id
 
 
@@ -409,7 +419,7 @@ def _detect_lan_ip():
 
 
 def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel,
-                   ln_node=None):
+                   ln_node=None, stop_event=None):
     captured = io.StringIO()
     try:
         with _quiet() as captured:
@@ -426,6 +436,11 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # and only fail later, deep in a background thread with no way
             # for the UI to ever find out
             all_leaves = {e['sha256']: node.load_leaves(archive_dir, e['sha256']) for e in entries}
+            # forgotten/stopped before we ever got this far (e.g. clicked
+            # right after "Start hosting" on a config that was a mistake)
+            # -- no point binding a port just to immediately release it
+            if stop_event is not None and stop_event.is_set():
+                return
             # bind the real, permanent listening socket now — before
             # announcing anything — and hand it to run_host_server below
             # instead of it binding a second one later. A separate
@@ -436,14 +451,24 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
             # has no such window — the port either really is free right
             # now or this raises immediately, before any publish.
             bound_sock = node.bind_host_port(port)
-            # a distinct status the instant the bind (the only part
-            # _resume_persisted_hosts actually needs to wait for) is done
-            # — 'running' doesn't happen until after the publish loop
-            # below, which is real network I/O (up to 5s timeout *per*
-            # relay, see post_event) that resuming several hosts
-            # sequentially has no reason to serialize on
             with _lock:
-                _hosts[host_id]['status'] = 'bound'
+                # forgotten in the narrow window between the stop_event
+                # check above and acquiring this lock -- _hosts[host_id]
+                # is already gone (see _handle_forget_host), so there's
+                # no one left to update and this bound socket would
+                # otherwise sit there forever, unreachable and un-closable.
+                if host_id not in _hosts:
+                    bound_sock.close()
+                    return
+                # a distinct status the instant the bind (the only part
+                # _resume_persisted_hosts actually needs to wait for) is
+                # done — 'running' doesn't happen until after the publish
+                # loop below, which is real network I/O (up to 5s timeout
+                # *per* relay, see post_event) that resuming several
+                # hosts sequentially has no reason to serialize on. _sock
+                # stashed here too -- see _start_host_job's own comment
+                # on why, and _handle_forget_host for the other end of it.
+                _hosts[host_id].update(status='bound', _sock=bound_sock)
             ott_status = node.ott_commit_status(archive_dir)
             announced = []
             for entry in entries:
@@ -483,14 +508,22 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                                       kwargs={'use_tls': use_tls, 'quiet': True, 'ln_node': ln_node},
                                       daemon=True).start()
             node.run_host_server(archive_dir, file_name, port, quiet=True, price=price, ln_node=ln_node,
-                                  sock=bound_sock)
+                                  sock=bound_sock, stop_event=stop_event)
     except SystemExit as e:
+        # host_id can already be gone here if this job was forgotten/
+        # stopped mid-flight (see _handle_forget_host) -- run_host_server
+        # itself returns cleanly on a deliberate stop (see its own
+        # docstring), but a SystemExit from elsewhere in this block
+        # racing against that removal shouldn't crash trying to update an
+        # entry nobody's watching anymore.
         with _lock:
-            _hosts[host_id].update(status='error', error=_with_captured_detail(str(e), captured))
+            if host_id in _hosts:
+                _hosts[host_id].update(status='error', error=_with_captured_detail(str(e), captured))
     except Exception as e:
         with _lock:
-            _hosts[host_id].update(status='error',
-                                    error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
+            if host_id in _hosts:
+                _hosts[host_id].update(status='error',
+                                        error=_with_captured_detail(f'{type(e).__name__}: {e}', captured))
 
 
 def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
@@ -576,7 +609,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'results': results})
         if path == '/api/hosts':
             with _lock:
-                hosts = [dict(h) for h in _hosts.values()]
+                # strip the underscore-prefixed internals (_sock, _stop_event
+                # -- see _start_host_job) before this ever reaches json.dumps:
+                # a live socket object isn't JSON-serializable at all, and
+                # would 500 this whole endpoint the instant any host reached
+                # 'bound' the moment this dict(h) copy stopped filtering them.
+                hosts = [{k: v for k, v in h.items() if not k.startswith('_')} for h in _hosts.values()]
             for h in hosts:
                 log_buf = _host_logs.get(h['id'])
                 if log_buf is not None:
@@ -833,14 +871,21 @@ class Handler(BaseHTTPRequestHandler):
         self._json({'host_id': host_id})
 
     def _handle_forget_host(self, body):
-        """POST /api/host/forget {host_id} -- removes an *errored* host
-        entry from the Active hosts table and, if it's also in
-        ~/.weed_hosts.json, from there too, so it stops being retried on
-        every future startup. Only for 'error' status: a 'running' host
-        has a live accept() loop in run_host_server with no cancellation
-        path (see node.py) -- there's no way to actually release its port
-        from here, so forgetting it would just make the UI lie about
-        whether it's still listening."""
+        """POST /api/host/forget {host_id} -- removes a host entry from
+        the Active hosts table and, if it's also in ~/.weed_hosts.json,
+        from there too, so it stops being retried on every future
+        startup. For a still-bound/running host this also actually stops
+        it: closing its listening socket (see node.run_host_server's own
+        docstring) unblocks its accept() loop, freeing the port
+        immediately instead of leaving it squatted forever.
+
+        Real report this closes: a single-file host survived a restart
+        via _resume_persisted_hosts and permanently held the default
+        port, so every later attempt to host the *whole* archive_dir on
+        that same port failed with "Address already in use" -- and
+        nothing short of restarting the whole container could free it,
+        since there was previously no way to stop a specific running
+        host from here at all."""
         host_id = body.get('host_id')
         if not host_id:
             return self._json({'error': 'host_id required'}, status=400)
@@ -848,14 +893,20 @@ class Handler(BaseHTTPRequestHandler):
             h = _hosts.get(host_id)
             if h is None:
                 return self._json({'error': f'no such host: {host_id}'}, status=404)
-            if h['status'] not in ('error',):
-                return self._json(
-                    {'error': f"can't forget a host in status {h['status']!r} -- only an errored "
-                               'entry can be forgotten (a running host has no stop mechanism; '
-                               'restart the process to actually release its port)'}, status=400)
             del _hosts[host_id]
+        stop_event = h.get('_stop_event')
+        if stop_event is not None:
+            stop_event.set()
+        sock = h.get('_sock')
+        stopped = False
+        if sock is not None:
+            try:
+                sock.close()
+                stopped = True
+            except OSError:
+                pass
         forgotten = _forget_persisted_host(h['archive_dir'], h.get('file_name'), h['port'])
-        self._json({'ok': True, 'forgotten_from_autostart': forgotten})
+        self._json({'ok': True, 'forgotten_from_autostart': forgotten, 'stopped': stopped})
 
     def _handle_download(self, body):
         content_hash = body.get('content_hash')
