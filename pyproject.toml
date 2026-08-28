@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weed-cli"
-version = "1.8.2"
+version = "1.8.3"
 description = "Censorship-resistant video PoC — discovery/hosting/download over signed relay events, a real Kademlia DHT, or a TLS-capable NAT-traversal tunnel"
 readme = "README.md"
 license = { text = "MIT" }
@@ -45,6 +45,15 @@ dev = [
   # too -- `playwright install chromium`, or point WEED_TEST_CHROMIUM at
   # an existing one (see tests/e2e/conftest.py).
   "pytest-playwright>=0.5",
+  # tests/test_dht.py imports dht.py, which imports kademlia at module
+  # level -- self-referencing the dht extra (not duplicating its version
+  # constraint here) means bumping kademlia's pin in one place stays
+  # enough. Missing this is exactly what broke CI: `pip install -e .[dev]`
+  # alone left kademlia (an otherwise-optional runtime dependency, real
+  # users of plain relay/DHT-less discovery never need it) uninstalled,
+  # so importing dht.py at test collection time raised ModuleNotFoundError
+  # before a single test even ran.
+  "weed-cli[dht]",
 ]
 dht = [
   "kademlia>=2.2",
