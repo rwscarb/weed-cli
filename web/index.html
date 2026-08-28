@@ -89,7 +89,7 @@
             :style="r._dl.downloading ? {'--pct': r._dl.pct + '%'} : {}">
           <td>
             <div class="swipe-row" v-center-swipe>
-              <div class="swipe-back">
+              <div class="swipe-back swipe-back-mirror">
                 <div class="actions-row">
                   <template v-if="library.downloads[r.content_hash]">
                     <button type="button" class="play-btn"

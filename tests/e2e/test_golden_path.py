@@ -24,30 +24,32 @@ def test_download_then_play_updates_play_history(page, golden_path_server):
     page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
 
     # reveal the swipe-back actions row (Download button lives there) and click it.
-    # .first: the Discover row has two identical .swipe-back action pages
-    # now (swipe either direction to reach them on mobile -- see
-    # index.html), both visible at once at this test's desktop viewport
-    # width since the swipe/scroll-snap CSS only activates under the
-    # mobile breakpoint. Either one does the same thing.
+    # :not(.swipe-back-mirror): the Discover row has two identical
+    # .swipe-back action pages in the DOM (swipe either direction to
+    # reach them on mobile -- see index.html), but the mirror copy is
+    # display:none outside the mobile breakpoint (see style.css) -- it's
+    # still a real DOM match Playwright's locator counts regardless of
+    # CSS visibility, so .first isn't enough here (it happens to land on
+    # the mirror, which comes first in document order, and then times out
+    # waiting for a hidden element to become clickable). Excluding it
+    # explicitly picks the one actually shown at this test's desktop
+    # viewport width, rather than relying on DOM-order luck.
     row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first
-    row.locator('.swipe-back .play-btn', has_text='Download').first.click()
+    row.locator('.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='Download').click()
 
     # real chunked download + merkle verification against the real host --
     # give it real time, not an arbitrary short timeout
-    page.wait_for_selector('#discover-table .swipe-back .play-btn:has-text("▶ Play")', timeout=20_000)
+    page.wait_for_selector('#discover-table .swipe-back:not(.swipe-back-mirror) .play-btn:has-text("▶ Play")', timeout=20_000)
 
     lib_before = page.evaluate("() => fetch('/api/library').then(r => r.json())")
     hash_ = golden_path_server['content_hash']
     rec_before = next(d for d in lib_before['downloads'] if d['content_hash'] == hash_)
     assert rec_before.get('play_count', 0) == 0
 
-    # .first: the Discover row now has two identical .swipe-back action
-    # pages (swipe either direction to reach them on mobile -- see
-    # index.html), both plainly visible and clickable at this test's
-    # desktop viewport width since the swipe/scroll-snap CSS only
-    # activates under the mobile breakpoint. Either one does the same
-    # thing.
-    row.locator('.swipe-back .play-btn', has_text='▶ Play').first.click()
+    # :not(.swipe-back-mirror) -- see this test's earlier Download click
+    # for why (a hidden-at-desktop DOM duplicate that .first would land
+    # on instead of the real, visible one).
+    row.locator('.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='▶ Play').click()
     page.wait_for_selector('#global-player:not(.hidden)', timeout=5_000)
 
     # the /api/play POST is fire-and-forget from the frontend -- give it a

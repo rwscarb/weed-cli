@@ -292,10 +292,16 @@ td button {
 
 /* mobile-only front page decoration (duplicate hash + swipe affordance,
    see the HTML) -- the real Content-hash column already shows the hash
-   on desktop, and .swipe-row's two-page layout below only exists at
+   on desktop, and .swipe-row's three-page layout below only exists at
    mobile width at all, so both stay hidden until that breakpoint turns
-   them on. */
-.mobile-hash, .swipe-hint {
+   them on. .swipe-back-mirror is the Discover row's second, identical
+   actions page (see index.html) -- exists purely so mobile can swipe
+   either direction to reach the same actions (see .swipe-row's own
+   comment below); at desktop width .swipe-row/.swipe-front/.swipe-back
+   have no special layout at all, so without this the mirror rendered as
+   a second, fully visible, functionally-duplicate set of Play/Verify/etc
+   controls stacked right under the first one. */
+.mobile-hash, .swipe-hint, .swipe-back-mirror {
   display: none;
 }
 
@@ -1290,7 +1296,7 @@ code {
     min-width: 0;
     scroll-snap-align: start;
   }
-  .swipe-back {
+  .swipe-back, .swipe-back-mirror {
     display: flex;
     align-items: center;
   }
