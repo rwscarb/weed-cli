@@ -989,6 +989,24 @@ code {
   background: rgba(110, 231, 183, 0.06);
 }
 
+/* "now playing" decoration for whichever playlist item matches the
+   global player's current track -- the exact same "growing fill + chasing
+   shimmer" technique .dl-progress-row above already uses for an active
+   download (same row-progress-shimmer keyframe, reused rather than
+   duplicated), just driven by real playback position (--pct set from
+   playerProgressPct in index.html) instead of download percentage. A
+   playlist row playing all the way through a queue reads the same way a
+   download filling up does: a real, moving indicator of "something is
+   actively happening here right now," not a static "current track"
+   label. */
+.playlist-item-playing {
+  --pct: 0%;
+  background:
+    linear-gradient(90deg, transparent var(--pct), var(--bg) var(--pct)) bottom left / 100% 3px no-repeat,
+    linear-gradient(90deg, var(--accent-dim), var(--accent), var(--accent-dim)) bottom left / 200% 3px no-repeat;
+  animation: row-progress-shimmer 2.8s linear infinite;
+}
+
 .drag-handle {
   cursor: grab;
   color: var(--muted);
@@ -1037,15 +1055,28 @@ code {
   margin-bottom: 0.5rem;
 }
 
+/* wraps the add-to-playlist button and the play-this-playlist button as
+   one row -- was itself a single <button> (its whole-row click always
+   meant "add") before the play button existed; needs two independent
+   click targets now, so this became a plain wrapper and .playlist-picker-
+   item-add below took over the "look like a full-width list row" styling
+   that used to live here directly. */
+.playlist-picker-item {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+}
+
 /* resets the generic button {} look (that's what made every entry here
    render as a big bordered accent pill before this existed) into a
-   plain, full-width list row */
-.playlist-picker-item {
+   plain list row */
+.playlist-picker-item-add {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   background: transparent;
   border: none;
   border-radius: 4px;
@@ -1055,9 +1086,18 @@ code {
   text-align: left;
 }
 
-.playlist-picker-item:hover {
+.playlist-picker-item-add:hover {
   background: var(--bg);
   color: var(--text);
+}
+
+.playlist-picker-play-btn {
+  flex: none;
+}
+
+.playlist-picker-play-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }
 
 .playlist-picker-item-name {

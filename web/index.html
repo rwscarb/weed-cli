@@ -314,7 +314,8 @@
       </div>
       <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
       <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
-           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx)}"
+           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash}"
+           :style="player.visible && it.content_hash === player.contentHash ? {'--pct': playerProgressPct + '%'} : {}"
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
            @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
         <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
@@ -364,7 +365,8 @@
     </div>
   </div>
   <video ref="playerVideo" controls
-         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
+         @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"
+         @timeupdate="onPlayerTimeUpdate" @loadedmetadata="onPlayerTimeUpdate"></video>
 </div>
 
 <div id="shared-qr-popup" ref="qrPopup" class="qr-popup" :class="{hidden: !qr.visible}" :style="qrPopupStyle">
@@ -376,11 +378,15 @@
      :style="playlistPickerStyle">
   <div class="playlist-picker-title">Add to playlist</div>
   <div class="playlist-picker-list" v-if="library.playlists.length">
-    <button type="button" class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id"
-            @click="addToPlaylist(pl.id)">
-      <span class="playlist-picker-item-name">{{ pl.name }}</span>
-      <span class="muted">{{ pl.items.length }}</span>
-    </button>
+    <div class="playlist-picker-item" v-for="pl in library.playlists" :key="pl.id">
+      <button type="button" class="playlist-picker-item-add" title="Add to this playlist"
+              @click="addToPlaylist(pl.id)">
+        <span class="playlist-picker-item-name">{{ pl.name }}</span>
+        <span class="muted">{{ pl.items.length }}</span>
+      </button>
+      <button type="button" class="icon-btn playlist-picker-play-btn" title="Play this playlist now"
+              :disabled="!pl.items.length" @click="playPlaylistFromPicker(pl)">▶</button>
+    </div>
   </div>
   <div v-else class="playlist-picker-empty muted">no playlists yet</div>
   <form class="playlist-picker-new" @submit.prevent="createPlaylistAndAdd">
