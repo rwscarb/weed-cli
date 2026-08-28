@@ -327,6 +327,25 @@ td button {
        siblings here instead, so the gap above already spaces them */
     margin-top: 0;
   }
+  /* .swipe-back sizes to its own content (flex: none above) -- fine for
+     the Play/QR buttons themselves (always the same size), but .dl-stats
+     had no fixed width, so "16.7 MB · 2.3 MB/s" vs "163.6 MB · 179.3
+     MB/s" made .swipe-back itself measurably wider or narrower row to
+     row. .swipe-front's flex: 1 correctly fills whatever's left after
+     that (exactly as it should), which meant *it* shrank or grew to
+     match -- and every done row's Play button landed at a different X
+     position purely because that row's stats string happened to be a
+     different length, not because anything about the row's own content
+     actually needed more room. A fixed width turns .swipe-back's own
+     footprint constant across every row again, same fix shape as
+     .dl-log's already-fixed width for the exact same reason. */
+  #jobs-table .dl-stats {
+    width: 8.5rem;
+    flex-shrink: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
 }
 
 /* mobile-only front page decoration (duplicate hash + swipe affordance,
@@ -1029,6 +1048,17 @@ code {
   border-radius: 8px;
   padding: 0.85rem 1rem;
   margin-bottom: 1rem;
+}
+
+/* dragging a track from a *different* playlist over this one -- see
+   onPlaylistCardDragOver/Drop. A whole-card outline rather than
+   .playlist-item-drag-over's top-edge line: this fires for the card
+   itself, its empty-state message, and any of its own items alike (the
+   drop always appends to the end regardless of which one), so nothing
+   here means "it'll land right at this exact row." */
+.playlist-card-drag-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 .playlist-card-header {

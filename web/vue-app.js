@@ -982,7 +982,7 @@ const app = createApp({
       this.openPlayer(rec.job_id, it.title || rec.title || this.shortHash(it.content_hash),
         it.content_hash, it.signer_pubkey || rec.signer_pubkey, { items, index, playlistId: pl.id });
     },
-    // ── playlist drag-to-reorder ──────────────────────────────────────
+    // ── playlist drag-to-reorder / drag-between-playlists ──────────────
     // Native HTML5 drag-and-drop, not a library -- one draggable list,
     // no cross-window/touch requirements, not worth a dependency for.
     // _dragFrom is plain (non-reactive) instance state, same reasoning
@@ -990,7 +990,13 @@ const app = createApp({
     // one drag gesture, nothing ever needs to render off of it directly.
     onItemDragStart(e, playlist, idx) {
       this._dragFrom = { playlistId: playlist.id, index: idx };
-      e.dataTransfer.effectAllowed = 'move';
+      // 'copyMove', not just 'move' -- dropping on a *different*
+      // playlist (see onPlaylistCardDragOver/Drop below) moves by
+      // default but copies if <Ctrl> is held, so both effects need to
+      // be permitted here for that to ever show up as a real cursor
+      // (a plain 'move' would silently coerce a copy attempt back to a
+      // move regardless of dropEffect).
+      e.dataTransfer.effectAllowed = 'copyMove';
       // Firefox won't fire drop at all unless dragstart sets *some* data
       e.dataTransfer.setData('text/plain', String(idx));
     },
@@ -1000,10 +1006,16 @@ const app = createApp({
     },
     // dragOverKey is reactive (unlike _dragFrom) purely to drive the
     // drop-target highlight -- keyed 'playlistId:index' since two
-    // playlists' items can share the same index
+    // playlists' items can share the same index. Deliberately a no-op
+    // (not even preventDefault, via the plain @dragover.prevent in the
+    // HTML actually doing that part) for a *different* source playlist --
+    // dragover bubbles, so leaving this one silent for that case lets it
+    // reach onPlaylistCardDragOver on the enclosing .playlist-card
+    // instead, which is what actually handles moving/copying between
+    // playlists.
     onItemDragOver(e, playlist, idx) {
       if (!this._dragFrom || this._dragFrom.playlistId !== playlist.id) return;
-      e.dataTransfer.dropEffect = 'move';
+      e.dataTransfer.dropEffect = 'move'; // reordering within one playlist is never a "copy"
       this.dragOverKey = playlist.id + ':' + idx;
     },
     async onItemDrop(e, playlist, idx) {
@@ -1019,6 +1031,45 @@ const app = createApp({
         { playlist_id: playlist.id, order: items.map(it => it.content_hash) });
       if (resp.error) { this.showError('error: ' + resp.error); return; }
       this._applyPlaylist(resp.playlist);
+    },
+    // Dropping on a *different* playlist's card -- its background, the
+    // "empty" message, or any of its own items (onItemDragOver/onItemDrop
+    // above deliberately leave a cross-playlist drag alone rather than
+    // consuming the event, so it bubbles up here regardless of exactly
+    // where within the card the cursor happens to be) -- moves the
+    // dragged track there by default; held <Ctrl> copies it instead,
+    // leaving the source playlist untouched. Always appends to the end
+    // of the target rather than trying to land at a precise position --
+    // reordering once it's there is what within-playlist drag already
+    // does, this is just "get it into the other list."
+    onPlaylistCardDragOver(e, playlist) {
+      if (!this._dragFrom || this._dragFrom.playlistId === playlist.id) return;
+      e.dataTransfer.dropEffect = e.ctrlKey ? 'copy' : 'move';
+      this.dragOverKey = playlist.id + ':card';
+    },
+    onPlaylistCardDragLeave(e, playlist) {
+      if (this.dragOverKey === playlist.id + ':card') this.dragOverKey = null;
+    },
+    async onPlaylistCardDrop(e, playlist) {
+      this.dragOverKey = null;
+      const from = this._dragFrom;
+      this._dragFrom = null;
+      if (!from || from.playlistId === playlist.id) return;
+      const sourcePlaylist = this.library.playlists.find(p => p.id === from.playlistId);
+      const item = sourcePlaylist && sourcePlaylist.items[from.index];
+      if (!item) return;
+      const copy = e.ctrlKey;
+      const addResp = await this.apiPost('/api/playlists/add', {
+        playlist_id: playlist.id, content_hash: item.content_hash,
+        title: item.title || null, signer_pubkey: item.signer_pubkey || null,
+      });
+      if (addResp.error) { this.showError('error: ' + addResp.error); return; }
+      this._applyPlaylist(addResp.playlist);
+      if (copy) return;
+      const removeResp = await this.apiPost('/api/playlists/remove',
+        { playlist_id: sourcePlaylist.id, content_hash: item.content_hash });
+      if (removeResp.error) { this.showError('error: ' + removeResp.error); return; }
+      this._applyPlaylist(removeResp.playlist);
     },
     async deletePlaylist(playlistId) {
       await this.apiPost('/api/playlists/delete', { playlist_id: playlistId });

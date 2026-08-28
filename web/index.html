@@ -298,7 +298,11 @@
       No playlists yet — use the ♫+ button on any Discover or Downloads row to start one.
     </p>
 
-    <div class="playlist-card" v-for="pl in library.playlists" :key="pl.id">
+    <div class="playlist-card" v-for="pl in library.playlists" :key="pl.id"
+         :class="{'playlist-card-drag-over': dragOverKey === (pl.id + ':card')}"
+         @dragover.prevent="onPlaylistCardDragOver($event, pl)"
+         @dragleave="onPlaylistCardDragLeave($event, pl)"
+         @drop.prevent="onPlaylistCardDrop($event, pl)">
       <div class="playlist-card-header">
         <span v-if="!pl._editing" class="playlist-name" title="Click to rename"
               @click="startRenamePlaylist(pl)">{{ pl.name }}</span>
