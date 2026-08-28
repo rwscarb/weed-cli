@@ -435,18 +435,30 @@ def _load_hostable_entries(archive_dir, file_name):
 def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,
                      ln_node=None, sock=None, stop_event=None):
     """stop_event (optional) is how a caller like web_ui.py's
-    _handle_forget_host actually stops an already-running host --
-    closing srv from another thread is what unblocks the accept() call
-    below (it raises OSError there), and stop_event.is_set() is what
-    tells this loop that was a deliberate stop, not a real crash worth
-    reporting as one. Without this, the only way to free a port a host
-    was already bound to (e.g. to replace a single-file host with one
-    covering the whole archive) was killing the entire process -- a real
-    report, not a hypothetical: a stale single-file host surviving a
-    restart via _resume_persisted_hosts permanently squatted on the
-    default port, and every later attempt to host the whole archive_dir
-    on that same port failed with "Address already in use" with no way
-    to clear it short of restarting Docker itself."""
+    _handle_forget_host actually stops an already-running host. The
+    obvious approach -- close srv from another thread to make the
+    blocked accept() below raise -- turns out not to be reliable at all:
+    verified directly that a thread blocked in accept() on Linux/CPython
+    can just stay blocked indefinitely after another thread closes the
+    same socket, with no exception ever raised (this is a known rough
+    edge of mixing blocking syscalls with cross-thread close(), not
+    something the rest of this codebase happened to hit before). A
+    socket timeout is the actually-reliable mechanism: accept() itself
+    raises socket.timeout on its own schedule, which this loop polls
+    stop_event against -- no dependency on some other thread's close()
+    ever actually reaching the kernel's blocked syscall. Only applied
+    when stop_event is given at all, so every other caller (the CLI's
+    `host` command, e2e's golden_path_server, ...) keeps the exact old
+    zero-overhead fully-blocking behavior.
+
+    Without this, the only way to free a port a host was already bound
+    to (e.g. to replace a single-file host with one covering the whole
+    archive) was killing the entire process -- a real report, not a
+    hypothetical: a stale single-file host surviving a restart via
+    _resume_persisted_hosts permanently squatted on the default port,
+    and every later attempt to host the whole archive_dir on that same
+    port failed with "Address already in use" with no way to clear it
+    short of restarting Docker itself."""
     archive_dir = os.path.expanduser(archive_dir)
     entries, entries_by_hash = _load_hostable_entries(archive_dir, file_name)
     default_hash = next(iter(entries_by_hash)) if len(entries_by_hash) == 1 else None
@@ -454,6 +466,8 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
 
     srv = sock if sock is not None else bind_host_port(port, bind_host)
     srv.listen(8)
+    if stop_event is not None:
+        srv.settimeout(1.0)
     if not quiet:
         # a background thread's print() races with cmd.Cmd's input()-driven
         # prompt on the same stdout — see run_relay_server's docstring for
@@ -471,11 +485,16 @@ def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=Fal
     while True:
         try:
             conn, _ = srv.accept()
+        except socket.timeout:
+            # only possible when stop_event is not None (that's the only
+            # path that ever calls settimeout above) -- just means no
+            # connection arrived within the last second; check whether
+            # this was actually asked to stop, and if not, go right back
+            # to waiting.
+            if stop_event is not None and stop_event.is_set():
+                return
+            continue
         except OSError:
-            # closing srv from another thread (see this function's own
-            # docstring) is exactly what makes accept() raise here --
-            # stop_event.is_set() means that was deliberate, so return
-            # cleanly instead of letting it look like a crash.
             if stop_event is not None and stop_event.is_set():
                 return
             raise
