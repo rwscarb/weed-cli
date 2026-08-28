@@ -347,10 +347,10 @@
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <template v-if="player.queue">
-      <button type="button" class="icon-btn" title="Previous track" :disabled="player.queue.index <= 0"
+      <button type="button" class="icon-btn player-transport-btn" title="Previous track" :disabled="player.queue.index <= 0"
               @click.stop="playQueueOffset(-1)">⏮</button>
       <span class="player-queue-pos" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
-      <button type="button" class="icon-btn" title="Next track" :disabled="player.queue.index >= player.queue.items.length - 1"
+      <button type="button" class="icon-btn player-transport-btn" title="Next track" :disabled="player.queue.index >= player.queue.items.length - 1"
               @click.stop="playQueueOffset(1)">⏭</button>
     </template>
     <div class="player-controls">

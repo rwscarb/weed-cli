@@ -548,8 +548,15 @@ td button {
    .player-controls for room there (see .player-title's own ellipsis),
    and "2 / 5" is the kind of detail worth showing once there's real
    space for it (theater/fullscreen) rather than squeezing the title
-   further just to fit. */
-#global-player.mode-pip .player-queue-pos {
+   further just to fit. Same reasoning extends to the Prev/Next transport
+   buttons (.player-transport-btn) added alongside it: measured directly
+   at PIP's default width, adding them squeezed the title down to ~28px
+   (effectively unreadable) even with the position text already hidden --
+   two more buttons was the straw that broke it, not something a bit more
+   ellipsis room fixes. Theater/fullscreen have the width for a full
+   transport row; PIP keeps exactly the header it already had. */
+#global-player.mode-pip .player-queue-pos,
+#global-player.mode-pip .player-transport-btn {
   display: none;
 }
 
