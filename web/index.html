@@ -314,16 +314,16 @@
       </div>
       <p v-if="!pl.items.length" class="muted playlist-empty">empty — add items from Discover or Downloads</p>
       <div class="playlist-item" v-for="(it, idx) in pl.items" :key="it.content_hash"
-           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash}"
+           draggable="true" :class="{'playlist-item-drag-over': dragOverKey === (pl.id + ':' + idx), 'playlist-item-playing': player.visible && it.content_hash === player.contentHash, 'playlist-item-clickable': library.downloads[it.content_hash]}"
+           :title="library.downloads[it.content_hash] ? 'Click to play' : 'not downloaded yet'"
+           @click="playPlaylistItem(it)"
            @dragstart="onItemDragStart($event, pl, idx)" @dragend="onItemDragEnd"
            @dragover.prevent="onItemDragOver($event, pl, idx)" @drop.prevent="onItemDrop($event, pl, idx)">
         <span class="drag-handle" title="Drag to reorder">⠿⠿</span>
         <span class="playlist-item-title" v-marquee :title="it.title || shortHash(it.content_hash)"><span>{{ it.title || shortHash(it.content_hash) }}</span></span>
-        <button type="button" class="play-btn" v-if="library.downloads[it.content_hash]"
-                @click="openPlayer(library.downloads[it.content_hash].job_id, it.title || library.downloads[it.content_hash].title || shortHash(it.content_hash), it.content_hash, it.signer_pubkey || library.downloads[it.content_hash].signer_pubkey)">▶ Play</button>
-        <span v-else class="muted playlist-item-status">not downloaded</span>
+        <span v-if="!library.downloads[it.content_hash]" class="muted playlist-item-status">not downloaded</span>
         <button type="button" class="icon-btn" title="Remove from playlist"
-                @click="removeFromPlaylist(pl.id, it.content_hash)">✕</button>
+                @click.stop="removeFromPlaylist(pl.id, it.content_hash)">✕</button>
       </div>
     </div>
   </section>

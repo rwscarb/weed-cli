@@ -910,6 +910,16 @@ const app = createApp({
       if (resp.error) { this.showError('error: ' + resp.error); return; }
       this._applyPlaylist(resp.playlist);
     },
+    // The whole row is the play target now, not a separate button (see
+    // .playlist-item-clickable) -- a no-op for a not-yet-downloaded item
+    // rather than an error, same as the old button simply not rendering
+    // for one; "not downloaded" is already shown right there on the row.
+    playPlaylistItem(it) {
+      const rec = this.library.downloads[it.content_hash];
+      if (!rec) return;
+      this.openPlayer(rec.job_id, it.title || rec.title || this.shortHash(it.content_hash),
+        it.content_hash, it.signer_pubkey || rec.signer_pubkey);
+    },
     // ── playlist drag-to-reorder ──────────────────────────────────────
     // Native HTML5 drag-and-drop, not a library -- one draggable list,
     // no cross-window/touch requirements, not worth a dependency for.

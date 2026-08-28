@@ -982,6 +982,18 @@ code {
   border-bottom: none;
 }
 
+/* the whole row is the play target now, not a separate button --
+   only applied when the item is actually downloaded (see playPlaylistItem's
+   own no-op guard for the alternative), so a not-yet-downloaded row's
+   cursor honestly reflects that clicking it does nothing yet */
+.playlist-item-clickable {
+  cursor: pointer;
+}
+
+.playlist-item-clickable:hover {
+  background: var(--bg);
+}
+
 /* the drop target while dragging something over it -- a top edge
    highlight rather than a full background wash reads as "it'll land
    here" (above this row) more clearly than "this row is selected" would */
