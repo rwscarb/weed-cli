@@ -1336,5 +1336,33 @@ app.directive('marquee', {
   },
 });
 
+// v-center-swipe: for a .swipe-row built as three 100%-wide pages
+// [actions, front, actions] (see index.html's Discover row markup) --
+// scroll-snap's own default resting position is the *first* child
+// (scrollLeft 0), which would make the front page the leftmost page and
+// leave only one swipe direction doing anything. Centering scrollLeft on
+// the middle page instead means swiping either way reveals a (identical)
+// actions page, matching the already-bidirectional-looking "‹ actions ›"
+// hint text that was, until now, only ever true in one direction.
+function _centerSwipeRow(el) {
+  if (el.children.length < 2) return;
+  el.scrollLeft = el.children[0].offsetWidth;
+}
+app.directive('center-swipe', {
+  mounted(el) {
+    _centerSwipeRow(el);
+    // the row's own width changes independent of any Vue re-render too
+    // (orientation change, viewport resize) -- scrollLeft is a raw pixel
+    // value, so a stale one no longer lines up with the new page width,
+    // leaving the view stuck between snap points until the next manual
+    // touch. Same ResizeObserver-on-mount pattern v-marquee already uses.
+    el._centerSwipeRO = new ResizeObserver(() => _centerSwipeRow(el));
+    el._centerSwipeRO.observe(el);
+  },
+  unmounted(el) {
+    if (el._centerSwipeRO) el._centerSwipeRO.disconnect();
+  },
+});
+
 app.component('filter-toggle', FilterToggle);
 app.mount('#app');

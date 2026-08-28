@@ -24,11 +24,11 @@ def test_download_then_play_updates_play_history(page, golden_path_server):
     page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
 
     # reveal the swipe-back actions row (Download button lives there) and click it.
-    # .first: under back-to-back real-browser e2e runs this occasionally
-    # observes a transient extra match mid-render (Vue's own patch, not
-    # app state -- a fresh page.reload() always shows exactly one), so
-    # pin to the first stable match rather than fail on a render-timing
-    # fluke that isn't the thing this test is actually checking.
+    # .first: the Discover row has two identical .swipe-back action pages
+    # now (swipe either direction to reach them on mobile -- see
+    # index.html), both visible at once at this test's desktop viewport
+    # width since the swipe/scroll-snap CSS only activates under the
+    # mobile breakpoint. Either one does the same thing.
     row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first
     row.locator('.swipe-back .play-btn', has_text='Download').first.click()
 
@@ -41,7 +41,13 @@ def test_download_then_play_updates_play_history(page, golden_path_server):
     rec_before = next(d for d in lib_before['downloads'] if d['content_hash'] == hash_)
     assert rec_before.get('play_count', 0) == 0
 
-    row.locator('.swipe-back .play-btn', has_text='▶ Play').click()
+    # .first: the Discover row now has two identical .swipe-back action
+    # pages (swipe either direction to reach them on mobile -- see
+    # index.html), both plainly visible and clickable at this test's
+    # desktop viewport width since the swipe/scroll-snap CSS only
+    # activates under the mobile breakpoint. Either one does the same
+    # thing.
+    row.locator('.swipe-back .play-btn', has_text='▶ Play').first.click()
     page.wait_for_selector('#global-player:not(.hidden)', timeout=5_000)
 
     # the /api/play POST is fire-and-forget from the frontend -- give it a

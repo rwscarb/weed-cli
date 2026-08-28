@@ -1134,8 +1134,17 @@ code {
      with fewer buttons) stranded at the left with dead space trailing
      off to the right. Letting the buttons themselves flex-grow means
      one button fills the whole row and three share it evenly, so
-     there's never empty space regardless of how many are present. */
-  .actions-row { gap: 0.25rem; }
+     there's never empty space regardless of how many are present.
+     Needs width: 100% too, not just flex-grow on the buttons inside it
+     -- .actions-row is itself a flex container sitting inside .swipe-back
+     (also flex), and a flex item with no explicit width defaults to
+     shrink-to-fit its own content. Without this, .actions-row itself
+     was only ever as wide as "Download" (or Play/↻/Verify) naturally
+     rendered at, so flex-grow on the buttons had a tiny box to divide up
+     instead of the swipe page's real available width -- the actual
+     reason a lone "Download" button sat small at the left instead of
+     spanning the row. */
+  .actions-row { gap: 0.25rem; width: 100%; }
   .actions-row .play-btn { flex: 1 1 0; }
 
   /* the header row still lays out as normal table cells (only tbody
