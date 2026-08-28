@@ -223,18 +223,36 @@ def test_upload_requires_name_param(web_server, tmp_path):
 
 
 def test_upload_defaults_archive_dir_when_omitted(web_server, tmp_path, monkeypatch):
-    """No archive_dir query param at all -- falls back to './share',
-    matching docker-compose.node.yml's own default bind-mount target.
-    './share' is resolved relative to the server process's cwd, which is
-    also this test process (web_server runs in a background thread, not
-    a subprocess) -- monkeypatch.chdir into tmp_path first so that
-    resolves somewhere throwaway instead of this repo's own real ./share
-    (which has real, non-test content -- see the repo root)."""
+    """No archive_dir query param at all, and no /share directory present
+    (the bare-metal / dev case) -- falls back to './share', resolved
+    relative to the server process's cwd, which is also this test process
+    (web_server runs in a background thread, not a subprocess) --
+    monkeypatch.chdir into tmp_path first so that resolves somewhere
+    throwaway instead of this repo's own real ./share (which has real,
+    non-test content -- see the repo root). It's extremely unlikely this
+    test machine has a real /share directory, but see
+    test_default_upload_archive_dir_unit below for the Docker-mount-
+    present branch, tested in isolation instead of through a real
+    filesystem write to a faked-out /share."""
     monkeypatch.chdir(tmp_path)
     status, resp = http_post_raw(f'{web_server}/api/upload?name=clip.mp4', os.urandom(1000))
     assert status == 200
     assert resp['archive_dir'] == './share'
     assert (tmp_path / 'share' / 'clip.mp4').exists()
+
+
+def test_default_upload_archive_dir_unit(monkeypatch):
+    """web_ui._default_upload_archive_dir() in isolation, covering both
+    branches without ever touching a real filesystem path -- see its own
+    docstring for the real incident (a file archived into /app/share
+    inside the container while the user's /share went on looking empty,
+    fixable only by restarting) that this default exists to prevent."""
+    import web_ui
+    monkeypatch.setattr(os.path, 'isdir', lambda p: p == '/share')
+    assert web_ui._default_upload_archive_dir() == '/share'
+
+    monkeypatch.setattr(os.path, 'isdir', lambda p: False)
+    assert web_ui._default_upload_archive_dir() == './share'
 
 
 def test_cross_origin_post_rejected(web_server):

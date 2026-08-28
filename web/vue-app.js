@@ -1328,12 +1328,6 @@ const app = createApp({
     },
     onHostFilesDropped(e) {
       this.hostDropzoneActive = false;
-      // an archive_dir has to exist for the drop to mean anything -- './share'
-      // matches docker-compose.node.yml's own default bind-mount target
-      // (see its comment on WEED_SHARE_DIR), so a fresh setup with an
-      // empty form field still lands somewhere that's already correct
-      // for the common (Docker) case, not an arbitrary made-up path.
-      if (!this.hostForm.archiveDir.trim()) this.hostForm.archiveDir = './share';
       for (const file of e.dataTransfer.files) this.uploadFile(file);
     },
     // XMLHttpRequest, not fetch, specifically for upload.onprogress --
@@ -1342,8 +1336,20 @@ const app = createApp({
     // feedback until it's entirely done is exactly the kind of "is this
     // actually working" moment a progress bar exists to answer.
     uploadFile(file) {
+      // Deliberately NOT defaulting an empty archiveDir here (used to
+      // fill in './share' client-side) -- that silently diverged from
+      // what /api/upload itself defaults to (which, inside the Docker
+      // image, is '/share', not './share': see web_ui.py's
+      // _handle_upload). Sending whatever's actually in the field (even
+      // blank) and letting the server pick the default keeps there being
+      // exactly one place that decides, instead of two that can disagree
+      // -- a real incident: a file uploaded to the client's guessed
+      // './share' (which resolves to /app/share inside the container)
+      // while the Host form's own /share was what "host" actually read,
+      // so the upload archived successfully but never showed up, and
+      // no restart could fix it since the file was never in /share.
       const archiveDir = this.hostForm.archiveDir;
-      const entry = { name: file.name, pct: 0, status: 'uploading', error: null, contentHash: null };
+      const entry = { name: file.name, pct: 0, status: 'uploading', error: null, contentHash: null, archiveDir: null };
       this.uploads.push(entry);
 
       const xhr = new XMLHttpRequest();
@@ -1363,6 +1369,13 @@ const app = createApp({
         entry.pct = 100;
         entry.status = 'done';
         entry.contentHash = resp.content_hash;
+        entry.archiveDir = resp.archive_dir;
+        // Reflect back the archive_dir the server actually used (which
+        // may not match, or may have defaulted from, what the field held
+        // at request time) so "Start hosting" is guaranteed to target the
+        // same directory the upload actually landed in -- see the note
+        // above uploadFile for the bug this closes.
+        this.hostForm.archiveDir = resp.archive_dir;
         // the newly-archived file is now the most recent thing in this
         // archive_dir -- fills in fileName so "Start hosting" targets it
         // specifically rather than whatever "most recent" happened to

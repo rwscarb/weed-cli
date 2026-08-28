@@ -173,7 +173,7 @@
       <div class="upload-item" v-for="(u, idx) in uploads" :key="idx">
         <span class="upload-item-name" :title="u.name">{{ u.name }}</span>
         <div class="progress-bar" v-if="u.status === 'uploading'"><div class="progress-fill" :style="{width: u.pct + '%'}"></div></div>
-        <span v-if="u.status === 'done'" class="status-done">done — {{ shortHash(u.contentHash, 8) }}</span>
+        <span v-if="u.status === 'done'" class="status-done">done — {{ shortHash(u.contentHash, 8) }} in {{ u.archiveDir }}</span>
         <span v-if="u.status === 'error'" class="status-error" :title="u.error">error: {{ u.error }}</span>
       </div>
     </div>

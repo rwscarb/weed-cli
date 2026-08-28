@@ -185,6 +185,23 @@ def _save_persisted_hosts():
     os.replace(tmp, HOSTS_PATH)
 
 
+def _default_upload_archive_dir():
+    """/share only exists as a real directory when running inside the
+    Docker image built from Dockerfile.node -- docker-compose.node.yml
+    bind-mounts the host's archive there, and its own comments tell the
+    user to type /share into this exact form field. Defaulting an
+    omitted archive_dir to the relative './share' instead would land an
+    upload in this process's cwd (/app inside that container), a
+    directory nobody else is looking at: the file would archive fine,
+    but every subsequent /api/host call against the /share the user
+    actually typed would report "no archived file found", with no
+    restart able to fix it since the file was never in /share to begin
+    with. Outside Docker, /share won't exist and this falls back to
+    './share', matching docker-compose.node.yml's own default bind-mount
+    source on the host side."""
+    return '/share' if os.path.isdir('/share') else './share'
+
+
 def _remember_host(archive_dir, file_name, port, price, relay_urls, advertise_host, tunnel, ln_node):
     key = f'{archive_dir}|{file_name}|{port}'
     _persisted_hosts[key] = {
@@ -643,7 +660,7 @@ class Handler(BaseHTTPRequestHandler):
 
         qs = parse_qs(urlparse(self.path).query)
         raw_name = (qs.get('name') or [''])[0]
-        archive_dir = (qs.get('archive_dir') or ['./share'])[0]
+        archive_dir = (qs.get('archive_dir') or [None])[0] or _default_upload_archive_dir()
         if not raw_name:
             return self._json({'error': 'name query param required'}, status=400)
 
