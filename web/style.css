@@ -640,14 +640,14 @@ td button {
   transform: none;
 }
 
-/* Prev/Next as a hover-reveal overlay on the video itself, not the
-   header -- works identically at every player size (PIP included, where
-   the header has no spare room at all -- see the header rule above for
-   the fight that used to be) since it's anchored to .player-video-wrap,
-   not competing with anything else for width. pointer-events: none on
-   the row itself (auto again on the buttons) so the dead space between
-   the two buttons still passes clicks/drags through to the video and
-   its own native controls underneath, not silently eating them. */
+/* Prev/Next as an overlay on the video itself, not the header -- works
+   identically at every player size (PIP included, where the header has
+   no spare room at all -- see the header rule above for the fight that
+   used to be) since it's anchored to .player-video-wrap, not competing
+   with anything else for width. pointer-events: none on the row itself
+   (auto again on the buttons) so the dead space between the two buttons
+   still passes clicks/drags through to the video and its own native
+   controls underneath, not silently eating them. */
 .player-transport-overlay {
   position: absolute;
   inset: 0;
@@ -656,13 +656,24 @@ td button {
   justify-content: space-between;
   padding: 0 0.5rem;
   pointer-events: none;
-  opacity: 0;
-  transition: opacity 0.15s ease;
 }
 
-.player-video-wrap:hover .player-transport-overlay,
-.player-video-wrap:focus-within .player-transport-overlay {
-  opacity: 1;
+/* Hide-until-hover only on devices that actually *have* hover (a real
+   mouse/trackpad) -- gating this on :hover unconditionally meant it
+   never appeared at all on a touchscreen, which has no persistent hover
+   state to trigger it (the first version of this shipped with exactly
+   that bug). On a touch device the buttons are just always visible
+   instead -- there's no hover affordance to reveal them with, so
+   "always on" is the only way they're discoverable there at all. */
+@media (hover: hover) {
+  .player-transport-overlay {
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+  .player-video-wrap:hover .player-transport-overlay,
+  .player-video-wrap:focus-within .player-transport-overlay {
+    opacity: 1;
+  }
 }
 
 .transport-overlay-btn {
