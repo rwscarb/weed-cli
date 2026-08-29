@@ -689,33 +689,69 @@ window.orbitViz = (function () {
           const r = b.dist * b.dist * maxR;
           const px = cx + Math.cos(b.angle) * r;
           const py = cy + Math.sin(b.angle) * r;
-          const bw = Math.max(2, b.halfW * r * 2);
-          const bh = Math.max(2, bw * b.heightScale * 2.6);
+          // Always clearly taller than wide (a fixed floor on the ratio,
+          // not just a random multiplier that could land near-square) --
+          // and, just as important, drawn with NO rotation at all: an
+          // earlier version rotated each building to face radially
+          // outward (long axis pointing at/away from center), which
+          // reads fine for buildings near the top/bottom of the screen
+          // but turns ones near the left/right edges onto their side --
+          // their "height" axis ends up running nearly horizontal on
+          // screen, which is exactly the reported "aspect is wrong."
+          // Real skylines don't lean over depending on where they sit
+          // in your field of view; staying upright regardless of
+          // on-screen position is what actually reads as buildings.
+          const bw = Math.max(3, b.halfW * r * 2);
+          const bh = Math.max(bw * 2.2, bw * (1.4 + b.heightScale));
           const hue = (hueBase + b.hueOff + bass * 30) % 360;
           vctx.save();
           vctx.translate(px, py);
-          // long axis points radially outward -- a real building falling
-          // straight past you lengthwise, not tumbling sideways
-          vctx.rotate(b.angle + Math.PI / 2);
-          vctx.fillStyle = `hsl(${hue | 0},35%,${10 + b.dist * 12 | 0}%)`;
+          // main facade
+          vctx.fillStyle = `hsl(${hue | 0},30%,${14 + b.dist * 10 | 0}%)`;
           vctx.fillRect(-bw / 2, -bh / 2, bw, bh);
-          // windows -- a sparse grid of small lit squares. Deterministic
-          // per (building, cell) via a cheap sine-hash of the building's
-          // own seed rather than real per-frame randomness, so a given
-          // window doesn't flicker on/off every single frame; "lit"
-          // brightens with bass, giving the skyline a pulse on hits.
-          const cols = Math.max(1, Math.floor(bw / 6));
-          const rows = Math.max(1, Math.floor(bh / 8));
-          const litFrac = 0.35 + bass * 0.4;
+          // a narrower, darker strip down one side -- a cheap "this is a
+          // solid block, one face catches less light" cue instead of a
+          // perfectly flat single-tone card, the other half of what was
+          // reading as un-3D before
+          const sideW = bw * 0.3;
+          vctx.fillStyle = `hsl(${hue | 0},30%,${Math.max(4, 7 + b.dist * 6) | 0}%)`;
+          vctx.fillRect(bw / 2 - sideW, -bh / 2, sideW, bh);
+          // windows -- a real evenly-spaced grid with visible gaps
+          // (mortar) between cells, not scattered dots at random
+          // positions: fixed cell pitch is what actually reads as "a
+          // building facade" instead of a speckled texture. Whole
+          // floors tend to light up together (floorLit below) rather
+          // than every window independently, closer to how a real
+          // building actually looks; "lit" fraction brightens with
+          // bass, giving the skyline a pulse on hits. Both the floor and
+          // per-window pick are a deterministic sine-hash of the
+          // building's own seed, not fresh Math.random() every frame,
+          // so a given window doesn't flicker on/off every single frame.
+          const winW = Math.max(2, bw * 0.16), winH = winW * 1.3;
+          const gapX = winW * 0.7, gapY = winH * 0.55;
+          const facadeW = bw - sideW;
+          const cols = Math.max(1, Math.floor((facadeW - gapX) / (winW + gapX)));
+          const rows = Math.max(1, Math.floor((bh - gapY) / (winH + gapY)));
+          const litFrac = 0.4 + bass * 0.35;
           for (let wy = 0; wy < rows; wy++) {
+            const floorHash = Math.sin(b.seed + wy * 12.9898) * 43758.5453;
+            const floorLit = (floorHash - Math.floor(floorHash)) < litFrac + 0.2;
             for (let wx = 0; wx < cols; wx++) {
-              const n = Math.sin(b.seed + wx * 12.9898 + wy * 78.233) * 43758.5453;
+              const n = Math.sin(b.seed + wx * 37.719 + wy * 91.345) * 24634.634;
               const frac = n - Math.floor(n);
-              if (frac > litFrac) continue;
-              const wxp = -bw / 2 + (wx + 0.5) * (bw / cols);
-              const wyp = -bh / 2 + (wy + 0.5) * (bh / rows);
-              vctx.fillStyle = `hsla(${(hue + 40) % 360 | 0},80%,75%,${(0.5 + frac * 0.5).toFixed(2)})`;
-              vctx.fillRect(wxp - 1, wyp - 1, 2, 2);
+              const lit = floorLit && frac < litFrac;
+              // the facade spans from the building's left edge (-bw/2)
+              // to where the side strip begins (bw/2 - sideW), not a
+              // region centered on the building's own origin -- offsetting
+              // from -bw/2 (not -facadeW/2) keeps the window grid aligned
+              // to that actual facade rectangle instead of drifting into
+              // the side strip on one edge and leaving a gap on the other
+              const wxp = -bw / 2 + gapX / 2 + wx * (winW + gapX);
+              const wyp = -bh / 2 + gapY / 2 + wy * (winH + gapY);
+              vctx.fillStyle = lit
+                ? `hsla(${(hue + 40) % 360 | 0},70%,72%,${(0.7 + frac * 0.3).toFixed(2)})`
+                : `hsla(${hue | 0},20%,${6 + b.dist * 4 | 0}%,0.85)`;
+              vctx.fillRect(wxp, wyp, winW, winH);
             }
           }
           vctx.restore();

@@ -106,17 +106,30 @@ def test_scroll_zoom_and_the_zoom_slider_stay_in_sync(page, golden_path_server):
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
 
-    before = float(page.locator('#zoomSlider').input_value())
+    # reads the slider value and its label together in one JS round trip
+    # -- mouse.wheel() can synthesize more than one discrete wheel event
+    # per call, each one calling setZoom() again, so two separate
+    # Python-side calls (slider first, label second) can straddle two
+    # different updates and see a slider/label pair that never actually
+    # coexisted, even though the two are always written atomically
+    # together inside setZoom() itself.
+    def read_zoom():
+        slider_value, label_text = page.evaluate(
+            "() => [document.getElementById('zoomSlider').value, document.getElementById('zoomVal').textContent]")
+        return float(slider_value), label_text
+
+    before, _ = read_zoom()
     page.locator('#vizCanvas').hover()
     page.mouse.wheel(0, -400)  # negative deltaY == zoom in, per the wheel handler
-    after = float(page.locator('#zoomSlider').input_value())
+    after, label = read_zoom()
     assert after > before
-    assert page.locator('#zoomVal').inner_text() == f'{after:.2f}x'
+    assert label == f'{after:.2f}x'
 
     # double-click resets pan/zoom -- the slider should snap back to 1.00x too
     page.locator('#vizCanvas').dblclick()
-    assert float(page.locator('#zoomSlider').input_value()) == pytest.approx(1.0, abs=0.01)
-    assert page.locator('#zoomVal').inner_text() == '1.00x'
+    reset_value, reset_label = read_zoom()
+    assert reset_value == pytest.approx(1.0, abs=0.01)
+    assert reset_label == '1.00x'
 
 
 def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
