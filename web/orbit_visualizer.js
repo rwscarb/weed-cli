@@ -404,6 +404,24 @@ window.orbitViz = (function () {
           const ox = cx - (fit.w * s.vizUserScale) / 2;
           const oy = cy - (fit.h * s.vizUserScale) / 2;
           const px = s.videoFrame.imageData.data;
+          // Real report: a flat black fill behind sparse ASCII glyphs
+          // reads as much darker overall than the source video actually
+          // is -- most of a character cell is empty space around the
+          // glyph's own strokes (more so for sparse RAMP characters like
+          // '.'/':'/'-'), so black dominates the visual weight between
+          // them regardless of how bright the underlying footage is.
+          // Drawing the actual sampled frame here first, dimmed, means
+          // that negative space still carries the scene's own color and
+          // brightness -- this reads as "this video, in ASCII" instead
+          // of "sparse dots over a black void." Dim enough (25%) that
+          // the glyphs drawn on top (still at their own full brightness/
+          // alpha below) stay the dominant, legible signal.
+          vpixOffCtx.putImageData(s.videoFrame.imageData, 0, 0);
+          const bgW = fit.w * s.vizUserScale, bgH = fit.h * s.vizUserScale;
+          vctx.save();
+          vctx.globalAlpha = 0.25;
+          vctx.drawImage(vpixOff, 0, 0, s.videoFrame.w, s.videoFrame.h, ox, oy, bgW, bgH);
+          vctx.restore();
           vctx.font = `${Math.max(4, cellH * 1.15).toFixed(1)}px 'Courier New',monospace`;
           vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
           for (let y = 0; y < rows; y++) {

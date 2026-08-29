@@ -7,6 +7,13 @@
   --accent: #6ee7b7;
   --accent-dim: #2f7a5e;
   --danger: #f87171;
+  /* shared by #global-player.mode-theater and #orbit-egg-dialog -- one
+     definition so "Theater and Orbit Visualizer should be the same
+     size" stays true by construction instead of two box sizes that
+     happen to match today and quietly drift apart the next time either
+     one changes. */
+  --big-dialog-w: min(1200px, calc(100vw - 1.5rem));
+  --big-dialog-h: min(820px, calc(100vh - 1.5rem));
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -604,19 +611,25 @@ td button {
 }
 
 #global-player.mode-theater {
-  width: min(900px, 92vw);
+  width: var(--big-dialog-w);
+  height: var(--big-dialog-h);
   top: 50%;
   left: 50%;
   right: auto;
   bottom: auto;
   transform: translate(-50%, -50%);
-  /* same native resize handle mode-pip already has -- 900px is a
-     reasonable default, not everyone's preferred theater size (a big
-     external monitor has room to spare; a laptop might want smaller
-     without dropping all the way to a separate "pip" size). Growing
-     from a centered box (top/left: 50% + this translate) keeps it
-     visually centered as it resizes, rather than drifting toward one
-     corner the way it would from a plain top/left-anchored box. */
+  /* same native resize handle mode-pip already has -- this default size
+     is a reasonable starting point, not everyone's preferred theater
+     size (a big external monitor has room to spare; a laptop might want
+     smaller without dropping all the way to a separate "pip" size).
+     Growing from a centered box (top/left: 50% + this translate) keeps
+     it visually centered as it resizes, rather than drifting toward one
+     corner the way it would from a plain top/left-anchored box. The
+     video itself (object-fit: contain, see #global-player video) still
+     letterboxes cleanly inside whatever this resizes to, same as
+     before -- giving it an explicit height here (it used to size to the
+     video's own aspect ratio instead) is what makes matching Orbit
+     Visualizer's own fixed box possible at all. */
   resize: both;
   min-width: 320px;
   min-height: 200px;
@@ -1020,8 +1033,8 @@ td button {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: min(1200px, calc(100vw - 1.5rem));
-  height: min(820px, calc(100vh - 1.5rem));
+  width: var(--big-dialog-w);
+  height: var(--big-dialog-h);
   background: var(--panel);
   color: var(--text);
   border: 1px solid var(--border);

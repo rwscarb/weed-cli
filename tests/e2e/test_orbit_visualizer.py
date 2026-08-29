@@ -5,8 +5,8 @@ markup + orbit_visualizer.js instead of a standalone page loaded into an
 There's no separate document to navigate to anymore -- this goes through
 the same open-the-player-then-click-🌀 flow a real user would, via
 test_golden_path's own _download_and_play helper, and asserts against
-observable DOM state (which button has .lit, what a slider's value is)
-rather than reaching into orbit_visualizer.js's internals: its per-open
+observable DOM state (which button has .active, what a slider's value
+is) rather than reaching into orbit_visualizer.js's internals: its per-open
 state now lives inside an IIFE closure specifically so nothing outside
 orbit_visualizer.js itself can see it, the same reason a plain
 `page.evaluate('() => vizMode')` (which the old iframe-page version of
@@ -23,6 +23,27 @@ def _open_orbit_viz(page):
     page.wait_for_selector('#vizModes')
 
 
+def test_ascii_mode_renders_several_frames_with_no_console_errors(page, golden_path_server):
+    """Real regression risk: ASCII's draw branch now also drawImage()s
+    the sampled video frame as a dimmed background (see its own comment
+    in orbit_visualizer.js on why -- a flat black fill behind sparse
+    glyphs read much darker than the source video actually was) before
+    drawing any glyphs. A canvas draw call throwing inside
+    requestAnimationFrame fails silently -- no crash, the loop just
+    quietly stops -- so this explicitly watches for a JS error while
+    real frames render in the default (ASCII) mode against a real
+    playing video, rather than trusting an absence of visible failure."""
+    errors = []
+    page.on('pageerror', lambda exc: errors.append(str(exc)))
+    page.on('console', lambda msg: errors.append(msg.text) if msg.type == 'error' else None)
+
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.wait_for_timeout(500)  # several draw frames at real animation-frame speed
+
+    assert errors == []
+
+
 def test_number_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     """Real ask: number keys should jump straight to a mode instead of
     only being reachable by clicking a button or, in fullscreen, cycling
@@ -33,8 +54,8 @@ def test_number_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     # VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels','ascii']
     # -- '3' is the third button, MIRROR
     page.keyboard.press('Digit3')
-    assert page.locator('[data-viz="mirror"]').evaluate('el => el.classList.contains("lit")')
-    assert not page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
+    assert page.locator('[data-viz="mirror"]').evaluate('el => el.classList.contains("active")')
+    assert not page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     # switching away from ascii hides its controls row -- confirms the
     # number-key jump runs the same setVizMode bookkeeping the mouse
     # click handler does, not a stripped-down copy of it
@@ -43,13 +64,13 @@ def test_number_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     # jump back to ASCII (7th button) directly, not by cycling through
     # every mode in between
     page.keyboard.press('Digit7')
-    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     assert page.locator('#asciiControls').is_visible()
 
     # out-of-range digits (8/9/0) are simply ignored, not an error and
     # not wrapping around to some other mode
     page.keyboard.press('Digit9')
-    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
 
 
 def test_arrow_and_bracket_keys_adjust_brightness_and_resolution(page, golden_path_server):
@@ -60,7 +81,7 @@ def test_arrow_and_bracket_keys_adjust_brightness_and_resolution(page, golden_pa
     'input' handler for exactly that reason."""
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
-    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("lit")')  # default mode
+    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')  # default mode
 
     bri_slider = page.locator('#asciiBriSlider')
     before_bri = float(bri_slider.input_value())
@@ -98,7 +119,7 @@ def test_back_button_closes_without_a_postmessage_round_trip(page, golden_path_s
     successfully."""
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
-    page.click('#orbit-egg-dialog button:has-text("BACK")')
+    page.click('#orbit-egg-dialog button:has-text("Back")')
     page.wait_for_selector('#orbit-egg-dialog', state='detached')
     assert page.locator('#global-player').is_visible()
 

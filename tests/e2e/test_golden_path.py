@@ -193,6 +193,25 @@ def test_orbit_visualizer_hides_the_real_video_in_every_player_mode(page, golden
     assert not page.locator('#global-player').is_visible()
 
 
+def test_theater_and_orbit_visualizer_are_the_same_size(page, golden_path_server):
+    """Real ask: Theater mode and the Orbit Visualizer dialog should be
+    uniform in size -- both now read var(--big-dialog-w)/--big-dialog-h
+    off :root (see style.css) rather than each hardcoding its own box,
+    so this confirms that's actually true on screen, not just true of
+    the two numbers happening to be typed the same in the stylesheet."""
+    _download_and_play(page, golden_path_server)
+    page.click('#global-player .icon-btn[title="Theater / PIP"]')
+    page.wait_for_selector('#global-player.mode-theater')
+    theater_box = page.locator('#global-player').bounding_box()
+
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#orbit-egg-dialog')
+    orbit_box = page.locator('#orbit-egg-dialog').bounding_box()
+
+    assert orbit_box['width'] == pytest.approx(theater_box['width'], abs=1)
+    assert orbit_box['height'] == pytest.approx(theater_box['height'], abs=1)
+
+
 def test_theater_window_is_draggable(page, golden_path_server):
     """Real report: Theater mode was resizable (free native CSS `resize`)
     but not movable -- onPlayerHeaderPointerDown bailed out immediately
