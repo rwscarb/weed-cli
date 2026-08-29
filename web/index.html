@@ -556,6 +556,21 @@
         <button class="viz-mode-btn" data-color="neon">Neon</button>
         <button class="viz-mode-btn active" data-color="natural">Natural</button>
       </div>
+      <!-- Freefall-only, same show/hide-by-mode treatment asciiControls
+           gets (see setVizMode in orbit_visualizer.js) -- Width/Height
+           retune every building's footprint/wall-lean live; Count
+           grows/shrinks the ring itself. -->
+      <div class="preset-row ascii-controls" id="freefallControls" style="display:none">
+        <span class="ascii-controls-label">Width</span>
+        <input type="range" id="buildingWidthSlider" min="0.3" max="3" step="0.1" value="1">
+        <span class="ascii-controls-val" id="buildingWidthVal">1.0x</span>
+        <span class="ascii-controls-label">Height</span>
+        <input type="range" id="buildingHeightSlider" min="0.3" max="3" step="0.1" value="1">
+        <span class="ascii-controls-val" id="buildingHeightVal">1.0x</span>
+        <span class="ascii-controls-label">Count</span>
+        <input type="range" id="buildingCountSlider" min="5" max="120" step="1" value="40">
+        <span class="ascii-controls-val" id="buildingCountVal">40</span>
+      </div>
       <canvas id="vizCanvas"></canvas>
       <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; shift+1-9,0 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
     </div>

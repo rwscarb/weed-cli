@@ -69,6 +69,13 @@ window.orbitViz = (function () {
     const reactivityVal = document.getElementById('reactivityVal');
     const zoomSlider = document.getElementById('zoomSlider');
     const zoomVal = document.getElementById('zoomVal');
+    const freefallControls = document.getElementById('freefallControls');
+    const buildingWidthSlider = document.getElementById('buildingWidthSlider');
+    const buildingWidthVal = document.getElementById('buildingWidthVal');
+    const buildingHeightSlider = document.getElementById('buildingHeightSlider');
+    const buildingHeightVal = document.getElementById('buildingHeightVal');
+    const buildingCountSlider = document.getElementById('buildingCountSlider');
+    const buildingCountVal = document.getElementById('buildingCountVal');
     const vizModesEl = document.getElementById('vizModes');
     const vizSection = document.getElementById('vizSection');
     const vizFsBtn = document.getElementById('vizFsBtn');
@@ -121,6 +128,18 @@ window.orbitViz = (function () {
       // videoFrame above already uses.
       particles: null,
       buildings: null,
+      // FREEFALL's own dimension sliders -- 1.0 multiplies footW/wallLen
+      // by exactly 1 (no change from the un-tuned default), applied at
+      // draw time rather than baked into each building's own stored
+      // halfW/heightScale, so moving a slider retunes every building on
+      // screen immediately instead of only the next ones spawned.
+      // buildingCount is the one exception -- it directly resizes
+      // s.buildings (see its own maintenance check in the freefall
+      // branch), since "how many" isn't a per-building draw-time
+      // multiplier the way width/height are.
+      buildingWidthScale: 1.0,
+      buildingHeightScale: 1.0,
+      buildingCount: 40,
       // Global tuning knobs (the Speed/Reactivity/Zoom sliders) -- 1.0
       // is a pure pass-through matching this file's original,
       // unmodified behavior, so leaving every slider untouched looks
@@ -215,6 +234,7 @@ window.orbitViz = (function () {
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       resetVizNav();
       asciiControls.style.display = mode === 'ascii' ? 'flex' : 'none';
+      freefallControls.style.display = mode === 'freefall' ? 'flex' : 'none';
     }
     on(vizModesEl, 'click', function (e) {
       const btn = e.target.closest('[data-viz]'); if (!btn) return;
@@ -286,6 +306,34 @@ window.orbitViz = (function () {
     }
     on(reactivitySlider, 'input', () => setReactivity(parseFloat(reactivitySlider.value)));
     setReactivity(s.reactivity);
+
+    // FREEFALL's own dimension sliders -- see buildingWidthScale's own
+    // comment in the state object for why Width/Height apply at draw
+    // time (a live multiplier on every building on screen) while Count
+    // actually resizes s.buildings.
+    function setBuildingWidth(value) {
+      s.buildingWidthScale = Math.min(3, Math.max(0.3, Math.round(value * 10) / 10));
+      buildingWidthSlider.value = s.buildingWidthScale;
+      buildingWidthVal.textContent = s.buildingWidthScale.toFixed(1) + 'x';
+    }
+    on(buildingWidthSlider, 'input', () => setBuildingWidth(parseFloat(buildingWidthSlider.value)));
+    setBuildingWidth(s.buildingWidthScale);
+
+    function setBuildingHeight(value) {
+      s.buildingHeightScale = Math.min(3, Math.max(0.3, Math.round(value * 10) / 10));
+      buildingHeightSlider.value = s.buildingHeightScale;
+      buildingHeightVal.textContent = s.buildingHeightScale.toFixed(1) + 'x';
+    }
+    on(buildingHeightSlider, 'input', () => setBuildingHeight(parseFloat(buildingHeightSlider.value)));
+    setBuildingHeight(s.buildingHeightScale);
+
+    function setBuildingCount(value) {
+      s.buildingCount = Math.min(120, Math.max(5, Math.round(value)));
+      buildingCountSlider.value = s.buildingCount;
+      buildingCountVal.textContent = String(s.buildingCount);
+    }
+    on(buildingCountSlider, 'input', () => setBuildingCount(parseFloat(buildingCountSlider.value)));
+    setBuildingCount(s.buildingCount);
 
     // Shared fallback for the two video-based modes (pixels/ascii) when
     // no frame has arrived yet -- see videoFrame's own comment on why
@@ -663,19 +711,33 @@ window.orbitViz = (function () {
         // completely) it respawns at dist=0 with fresh random size/
         // angle -- an endless supply, never actually "running out" the
         // way a fixed skyline would.
+        // shared by initial population, respawn-on-passing (below), and
+        // the buildingCount slider growing the ring -- one place that
+        // knows what a "fresh" building's random fields look like
+        function randomBuildingFields() {
+          return {
+            angle: Math.random() * Math.PI * 2,
+            halfW: 0.05 + Math.random() * 0.09,
+            heightScale: 0.6 + Math.random() * 1.2,
+            hueOff: Math.random() * 70 - 35,
+            seed: Math.random() * 1000,
+          };
+        }
         if (!s.buildings) {
           s.buildings = [];
-          for (let i = 0; i < 40; i++) {
-            s.buildings.push({
-              angle: Math.random() * Math.PI * 2,
-              dist: Math.random(),  // staggered so they don't all arrive at once
-              halfW: 0.05 + Math.random() * 0.09,
-              heightScale: 0.6 + Math.random() * 1.2,
-              hueOff: Math.random() * 70 - 35,
-              seed: Math.random() * 1000,
-            });
+          for (let i = 0; i < s.buildingCount; i++) {
+            s.buildings.push({ dist: Math.random(), ...randomBuildingFields() });  // staggered so they don't all arrive at once
           }
         }
+        // buildingCount slider -- grow/shrink the ring to match; a
+        // grown building is staggered in (fresh random dist) same as
+        // the initial population, not dropped in already mid-flight at
+        // dist=0, which would flash it into existence right at screen
+        // center instead of spawning where a real one naturally would
+        while (s.buildings.length < s.buildingCount) {
+          s.buildings.push({ dist: Math.random(), ...randomBuildingFields() });
+        }
+        if (s.buildings.length > s.buildingCount) s.buildings.length = s.buildingCount;
         vctx.fillStyle = `hsla(${(hueBase + 200) % 360 | 0},55%,4%,1)`; vctx.fillRect(0, 0, s.VW, s.VH);
         const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
         const bassEnd = Math.max(1, Math.floor(maxBin * 0.12));
@@ -710,11 +772,7 @@ window.orbitViz = (function () {
           b.dist += fallSpeed;
           if (b.dist > 1) {
             b.dist -= 1;
-            b.angle = Math.random() * Math.PI * 2;
-            b.halfW = 0.05 + Math.random() * 0.09;
-            b.heightScale = 0.6 + Math.random() * 1.2;
-            b.hueOff = Math.random() * 70 - 35;
-            b.seed = Math.random() * 1000;
+            Object.assign(b, randomBuildingFields());
           }
           const r = perspectiveR(b.dist);
           const px = cx + Math.cos(b.angle) * r;
@@ -741,9 +799,14 @@ window.orbitViz = (function () {
           // actually reads as "a 3D box seen from above," which a flat
           // vertical facade (the previous version) fundamentally
           // couldn't -- that was a side-on view, not a top-down one.
-          const footW = Math.max(3, b.halfW * r * 2);
+          // buildingWidthScale/buildingHeightScale (the Width/Height
+          // sliders) multiply in here, at draw time -- see their own
+          // comment in the state object for why that's a live-updating
+          // multiplier on every building at once rather than baked into
+          // each one's own stored halfW/heightScale
+          const footW = Math.max(3, b.halfW * r * 2 * s.buildingWidthScale);
           const footD = Math.max(2, footW * 0.55);
-          const wallLen = footW * (0.5 + b.heightScale) * (0.3 + (r / maxR) * 1.3);
+          const wallLen = footW * (0.5 + b.heightScale) * (0.3 + (r / maxR) * 1.3) * s.buildingHeightScale;
 
           vctx.save();
           vctx.translate(px, py);

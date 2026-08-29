@@ -23,6 +23,15 @@ def _open_orbit_viz(page):
     page.wait_for_selector('#vizModes')
 
 
+def _set_range(page, selector, value):
+    # range inputs aren't text fields -- setting .value directly and
+    # dispatching 'input' (what a real drag fires) is the reliable way
+    # to change one via Playwright, same as a user dragging the thumb to
+    # an exact spot would trigger
+    page.locator(selector).evaluate(
+        '(el, v) => { el.value = v; el.dispatchEvent(new Event("input")); }', value)
+
+
 def test_ascii_mode_renders_several_frames_with_no_console_errors(page, golden_path_server):
     """Real regression risk: ASCII's draw branch now also drawImage()s
     the sampled video frame as a dimmed background (see its own comment
@@ -79,22 +88,43 @@ def test_speed_reactivity_and_zoom_sliders_update_their_own_labels(page, golden_
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
 
-    def set_range(selector, value):
-        # range inputs aren't text fields -- setting .value directly and
-        # dispatching 'input' (what a real drag fires) is the reliable
-        # way to change one via Playwright, same as a user dragging the
-        # thumb to an exact spot would trigger
-        page.locator(selector).evaluate(
-            '(el, v) => { el.value = v; el.dispatchEvent(new Event("input")); }', value)
-
-    set_range('#speedSlider', '2.5')
+    _set_range(page, '#speedSlider', '2.5')
     assert page.locator('#speedVal').inner_text() == '2.5x'
 
-    set_range('#reactivitySlider', '0.4')
+    _set_range(page, '#reactivitySlider', '0.4')
     assert page.locator('#reactivityVal').inner_text() == '0.4x'
 
-    set_range('#zoomSlider', '3')
+    _set_range(page, '#zoomSlider', '3')
     assert page.locator('#zoomVal').inner_text() == '3.00x'
+
+
+def test_freefall_dimension_sliders_show_only_in_freefall_and_update_labels(page, golden_path_server):
+    """Real ask: sliders for the building dimensions in Freefall --
+    Width/Height retune every building on screen live, Count grows/
+    shrinks the ring itself (see buildingWidthScale's own comment in the
+    state object). Mode-specific like ASCII's own Res/Bri, not global
+    like Speed/Reactivity/Zoom: shown only while Freefall is active."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+
+    controls = page.locator('#freefallControls')
+    assert not controls.is_visible()  # default mode is ASCII, not Freefall
+
+    page.click('[data-viz="freefall"]')
+    assert controls.is_visible()
+
+    _set_range(page, '#buildingWidthSlider', '2.2')
+    assert page.locator('#buildingWidthVal').inner_text() == '2.2x'
+
+    _set_range(page, '#buildingHeightSlider', '0.5')
+    assert page.locator('#buildingHeightVal').inner_text() == '0.5x'
+
+    _set_range(page, '#buildingCountSlider', '90')
+    assert page.locator('#buildingCountVal').inner_text() == '90'
+
+    # switching away hides it again, same as ASCII's own controls row
+    page.click('[data-viz="tunnel"]')
+    assert not controls.is_visible()
 
 
 def test_scroll_zoom_and_the_zoom_slider_stay_in_sync(page, golden_path_server):
