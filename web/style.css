@@ -14,6 +14,17 @@
      one changes. */
   --big-dialog-w: min(1200px, calc(100vw - 1.5rem));
   --big-dialog-h: min(820px, calc(100vh - 1.5rem));
+  /* Theater's own resize-handle upper bound (Orbit isn't resizable, so
+     it has no equivalent) -- a smaller margin than --big-dialog-w/h's
+     own 1.5rem, on purpose: max-width/max-height must never clip below
+     the default size above it's capping, or the two dialogs stop
+     matching the instant a viewport is narrow enough for --big-dialog-w
+     to hit its calc() branch instead of its flat 1200px one (a real
+     mismatch this fixes: at a 1200px-wide viewport, the old flat 96vw
+     cap worked out to 1152px, 24px short of --big-dialog-w's own 1176px
+     at that same width). */
+  --big-dialog-max-w: calc(100vw - 0.5rem);
+  --big-dialog-max-h: calc(100vh - 0.5rem);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -633,8 +644,8 @@ td button {
   resize: both;
   min-width: 320px;
   min-height: 200px;
-  max-width: 96vw;
-  max-height: 96vh;
+  max-width: var(--big-dialog-max-w);
+  max-height: var(--big-dialog-max-h);
 }
 
 .player-header {
