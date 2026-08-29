@@ -653,17 +653,16 @@ window.orbitViz = (function () {
         }
 
       } else if (s.vizMode === 'freefall') {
-        // Falling straight down through the gap between an endless ring
-        // of buildings: each one spawns tiny right at the vanishing
-        // point (screen center) and grows/moves outward as its own
-        // "dist" climbs from 0 to 1, simulating rushing past it --
-        // real perspective makes something you're falling past start
-        // slow-looking and small, then suddenly loom large and rush by
-        // right before it's behind you, which is why dist is squared
-        // below rather than linear. The instant one crosses dist=1
-        // (passed you completely) it respawns at dist=0 with fresh
-        // random size/angle -- an endless supply, never actually
-        // "running out" the way a fixed skyline would.
+        // Looking straight down as you fall through an endless field of
+        // rooftops: each building spawns tiny right at the vanishing
+        // point (screen center, directly "below" you) and grows/moves
+        // outward as its own "dist" climbs linearly from 0 to 1 --
+        // perspectiveR below (not dist itself) is what turns that into
+        // the actual accelerating, rushing-at-the-end visual growth (see
+        // its own comment). The instant one crosses dist=1 (passed
+        // completely) it respawns at dist=0 with fresh random size/
+        // angle -- an endless supply, never actually "running out" the
+        // way a fixed skyline would.
         if (!s.buildings) {
           s.buildings = [];
           for (let i = 0; i < 40; i++) {
@@ -720,77 +719,83 @@ window.orbitViz = (function () {
           const r = perspectiveR(b.dist);
           const px = cx + Math.cos(b.angle) * r;
           const py = cy + Math.sin(b.angle) * r;
-          // Always clearly taller than wide (a fixed floor on the ratio,
-          // not just a random multiplier that could land near-square) --
-          // and, just as important, drawn with NO rotation at all: an
-          // earlier version rotated each building to face radially
-          // outward (long axis pointing at/away from center), which
-          // reads fine for buildings near the top/bottom of the screen
-          // but turns ones near the left/right edges onto their side --
-          // their "height" axis ends up running nearly horizontal on
-          // screen, which is exactly the reported "aspect is wrong."
-          // Real skylines don't lean over depending on where they sit
-          // in your field of view; staying upright regardless of
-          // on-screen position is what actually reads as buildings.
-          const bw = Math.max(3, b.halfW * r * 2);
-          const bh = Math.max(bw * 2.2, bw * (1.4 + b.heightScale));
           const hue = (hueBase + b.hueOff + bass * 30) % 360;
           // Atmospheric depth on top of the size/position perspective
           // above: real distant buildings look hazier and less
           // saturated (more sky/haze between you and them), close ones
-          // read crisp and vivid -- both saturation and lightness widen
-          // their range with dist, not just lightness a little.
+          // read crisp and vivid.
           const sat = 12 + b.dist * 30;
-          const light = 8 + b.dist * 26;
+          const baseLight = 8 + b.dist * 22;
+
+          // Looking down at rooftops, not a side-on facade: (px,py) is
+          // this building's actual ground position (radius r, same as
+          // before). footW is its ground footprint width; footD is the
+          // rooftop's own footprint depth, a real rectangle rather than
+          // a thin sliver. wallLen is how far the roof appears to *lean
+          // away* from that ground position -- real aerial photography:
+          // a tall building's rooftop visibly leans away from the point
+          // directly below the viewer (the nadir) while its base stays
+          // near its true ground position, and the effect is stronger
+          // both for taller buildings and for ones farther off to the
+          // side of the view (scaled here by r/maxR). This lean is what
+          // actually reads as "a 3D box seen from above," which a flat
+          // vertical facade (the previous version) fundamentally
+          // couldn't -- that was a side-on view, not a top-down one.
+          const footW = Math.max(3, b.halfW * r * 2);
+          const footD = Math.max(2, footW * 0.55);
+          const wallLen = footW * (0.5 + b.heightScale) * (0.3 + (r / maxR) * 1.3);
+
           vctx.save();
           vctx.translate(px, py);
-          // main facade
-          vctx.fillStyle = `hsl(${hue | 0},${sat | 0}%,${light | 0}%)`;
-          vctx.fillRect(-bw / 2, -bh / 2, bw, bh);
-          // a narrower, darker strip down one side -- a cheap "this is a
-          // solid block, one face catches less light" cue instead of a
-          // perfectly flat single-tone card, the other half of what was
-          // reading as un-3D before
-          const sideW = bw * 0.3;
-          vctx.fillStyle = `hsl(${hue | 0},30%,${Math.max(4, 7 + b.dist * 6) | 0}%)`;
-          vctx.fillRect(bw / 2 - sideW, -bh / 2, sideW, bh);
-          // windows -- a real evenly-spaced grid with visible gaps
-          // (mortar) between cells, not scattered dots at random
-          // positions: fixed cell pitch is what actually reads as "a
-          // building facade" instead of a speckled texture. Whole
-          // floors tend to light up together (floorLit below) rather
-          // than every window independently, closer to how a real
-          // building actually looks; "lit" fraction brightens with
-          // bass, giving the skyline a pulse on hits. Both the floor and
-          // per-window pick are a deterministic sine-hash of the
-          // building's own seed, not fresh Math.random() every frame,
-          // so a given window doesn't flicker on/off every single frame.
-          const winW = Math.max(2, bw * 0.16), winH = winW * 1.3;
-          const gapX = winW * 0.7, gapY = winH * 0.55;
-          const facadeW = bw - sideW;
-          const cols = Math.max(1, Math.floor((facadeW - gapX) / (winW + gapX)));
-          const rows = Math.max(1, Math.floor((bh - gapY) / (winH + gapY)));
-          const litFrac = 0.4 + bass * 0.35;
-          for (let wy = 0; wy < rows; wy++) {
-            const floorHash = Math.sin(b.seed + wy * 12.9898) * 43758.5453;
-            const floorLit = (floorHash - Math.floor(floorHash)) < litFrac + 0.2;
-            for (let wx = 0; wx < cols; wx++) {
-              const n = Math.sin(b.seed + wx * 37.719 + wy * 91.345) * 24634.634;
-              const frac = n - Math.floor(n);
-              const lit = floorLit && frac < litFrac;
-              // the facade spans from the building's left edge (-bw/2)
-              // to where the side strip begins (bw/2 - sideW), not a
-              // region centered on the building's own origin -- offsetting
-              // from -bw/2 (not -facadeW/2) keeps the window grid aligned
-              // to that actual facade rectangle instead of drifting into
-              // the side strip on one edge and leaving a gap on the other
-              const wxp = -bw / 2 + gapX / 2 + wx * (winW + gapX);
-              const wyp = -bh / 2 + gapY / 2 + wy * (winH + gapY);
-              vctx.fillStyle = lit
-                ? `hsla(${(hue + 40) % 360 | 0},70%,72%,${(0.7 + frac * 0.3).toFixed(2)})`
-                : `hsla(${hue | 0},20%,${6 + b.dist * 4 | 0}%,0.85)`;
-              vctx.fillRect(wxp, wyp, winW, winH);
-            }
+          // local +Y now points radially outward (away from the
+          // vanishing point) -- the direction the roof leans away from
+          // the base along
+          vctx.rotate(b.angle - Math.PI / 2);
+
+          // wall -- the visible shadowed side face connecting the
+          // ground-level base (local y=0, this building's actual
+          // position) to the rooftop (local y=wallLen, leaned further
+          // out)
+          const wallLight = Math.max(3, baseLight - 6);
+          vctx.fillStyle = `hsl(${hue | 0},${Math.max(6, sat - 12) | 0}%,${wallLight | 0}%)`;
+          vctx.fillRect(-footW / 2, 0, footW, wallLen);
+          // a subtle seam down the middle -- floor/panel lines, cheap
+          // texture so the wall doesn't read as one flat slab
+          vctx.fillStyle = `hsla(${hue | 0},${Math.max(6, sat - 12) | 0}%,${Math.max(2, wallLight - 4) | 0}%,0.6)`;
+          vctx.fillRect(-1, 0, 2, wallLen);
+
+          // roof -- the brightest, top-lit surface, sitting at the far
+          // (leaned-away) end of the wall, with a thin darker outline so
+          // it reads as its own distinct flat surface rather than a
+          // continuation of the wall's color
+          const roofLight = Math.min(70, baseLight + 22);
+          vctx.fillStyle = `hsl(${hue | 0},${sat | 0}%,${roofLight | 0}%)`;
+          vctx.fillRect(-footW / 2, wallLen, footW, footD);
+          vctx.strokeStyle = `hsla(${hue | 0},${sat | 0}%,${Math.max(4, baseLight - 4) | 0}%,0.8)`;
+          vctx.lineWidth = Math.max(1, footW * 0.025);
+          vctx.strokeRect(-footW / 2, wallLen, footW, footD);
+
+          // rooftop details -- a couple of small vents/units instead of
+          // a window grid, since we're looking down at the roof now, not
+          // the facade. Deterministic per building via its own seed (not
+          // fresh Math.random() every frame, so one doesn't flicker);
+          // how many read as "lit" brightens with bass, the same pulse-
+          // on-a-hit the old window grid gave the skyline.
+          const litFrac = 0.5 + bass * 0.3;
+          for (let i = 0; i < 3; i++) {
+            const n1 = Math.sin(b.seed + i * 12.9898) * 43758.5453;
+            const n2 = Math.sin(b.seed + i * 37.719 + 4.5) * 24634.634;
+            const fx = (n1 - Math.floor(n1)) * 2 - 1;  // -1..1 across footW
+            const fy = n2 - Math.floor(n2);             // 0..1 across footD
+            const dsize = Math.max(1, footW * 0.09);
+            const dx = fx * (footW / 2 - dsize);
+            const dy = wallLen + fy * footD;
+            const litHash = n1 + n2;
+            const lit = (litHash - Math.floor(litHash)) < litFrac;
+            vctx.fillStyle = lit
+              ? `hsla(${(hue + 40) % 360 | 0},70%,75%,0.9)`
+              : `hsla(${hue | 0},${sat | 0}%,${Math.max(3, baseLight - 8) | 0}%,0.9)`;
+            vctx.fillRect(dx - dsize / 2, dy - dsize / 2, dsize, dsize);
           }
           vctx.restore();
         }
