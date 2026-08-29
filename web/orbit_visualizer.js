@@ -683,6 +683,25 @@ window.orbitViz = (function () {
         const bass = s.freqData.slice(0, bassEnd).reduce((a, b) => a + b, 0) / (bassEnd * 255);
         const fallSpeed = (0.0035 + energy * 0.012) * s.speed;
         const maxR = Math.hypot(s.VW, s.VH) * 0.62 * s.vizUserScale;
+        // Real (accelerating, not linear/quadratic) perspective: how
+        // large something looks, and how far from the center of your
+        // view it sits, both grow roughly as 1/remaining-distance as
+        // you approach it -- barely changing for a long while, then
+        // rushing at you hard in the final instant. The previous
+        // dist*dist*maxR version grew smoothly and predictably the
+        // whole way through instead, which read as "things gradually
+        // getting bigger" rather than "falling toward something" --
+        // exactly the reported "perspective is still off," even though
+        // the buildings themselves already looked right by then. EPS
+        // keeps the denominator from ever hitting exactly zero right as
+        // a building respawns at dist=1; smaller EPS = a sharper, more
+        // sudden rush in that final stretch.
+        const EPS = 0.15;
+        const rawMax = 1 / EPS - 1 / (1 + EPS);
+        function perspectiveR(dist) {
+          const raw = 1 / (1 - dist + EPS) - 1 / (1 + EPS);
+          return maxR * (raw / rawMax);
+        }
         // farthest (smallest) first, so nearer/larger buildings draw on
         // top -- the usual painter's-algorithm depth ordering any
         // perspective scene needs to look right
@@ -698,7 +717,7 @@ window.orbitViz = (function () {
             b.hueOff = Math.random() * 70 - 35;
             b.seed = Math.random() * 1000;
           }
-          const r = b.dist * b.dist * maxR;
+          const r = perspectiveR(b.dist);
           const px = cx + Math.cos(b.angle) * r;
           const py = cy + Math.sin(b.angle) * r;
           // Always clearly taller than wide (a fixed floor on the ratio,
@@ -716,10 +735,17 @@ window.orbitViz = (function () {
           const bw = Math.max(3, b.halfW * r * 2);
           const bh = Math.max(bw * 2.2, bw * (1.4 + b.heightScale));
           const hue = (hueBase + b.hueOff + bass * 30) % 360;
+          // Atmospheric depth on top of the size/position perspective
+          // above: real distant buildings look hazier and less
+          // saturated (more sky/haze between you and them), close ones
+          // read crisp and vivid -- both saturation and lightness widen
+          // their range with dist, not just lightness a little.
+          const sat = 12 + b.dist * 30;
+          const light = 8 + b.dist * 26;
           vctx.save();
           vctx.translate(px, py);
           // main facade
-          vctx.fillStyle = `hsl(${hue | 0},30%,${14 + b.dist * 10 | 0}%)`;
+          vctx.fillStyle = `hsl(${hue | 0},${sat | 0}%,${light | 0}%)`;
           vctx.fillRect(-bw / 2, -bh / 2, bw, bh);
           // a narrower, darker strip down one side -- a cheap "this is a
           // solid block, one face catches less light" cue instead of a
