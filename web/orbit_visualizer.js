@@ -157,6 +157,7 @@ window.orbitViz = (function () {
       zoomSlider.value = s.vizUserScale;
       zoomVal.textContent = s.vizUserScale.toFixed(2) + 'x';
     }
+    on(zoomSlider, 'input', () => setZoom(parseFloat(zoomSlider.value)));
     setZoom(s.vizUserScale);
 
     function resetVizNav() { s.vizPanX = 0; s.vizPanY = 0; setZoom(1.0); }

@@ -45,22 +45,78 @@ def test_ascii_mode_renders_several_frames_with_no_console_errors(page, golden_p
 
 
 def test_new_modes_render_several_frames_with_no_console_errors(page, golden_path_server):
-    """Plasma/Kaleido/Particles (added alongside the original seven, per
-    Ryan's "more visualizations" ask -- hand-rolled canvas 2D, no new
-    dependency, same reasoning as everything else in this file) each get
-    a real animation-frame run against a real playing video, watching
-    for a JS error the same way the ASCII regression test above does."""
+    """Plasma/Kaleido/Particles/Freefall (added alongside the original
+    seven, per Ryan's "more visualizations"/"falling through infinite
+    buildings" asks -- hand-rolled canvas 2D, no new dependency, same
+    reasoning as everything else in this file) each get a real
+    animation-frame run against a real playing video, watching for a JS
+    error the same way the ASCII regression test above does."""
     errors = []
     page.on('pageerror', lambda exc: errors.append(str(exc)))
     page.on('console', lambda msg: errors.append(msg.text) if msg.type == 'error' else None)
 
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
-    for mode in ('plasma', 'kaleido', 'particles'):
+    for mode in ('plasma', 'kaleido', 'particles', 'freefall'):
         page.click(f'[data-viz="{mode}"]')
+        page.wait_for_timeout(400)
+        # each mode recycles (particles wrap, buildings respawn past
+        # dist=1) -- running long enough for at least one recycle to
+        # happen catches an error in that path too, not just steady state
         page.wait_for_timeout(400)
 
     assert errors == []
+
+
+def test_speed_reactivity_and_zoom_sliders_update_their_own_labels(page, golden_path_server):
+    """Real ask: sliders for tuning "interesting params" of the
+    visualizer, global rather than mode-specific like ASCII's own Res/
+    Bri -- Speed (retunes every mode's own animation rate) and
+    Reactivity (retunes how much audio energy affects the visuals) are
+    new; Zoom is the existing scroll-to-zoom vizUserScale exposed as a
+    slider too. This checks the label text next to each slider updates
+    to match, the same way ASCII's own Res/Bri labels already do."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+
+    def set_range(selector, value):
+        # range inputs aren't text fields -- setting .value directly and
+        # dispatching 'input' (what a real drag fires) is the reliable
+        # way to change one via Playwright, same as a user dragging the
+        # thumb to an exact spot would trigger
+        page.locator(selector).evaluate(
+            '(el, v) => { el.value = v; el.dispatchEvent(new Event("input")); }', value)
+
+    set_range('#speedSlider', '2.5')
+    assert page.locator('#speedVal').inner_text() == '2.5x'
+
+    set_range('#reactivitySlider', '0.4')
+    assert page.locator('#reactivityVal').inner_text() == '0.4x'
+
+    set_range('#zoomSlider', '3')
+    assert page.locator('#zoomVal').inner_text() == '3.00x'
+
+
+def test_scroll_zoom_and_the_zoom_slider_stay_in_sync(page, golden_path_server):
+    """Real risk: the Zoom slider and scroll-to-zoom both write
+    s.vizUserScale, through two different code paths (setZoom() and the
+    wheel handler) -- if the wheel handler didn't also call setZoom(),
+    scrolling would change the actual zoom level while leaving the
+    slider showing a stale value next to it."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+
+    before = float(page.locator('#zoomSlider').input_value())
+    page.locator('#vizCanvas').hover()
+    page.mouse.wheel(0, -400)  # negative deltaY == zoom in, per the wheel handler
+    after = float(page.locator('#zoomSlider').input_value())
+    assert after > before
+    assert page.locator('#zoomVal').inner_text() == f'{after:.2f}x'
+
+    # double-click resets pan/zoom -- the slider should snap back to 1.00x too
+    page.locator('#vizCanvas').dblclick()
+    assert float(page.locator('#zoomSlider').input_value()) == pytest.approx(1.0, abs=0.01)
+    assert page.locator('#zoomVal').inner_text() == '1.00x'
 
 
 def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
