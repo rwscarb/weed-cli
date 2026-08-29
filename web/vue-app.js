@@ -67,6 +67,21 @@ const app = createApp({
       filterLiked: 'any',
       filterSubscribed: 'any',
       filterPlayed: 'any',
+      // Real report: filtering Discover to "not downloaded", then
+      // downloading a row right there, made it vanish from the list the
+      // instant the download finished -- it now (correctly) matches
+      // library.downloads, so it fails that same "not downloaded" filter
+      // it was found under. The user almost always wants to hit Play on
+      // exactly the row they just downloaded, not re-hunt for it under a
+      // different filter. Content hashes land here the moment their own
+      // download finishes (see download()'s onDone below) and stay
+      // exempt from the Downloaded filter specifically (see
+      // filteredDiscoverResults) for the rest of this session -- there's
+      // no need to ever clear it out again; it only ever grows by a row
+      // actually being downloaded, and a stale entry here is harmless
+      // (it just means an already-downloaded row keeps showing under a
+      // "not downloaded" filter, exactly the point).
+      recentlyDownloaded: new Set(),
       // collapses the Relay/Search/filter forms behind a toggle -- but
       // only below the mobile breakpoint (see .discover-filters in
       // style.css); the flag itself starts false unconditionally since
@@ -188,6 +203,7 @@ const app = createApp({
         { keys: 'r', desc: 'Refresh Discover' },
         { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open)' },
         { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
+        { keys: 's', desc: 'Shuffle the current queue (while a video is open)' },
         { keys: 'Space', desc: 'Play / pause (while a video is open)' },
         { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
         { keys: '?', desc: 'Toggle this list' },
@@ -215,7 +231,13 @@ const app = createApp({
         if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)) {
           return false;
         }
-        if (!matchesTriState(this.filterDownloaded, !!this.library.downloads[r.content_hash])) return false;
+        // recentlyDownloaded exempts a row from the Downloaded filter
+        // specifically -- see its own comment in data() for the real
+        // report this closes (a just-finished download disappearing out
+        // from under a "not downloaded" filter before anyone could
+        // click Play on it)
+        if (!matchesTriState(this.filterDownloaded, !!this.library.downloads[r.content_hash])
+            && !this.recentlyDownloaded.has(r.content_hash)) return false;
         if (!matchesTriState(this.filterLiked, this.library.likes.has(r.content_hash))) return false;
         if (!matchesTriState(this.filterSubscribed, this.library.subscriptions.has(r.signer_pubkey))) return false;
         const rec = this.library.downloads[r.content_hash];
@@ -793,6 +815,10 @@ const app = createApp({
         this.playQueueOffset(-1);
         return;
       }
+      if (e.key === 's' && this.player.visible) {
+        this.shufflePlayQueue();
+        return;
+      }
 
       if (e.key === ' ' && this.player.visible) {
         // preventDefault matters here beyond "don't scroll the page"
@@ -876,6 +902,7 @@ const app = createApp({
               content_hash: r.content_hash, job_id: job.job_id, path: job.path,
               title: r.title, size: job.size, bps: job.bps, signer_pubkey: r.signer_pubkey,
             };
+            this.recentlyDownloaded.add(r.content_hash);
           },
           onError: err => {
             r._dl.downloading = false;
@@ -1286,6 +1313,27 @@ const app = createApp({
       this.openPlayer(rec.job_id, target.title || rec.title || this.shortHash(target.content_hash),
         target.content_hash, target.signer_pubkey || rec.signer_pubkey,
         { items: q.items, index: q.index + delta, playlistId: q.playlistId });
+    },
+    // 's' keybinding (onGlobalKeydown) -- reorders whatever queue is
+    // currently playing (ad-hoc or a real playlist, playQueueOffset
+    // above already treats both the same way) without disturbing what's
+    // actually playing right now: the currently-playing item is pulled
+    // out, everything else gets a real Fisher-Yates shuffle, then it's
+    // spliced back into its *same* index. player.queue.index doesn't
+    // change, so the "N / M" position indicator and the current track
+    // stay put -- only the order of everything else (both already-
+    // played and still-upcoming) gets scrambled.
+    shufflePlayQueue() {
+      const q = this.player.queue;
+      if (!q || q.items.length < 2) return;
+      const current = q.items[q.index];
+      const rest = q.items.filter((_, i) => i !== q.index);
+      for (let i = rest.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [rest[i], rest[j]] = [rest[j], rest[i]];
+      }
+      rest.splice(q.index, 0, current);
+      q.items = rest;
     },
 
     // ── orbit visualizer (easter egg) ────────────────────────────────

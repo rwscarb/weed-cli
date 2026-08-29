@@ -289,3 +289,65 @@ def test_search_clear_button_and_escape_both_empty_the_search_box(page, golden_p
     search.press('Escape')
     assert search.input_value() == ''
     assert golden_path_server['title'] in page.content()
+
+
+def test_s_key_shuffles_the_queue_without_disturbing_current_playback(page, golden_path_server):
+    """Real ask: 's' as a keybinding to shuffle playback. This fixture
+    only has one real downloaded video, so a real multi-item queue (the
+    "Currently Playing" picker trick other tests here use) would just be
+    N copies of the same content_hash -- indistinguishable from each
+    other, making "did the order actually change" unobservable. Instead
+    this writes a queue of ten distinct fake items directly onto
+    player.queue (shufflePlayQueue only ever reorders the array -- it
+    doesn't care whether each item is a real download), so the shuffle's
+    two real guarantees can both be checked precisely: the currently-
+    playing item and player.queue.index don't move, and the rest of the
+    order actually does."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+
+    before = [f'x{i}' for i in range(10)]
+    current_index = 4
+    page.evaluate(
+        "({ vm, items, index }) => { vm.player.queue = "
+        "{ items: items.map(h => ({content_hash: h, title: h, signer_pubkey: null})), "
+        "index, playlistId: null }; }",
+        {'vm': vm, 'items': before, 'index': current_index},
+    )
+
+    page.keyboard.press('s')
+
+    after = page.evaluate("vm => vm.player.queue.items.map(it => it.content_hash)", vm)
+    after_index = page.evaluate("vm => vm.player.queue.index", vm)
+
+    assert after_index == current_index  # unchanged -- current playback isn't disturbed
+    assert after[current_index] == before[current_index]  # the actual playing item didn't move
+    assert sorted(after) == sorted(before)  # same items, just reordered
+    # the other nine items being shuffled back into their *exact*
+    # original positions has odds of 1 in 9! -- for all practical
+    # purposes this only holds if the shuffle is a no-op
+    assert after != before
+
+
+def test_downloading_under_a_not_downloaded_filter_does_not_hide_the_row(page, golden_path_server):
+    """Real report: filtering Discover to "not downloaded," then
+    downloading a row right there, made it vanish the instant the
+    download finished -- it now (correctly) matches library.downloads,
+    so it fails that same "not downloaded" filter it was found under.
+    The user almost always wants to hit Play on exactly the row they
+    just downloaded, not re-hunt for it under a different filter."""
+    page.goto(golden_path_server['web_url'])
+    page.wait_for_selector('#discover-table tbody tr:not(.skeleton-row)', timeout=10_000)
+
+    page.locator('.filter-toggle', has_text='Downloaded').locator('button', has_text='Not Downloaded').click()
+    row = page.locator('#discover-table tbody tr', has_text=golden_path_server['title'])
+    assert row.count() == 1  # not downloaded yet -- matches the filter
+
+    row.locator('.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='Download').click()
+    page.wait_for_selector('#discover-table .swipe-back:not(.swipe-back-mirror) .play-btn:has-text("▶ Play")', timeout=20_000)
+
+    # still there -- the filter is still "Not Downloaded" and this row is
+    # now genuinely downloaded, so without the fix it would have
+    # disappeared right when that Play button appeared
+    assert row.count() == 1
+    assert golden_path_server['title'] in page.content()
