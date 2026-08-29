@@ -26,7 +26,11 @@
 // open/close cycles don't stack zombie copies of any of that.
 window.orbitViz = (function () {
   const STEP_HUES = [0.33, 0.50, 0.62, 0.83, 0.10, 0.23];
-  const VIZ_MODES = ['tunnel', 'bars', 'mirror', 'scope', 'spiral', 'pixels', 'ascii', 'plasma', 'kaleido', 'particles'];
+  const VIZ_MODES = ['tunnel', 'bars', 'mirror', 'scope', 'spiral', 'pixels', 'ascii', 'plasma', 'kaleido', 'particles', 'freefall'];
+  // freefall is the 11th mode -- one past what Shift+1-9,0 alone can
+  // reach (see the keydown handler below), so it's click/arrow-cycle
+  // only. Not worth inventing a second modifier combo just for one
+  // mode when both of those already work fine.
   // small, fixed-resolution grid for PLASMA's per-cell math -- computing
   // a real plasma formula at full canvas resolution (VW*VH, easily a few
   // million pixels once devicePixelRatio is in play) every frame would
@@ -59,6 +63,12 @@ window.orbitViz = (function () {
     const asciiResVal = document.getElementById('asciiResVal');
     const asciiBriSlider = document.getElementById('asciiBriSlider');
     const asciiBriVal = document.getElementById('asciiBriVal');
+    const speedSlider = document.getElementById('speedSlider');
+    const speedVal = document.getElementById('speedVal');
+    const reactivitySlider = document.getElementById('reactivitySlider');
+    const reactivityVal = document.getElementById('reactivityVal');
+    const zoomSlider = document.getElementById('zoomSlider');
+    const zoomVal = document.getElementById('zoomVal');
     const vizModesEl = document.getElementById('vizModes');
     const vizSection = document.getElementById('vizSection');
     const vizFsBtn = document.getElementById('vizFsBtn');
@@ -97,10 +107,33 @@ window.orbitViz = (function () {
       // footage clear the bright<0.03 skip threshold and actually
       // render instead of leaving blank cells.
       asciiBrightness: 1.8,
-      // PARTICLES' own swarm -- null until that mode's first frame
-      // lazily populates it (see its branch in drawViz), same "declared
-      // here, filled in on demand" shape videoFrame above already uses.
+      // PLASMA's own clock -- an accumulator like vizRot, not read
+      // straight off performance.now() (see its branch in drawViz for
+      // why that matters once the Speed slider is multiplying it: a
+      // multiplier applied to raw wall-clock time jumps the pattern the
+      // instant the slider moves, since it rescales the *entire*
+      // elapsed time, not just the rate going forward -- an accumulator
+      // only ever changes its own future rate).
+      plasmaT: 0,
+      // PARTICLES' own swarm, FREEFALL's own building ring -- null until
+      // that mode's first frame lazily populates it (see their branches
+      // in drawViz), same "declared here, filled in on demand" shape
+      // videoFrame above already uses.
       particles: null,
+      buildings: null,
+      // Global tuning knobs (the Speed/Reactivity/Zoom sliders) -- 1.0
+      // is a pure pass-through matching this file's original,
+      // unmodified behavior, so leaving every slider untouched looks
+      // exactly like it always did. Speed multiplies every mode's own
+      // per-frame animation increment (vizRot, plasma's t, etc. -- see
+      // each branch); Reactivity scales freqData/waveData themselves
+      // right where pushAudio receives them, so every mode's own v/
+      // energy/bass math gets amplified or damped without each branch
+      // needing its own copy of that multiply; Zoom is just another way
+      // to set vizUserScale, the same value scroll-to-zoom already
+      // controls.
+      speed: 1.0,
+      reactivity: 1.0,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
     };
@@ -115,7 +148,18 @@ window.orbitViz = (function () {
       s.listeners.push([target, type, fn, opts]);
     }
 
-    function resetVizNav() { s.vizPanX = 0; s.vizPanY = 0; s.vizUserScale = 1.0; }
+    // shared by the Zoom slider's own 'input' event, scroll-to-zoom, and
+    // the double-click reset below, so all three ways of changing it
+    // move the slider thumb and clamp identically instead of scroll and
+    // the slider quietly drifting out of sync with each other
+    function setZoom(v) {
+      s.vizUserScale = Math.min(8.0, Math.max(0.15, v));
+      zoomSlider.value = s.vizUserScale;
+      zoomVal.textContent = s.vizUserScale.toFixed(2) + 'x';
+    }
+    setZoom(s.vizUserScale);
+
+    function resetVizNav() { s.vizPanX = 0; s.vizPanY = 0; setZoom(1.0); }
 
     function resizeVizCanvas() {
       s.VW = Math.round(vizCanvas.offsetWidth * devicePixelRatio);
@@ -131,7 +175,7 @@ window.orbitViz = (function () {
     // Viz pan/zoom
     on(vizCanvas, 'wheel', e => {
       e.preventDefault();
-      s.vizUserScale = Math.min(Math.max(0.15, s.vizUserScale * (e.deltaY > 0 ? 0.93 : 1.07)), 8.0);
+      setZoom(s.vizUserScale * (e.deltaY > 0 ? 0.93 : 1.07));
     }, { passive: false });
     on(vizCanvas, 'mousedown', e => {
       if (e.button !== 0) return;
@@ -210,6 +254,26 @@ window.orbitViz = (function () {
       });
     });
 
+    // Global tuning sliders -- see s.speed/s.reactivity's own comment
+    // in the state object above for what each actually does and where.
+    // Visible for every mode (unlike ASCII's own RES/BRI row), since
+    // both apply everywhere.
+    function setSpeed(value) {
+      s.speed = Math.min(3, Math.max(0.2, Math.round(value * 10) / 10));
+      speedSlider.value = s.speed;
+      speedVal.textContent = s.speed.toFixed(1) + 'x';
+    }
+    on(speedSlider, 'input', () => setSpeed(parseFloat(speedSlider.value)));
+    setSpeed(s.speed);
+
+    function setReactivity(value) {
+      s.reactivity = Math.min(3, Math.max(0.2, Math.round(value * 10) / 10));
+      reactivitySlider.value = s.reactivity;
+      reactivityVal.textContent = s.reactivity.toFixed(1) + 'x';
+    }
+    on(reactivitySlider, 'input', () => setReactivity(parseFloat(reactivitySlider.value)));
+    setReactivity(s.reactivity);
+
     // Shared fallback for the two video-based modes (pixels/ascii) when
     // no frame has arrived yet -- see videoFrame's own comment on why
     // that can be true even while a video is genuinely loaded and
@@ -247,7 +311,11 @@ window.orbitViz = (function () {
       // "the whole thing slowly shifts hue" feel without needing a
       // sequencer to derive it from
       s.c60Hue = (performance.now() / 20000) % 1;
-      s.vizRot += 0.006;
+      // shared by tunnel/mirror/scope/spiral/kaleido's own rotation --
+      // the Speed slider multiplying this one accumulator is what makes
+      // it affect all five at once instead of needing its own copy in
+      // each branch
+      s.vizRot += 0.006 * s.speed;
 
       const cx = s.VW / 2 + s.vizPanX, cy = s.VH / 2 + s.vizPanY;
       const maxBin = Math.floor(s.freqData.length * 0.70);
@@ -372,7 +440,7 @@ window.orbitViz = (function () {
           const bassEnd = Math.max(1, Math.floor(maxBin * 0.12));
           const bass = s.freqData.slice(0, bassEnd).reduce((a, b) => a + b, 0) / (bassEnd * 255);
           s.pixelsPulse += (bass - s.pixelsPulse) * 0.25;
-          s.pixelsRingRot += 0.004 + energy * 0.05;
+          s.pixelsRingRot += (0.004 + energy * 0.05) * s.speed;
 
           vpixOffCtx.putImageData(s.videoFrame.imageData, 0, 0);
           vctx.imageSmoothingEnabled = false;
@@ -474,7 +542,13 @@ window.orbitViz = (function () {
         const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
         const bassEnd = Math.max(1, Math.floor(maxBin * 0.12));
         const bass = s.freqData.slice(0, bassEnd).reduce((a, b) => a + b, 0) / (bassEnd * 255);
-        const t = performance.now() / 1000 * (1 + energy * 1.2);
+        // ~1/60s per frame, same assumption requestAnimationFrame's own
+        // ~60fps cadence already makes elsewhere in this file (vizRot's
+        // own 0.006-per-frame constant included) -- see plasmaT's own
+        // comment in the state object for why this has to be an
+        // accumulator, not performance.now() scaled directly.
+        s.plasmaT += (1 / 60) * (1 + energy * 1.2) * s.speed;
+        const t = s.plasmaT;
         for (let gy = 0; gy < PLASMA_H; gy++) {
           for (let gx = 0; gx < PLASMA_W; gx++) {
             const v = (
@@ -549,7 +623,7 @@ window.orbitViz = (function () {
         const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
         for (const p of s.particles) {
           const v = s.freqData[Math.min(maxBin - 1, p.bin)] / 255;
-          const speed = 1 + v * 4 + energy * 2;
+          const speed = (1 + v * 4 + energy * 2) * s.speed;
           p.x += p.vx * speed; p.y += p.vy * speed;
           p.vx += (Math.random() - 0.5) * 0.05; p.vy += (Math.random() - 0.5) * 0.05;
           // clamp velocity so repeated random-walk jitter can't let a
@@ -563,6 +637,87 @@ window.orbitViz = (function () {
           vctx.arc(p.x, p.y, p.size * devicePixelRatio * (1 + v * 2), 0, Math.PI * 2);
           vctx.fillStyle = `hsla(${hue | 0},95%,${55 + v * 30 | 0}%,${(0.5 + v * 0.5).toFixed(2)})`;
           vctx.fill();
+        }
+
+      } else if (s.vizMode === 'freefall') {
+        // Falling straight down through the gap between an endless ring
+        // of buildings: each one spawns tiny right at the vanishing
+        // point (screen center) and grows/moves outward as its own
+        // "dist" climbs from 0 to 1, simulating rushing past it --
+        // real perspective makes something you're falling past start
+        // slow-looking and small, then suddenly loom large and rush by
+        // right before it's behind you, which is why dist is squared
+        // below rather than linear. The instant one crosses dist=1
+        // (passed you completely) it respawns at dist=0 with fresh
+        // random size/angle -- an endless supply, never actually
+        // "running out" the way a fixed skyline would.
+        if (!s.buildings) {
+          s.buildings = [];
+          for (let i = 0; i < 40; i++) {
+            s.buildings.push({
+              angle: Math.random() * Math.PI * 2,
+              dist: Math.random(),  // staggered so they don't all arrive at once
+              halfW: 0.05 + Math.random() * 0.09,
+              heightScale: 0.6 + Math.random() * 1.2,
+              hueOff: Math.random() * 70 - 35,
+              seed: Math.random() * 1000,
+            });
+          }
+        }
+        vctx.fillStyle = `hsla(${(hueBase + 200) % 360 | 0},55%,4%,1)`; vctx.fillRect(0, 0, s.VW, s.VH);
+        const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
+        const bassEnd = Math.max(1, Math.floor(maxBin * 0.12));
+        const bass = s.freqData.slice(0, bassEnd).reduce((a, b) => a + b, 0) / (bassEnd * 255);
+        const fallSpeed = (0.0035 + energy * 0.012) * s.speed;
+        const maxR = Math.hypot(s.VW, s.VH) * 0.62 * s.vizUserScale;
+        // farthest (smallest) first, so nearer/larger buildings draw on
+        // top -- the usual painter's-algorithm depth ordering any
+        // perspective scene needs to look right
+        const order = s.buildings.map((_, i) => i).sort((a, b) => s.buildings[a].dist - s.buildings[b].dist);
+        for (const idx of order) {
+          const b = s.buildings[idx];
+          b.dist += fallSpeed;
+          if (b.dist > 1) {
+            b.dist -= 1;
+            b.angle = Math.random() * Math.PI * 2;
+            b.halfW = 0.05 + Math.random() * 0.09;
+            b.heightScale = 0.6 + Math.random() * 1.2;
+            b.hueOff = Math.random() * 70 - 35;
+            b.seed = Math.random() * 1000;
+          }
+          const r = b.dist * b.dist * maxR;
+          const px = cx + Math.cos(b.angle) * r;
+          const py = cy + Math.sin(b.angle) * r;
+          const bw = Math.max(2, b.halfW * r * 2);
+          const bh = Math.max(2, bw * b.heightScale * 2.6);
+          const hue = (hueBase + b.hueOff + bass * 30) % 360;
+          vctx.save();
+          vctx.translate(px, py);
+          // long axis points radially outward -- a real building falling
+          // straight past you lengthwise, not tumbling sideways
+          vctx.rotate(b.angle + Math.PI / 2);
+          vctx.fillStyle = `hsl(${hue | 0},35%,${10 + b.dist * 12 | 0}%)`;
+          vctx.fillRect(-bw / 2, -bh / 2, bw, bh);
+          // windows -- a sparse grid of small lit squares. Deterministic
+          // per (building, cell) via a cheap sine-hash of the building's
+          // own seed rather than real per-frame randomness, so a given
+          // window doesn't flicker on/off every single frame; "lit"
+          // brightens with bass, giving the skyline a pulse on hits.
+          const cols = Math.max(1, Math.floor(bw / 6));
+          const rows = Math.max(1, Math.floor(bh / 8));
+          const litFrac = 0.35 + bass * 0.4;
+          for (let wy = 0; wy < rows; wy++) {
+            for (let wx = 0; wx < cols; wx++) {
+              const n = Math.sin(b.seed + wx * 12.9898 + wy * 78.233) * 43758.5453;
+              const frac = n - Math.floor(n);
+              if (frac > litFrac) continue;
+              const wxp = -bw / 2 + (wx + 0.5) * (bw / cols);
+              const wyp = -bh / 2 + (wy + 0.5) * (bh / rows);
+              vctx.fillStyle = `hsla(${(hue + 40) % 360 | 0},80%,75%,${(0.5 + frac * 0.5).toFixed(2)})`;
+              vctx.fillRect(wxp - 1, wyp - 1, 2, 2);
+            }
+          }
+          vctx.restore();
         }
       }
     }
@@ -635,6 +790,23 @@ window.orbitViz = (function () {
     // frame -- see startOrbitVizFeed's own comment for why this used to
     // be postMessage and no longer needs to be
     s.pushAudio = function (freq, wave) {
+      // Reactivity slider: scaling in place here, once, is what lets
+      // every draw branch's own v/energy/bass math (dozens of call
+      // sites across ten modes) get amplified or damped without each
+      // one needing its own multiply -- skipped entirely at the default
+      // 1.0 (the common case) for zero extra cost. Safe to mutate freq/
+      // wave directly: they're vue-app.js's own reused AnalyserNode
+      // buffers, already about to be overwritten by the next frame's
+      // getByteFrequencyData/getByteTimeDomainData call regardless of
+      // what happens to them here. waveData is centered at 128
+      // (silence sits exactly there), so it's scaled *around* that
+      // center rather than from zero -- scaling from zero would just
+      // brighten it toward 255 instead of amplifying the actual
+      // waveform swing.
+      if (s.reactivity !== 1) {
+        for (let i = 0; i < freq.length; i++) freq[i] = Math.min(255, freq[i] * s.reactivity);
+        for (let i = 0; i < wave.length; i++) wave[i] = Math.min(255, Math.max(0, 128 + (wave[i] - 128) * s.reactivity));
+      }
       s.freqData = freq; s.waveData = wave;
       // a message used to arrive every frame regardless of whether the
       // video was actually playing anything -- silence still "arrives,"

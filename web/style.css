@@ -1112,13 +1112,15 @@ td button {
   padding: 0.6rem 0.85rem 0.85rem; position: relative; min-height: 0;
 }
 #orbit-egg-dialog #vizModes { margin-bottom: 0.5rem; flex-shrink: 0; }
-#orbit-egg-dialog .ascii-controls { margin-bottom: 0.5rem; flex-shrink: 0; }
+#orbit-egg-dialog #globalControls, #orbit-egg-dialog .ascii-controls { margin-bottom: 0.5rem; flex-shrink: 0; }
 #orbit-egg-dialog .ascii-controls-label { font-size: 0.78rem; color: var(--muted); }
 #orbit-egg-dialog .ascii-controls-val { font-size: 0.78rem; color: var(--text); min-width: 4.5rem; }
+#orbit-egg-dialog #globalControls input[type=range],
 #orbit-egg-dialog .ascii-controls input[type=range] {
   width: 80px; accent-color: var(--accent);
   height: 3px; background: var(--border); appearance: none;
 }
+#orbit-egg-dialog #globalControls input[type=range]::-webkit-slider-thumb,
 #orbit-egg-dialog .ascii-controls input[type=range]::-webkit-slider-thumb {
   -webkit-appearance: none; width: 10px; height: 10px;
   border-radius: 50%; background: var(--accent);
