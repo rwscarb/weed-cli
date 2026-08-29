@@ -121,6 +121,10 @@ def test_scroll_zoom_and_the_zoom_slider_stay_in_sync(page, golden_path_server):
     before, _ = read_zoom()
     page.locator('#vizCanvas').hover()
     page.mouse.wheel(0, -400)  # negative deltaY == zoom in, per the wheel handler
+    # mouse.wheel() can return before the renderer has actually finished
+    # dispatching/handling the synthesized wheel event(s) -- a short
+    # settle avoids racing that, not a real product timing dependency
+    page.wait_for_timeout(100)
     after, label = read_zoom()
     assert after > before
     assert label == f'{after:.2f}x'
