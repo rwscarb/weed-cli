@@ -193,6 +193,65 @@ def test_orbit_visualizer_hides_the_real_video_in_every_player_mode(page, golden
     assert not page.locator('#global-player').is_visible()
 
 
+def test_closing_orbit_visualizer_restores_fullscreen_if_it_was_active(page, golden_path_server):
+    """Real report: opening the visualizer while the player was in real
+    Fullscreen silently dropped back to Theater once closed, and the
+    Fullscreen button/`f` stopped doing anything useful afterward until
+    pressed several times. Root cause: setting the player to display:none
+    (see easterEggVisible's own watch in vue-app.js) is supposed to make
+    the *browser itself* auto-exit fullscreen (spec: a fullscreen element
+    whose own display becomes none forces an exit) -- a real
+    fullscreenchange this app never used to listen for, leaving
+    player.mode (never itself a 'fullscreen' value) and the real
+    fullscreen state disagreeing once the player reappears.
+    document.exitFullscreen() is called explicitly below rather than
+    relying on that spec behavior actually firing on its own: confirmed
+    directly that this test's own headless Chromium doesn't exercise it
+    at all (document.fullscreenElement just never budges here, however
+    long you wait) -- simulating it is what makes it possible to test
+    the actual fix (recording fullscreen was active before the
+    visualizer opened, and explicitly restoring it once closed) in this
+    environment at all."""
+    _download_and_play(page, golden_path_server)
+    page.click('#global-player .icon-btn[title="Fullscreen"]')
+    page.wait_for_function(
+        "() => document.fullscreenElement === document.getElementById('global-player')")
+
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#orbit-egg-dialog')
+    page.evaluate("() => document.exitFullscreen()")
+    page.wait_for_function("() => document.fullscreenElement === null")
+
+    page.click('#orbit-egg-dialog button:has-text("Back")')
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+    page.wait_for_function(
+        "() => document.fullscreenElement === document.getElementById('global-player')")
+
+    # the reported follow-on symptom: `f` used to need several presses
+    # to do anything after this sequence. One press from restored
+    # fullscreen should cycle straight to pip, immediately.
+    page.keyboard.press('f')
+    page.wait_for_selector('#global-player.mode-pip')
+    assert page.evaluate("() => document.fullscreenElement") is None
+
+
+def test_closing_orbit_visualizer_does_not_force_fullscreen_when_it_wasnt_active(page, golden_path_server):
+    """Regression guard on the fix above: opening/closing the visualizer
+    from Theater (not Fullscreen) shouldn't suddenly push the player
+    into Fullscreen just because the tracking flag exists."""
+    _download_and_play(page, golden_path_server)
+    page.click('#global-player .icon-btn[title="Theater / PIP"]')
+    page.wait_for_selector('#global-player.mode-theater')
+
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#orbit-egg-dialog')
+    page.click('#orbit-egg-dialog button:has-text("Back")')
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+
+    page.wait_for_selector('#global-player.mode-theater')
+    assert page.evaluate("() => document.fullscreenElement") is None
+
+
 def test_theater_and_orbit_visualizer_are_the_same_size(page, golden_path_server):
     """Real ask: Theater mode and the Orbit Visualizer dialog should be
     uniform in size -- both now read var(--big-dialog-w)/--big-dialog-h

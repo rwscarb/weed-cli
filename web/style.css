@@ -1111,8 +1111,33 @@ td button {
   flex: 1; display: flex; flex-direction: column;
   padding: 0.6rem 0.85rem 0.85rem; position: relative; min-height: 0;
 }
-#orbit-egg-dialog #vizModes { margin-bottom: 0.5rem; flex-shrink: 0; }
-#orbit-egg-dialog #globalControls, #orbit-egg-dialog .ascii-controls { margin-bottom: 0.5rem; flex-shrink: 0; }
+/* Real ask: the mode buttons, global sliders, and whichever of ascii-
+   controls/freefallControls is active used to each claim their own
+   full-width row -- on a wide dialog, none of the three comes close to
+   filling it, leaving a big unused column of space next to a short
+   stack of rows. display:contents on each .preset-row inside
+   .viz-controls removes *that wrapper's own box* from layout, so its
+   buttons/sliders/labels become direct children of .viz-controls'
+   own flex-wrap instead -- everything from all the visible groups packs
+   together and wraps as one shared flow, using the width instead of
+   leaving it empty. mode-controls-hidden is what actually hides the
+   inactive one of ascii-controls/freefallControls now (see setVizMode in
+   orbit_visualizer.js) -- inline style.display would've silently beaten
+   the display:contents rule below the moment it was set back to
+   'flex', undoing the packing every time.
+   Narrow viewports (max-width: 460px, further down) override #vizModes
+   specifically back to a real scrollable box for its own spin-wheel
+   behavior -- display:contents has no box to scroll at all. */
+#orbit-egg-dialog .viz-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 1rem;
+  row-gap: 0.4rem;
+  margin-bottom: 0.5rem;
+}
+#orbit-egg-dialog .viz-controls > .preset-row { display: contents; }
+#orbit-egg-dialog .viz-controls > .preset-row.mode-controls-hidden { display: none; }
 #orbit-egg-dialog .ascii-controls-label { font-size: 0.78rem; color: var(--muted); }
 #orbit-egg-dialog .ascii-controls-val { font-size: 0.78rem; color: var(--text); min-width: 4.5rem; }
 #orbit-egg-dialog #globalControls input[type=range],
@@ -1825,5 +1850,39 @@ code {
     left: 50% !important;
     transform: translate(-50%, -50%);
     max-width: calc(100vw - 2rem);
+  }
+
+  /* Orbit Visualizer's mode row as a spin wheel: 11 built-in modes (more
+     once any plugins register their own, see orbit_visualizer.js's own
+     registerMode) wrapping into several rows of small buttons is a lot
+     of cramped tapping on a narrow phone. A single horizontally
+     scroll-snapping strip -- swipe to "spin" through modes, each one
+     snapping to the centered position -- reads much more like a real
+     picker at this width. flex-wrap: wrap (the desktop behavior,
+     .preset-row's own default) is overridden back to nowrap + scroll
+     here; setVizMode's own scrollIntoView call (orbit_visualizer.js) is
+     what keeps the wheel centered on whatever's active even when a mode
+     is picked some other way (Shift+digit, arrow-key cycling) than an
+     actual swipe. */
+  #orbit-egg-dialog #vizModes {
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scroll-snap-type: x mandatory;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    /* half the viewport's own width minus roughly half a button, on
+       each side -- lets the *first* and *last* buttons still scroll all
+       the way to the centered position instead of stopping dead against
+       the strip's own edge once they reach it, the standard trick for a
+       centered-item scroll-snap carousel. Button width varies with each
+       mode's own label length, so this is an approximation tuned to the
+       shorter labels (Bars, Scope, ...) -- close enough that even the
+       longest ones (Particles) still center out reasonably. */
+    padding: 0 calc(50% - 2.4rem);
+  }
+  #orbit-egg-dialog #vizModes::-webkit-scrollbar { display: none; }
+  #orbit-egg-dialog #vizModes .viz-mode-btn {
+    scroll-snap-align: center;
+    flex-shrink: 0;
   }
 }

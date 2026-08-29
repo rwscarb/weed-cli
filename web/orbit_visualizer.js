@@ -375,8 +375,25 @@ window.orbitViz = (function () {
       s.vizMode = mode;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       resetVizNav();
-      asciiControls.style.display = mode === 'ascii' ? 'flex' : 'none';
-      freefallControls.style.display = mode === 'freefall' ? 'flex' : 'none';
+      // a class, not inline style.display -- .viz-controls > .preset-row
+      // is display:contents on large viewports (see style.css) so these
+      // pack together with the mode buttons/global sliders instead of
+      // each claiming its own row, and an inline style.display would
+      // silently win over that class rule the instant this set it,
+      // undoing the packing every time the *active* mode's own controls
+      // got shown.
+      asciiControls.classList.toggle('mode-controls-hidden', mode !== 'ascii');
+      freefallControls.classList.toggle('mode-controls-hidden', mode !== 'freefall');
+      // Narrow-viewport spin-wheel mode (see style.css's own max-width:
+      // 460px rules for #vizModes) turns this row into a horizontally
+      // scroll-snapping strip -- native CSS scroll-snap only reacts to
+      // an actual swipe/scroll gesture on its own, so a mode picked any
+      // other way (clicking a button that's already scrolled into view,
+      // Shift+digit, arrow-key cycling) wouldn't otherwise re-center the
+      // wheel on it. scrollIntoView here is a harmless no-op at desktop
+      // width, where #vizModes isn't scrollable at all.
+      const activeBtn = vizModesEl.querySelector(`[data-viz="${CSS.escape(mode)}"]`);
+      if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
     on(vizModesEl, 'click', function (e) {
       const btn = e.target.closest('[data-viz]'); if (!btn) return;

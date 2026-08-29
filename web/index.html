@@ -516,63 +516,73 @@
     </header>
     <div id="vizSection">
       <div class="idle-note" id="idleNote">reacts to whatever's playing in the weed player — nothing playing right now, so this is just idling</div>
-      <div class="preset-row" id="vizModes">
-        <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
-        <button class="viz-mode-btn" data-viz="bars">Bars</button>
-        <button class="viz-mode-btn" data-viz="mirror">Mirror</button>
-        <button class="viz-mode-btn" data-viz="scope">Scope</button>
-        <button class="viz-mode-btn" data-viz="spiral">Spiral</button>
-        <button class="viz-mode-btn" data-viz="pixels">Pixels</button>
-        <button class="viz-mode-btn active" data-viz="ascii">ASCII</button>
-        <button class="viz-mode-btn" data-viz="plasma">Plasma</button>
-        <button class="viz-mode-btn" data-viz="kaleido">Kaleido</button>
-        <button class="viz-mode-btn" data-viz="particles">Particles</button>
-        <button class="viz-mode-btn" data-viz="freefall">Freefall</button>
-      </div>
-      <!-- global, not ascii-specific -- Speed/Reactivity retune every
-           mode's own animation rate / audio sensitivity (see
-           orbit_visualizer.js's s.speed/s.reactivity), and Zoom is just
-           another way to set the same vizUserScale scroll-to-zoom
-           already controls. Always visible, unlike the ascii-controls
-           row below it. -->
-      <div class="preset-row" id="globalControls">
-        <span class="ascii-controls-label">Speed</span>
-        <input type="range" id="speedSlider" min="0.2" max="3" step="0.1" value="1">
-        <span class="ascii-controls-val" id="speedVal">1.0x</span>
-        <span class="ascii-controls-label">React</span>
-        <input type="range" id="reactivitySlider" min="0.2" max="3" step="0.1" value="1">
-        <span class="ascii-controls-val" id="reactivityVal">1.0x</span>
-        <span class="ascii-controls-label">Zoom</span>
-        <input type="range" id="zoomSlider" min="0.15" max="8" step="any" value="1">
-        <span class="ascii-controls-val" id="zoomVal">1.00x</span>
-      </div>
-      <div class="preset-row ascii-controls" id="asciiControls" style="display:flex">
-        <span class="ascii-controls-label">Res</span>
-        <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
-        <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
-        <span class="ascii-controls-label">Bri</span>
-        <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.8">
-        <span class="ascii-controls-val" id="asciiBriVal">1.8x</span>
-        <button class="viz-mode-btn" data-color="neon">Neon</button>
-        <button class="viz-mode-btn active" data-color="natural">Natural</button>
-      </div>
-      <!-- Freefall-only, same show/hide-by-mode treatment asciiControls
-           gets (see setVizMode in orbit_visualizer.js) -- Size/Bloom
-           retune every flower's own radius/recursive fullness live;
-           Count grows/shrinks the ring itself. Element ids still say
-           "building" (this mode used to draw buildings, not recursive
-           flowers -- see orbit_visualizer.js's own comments) but the
-           visible labels describe what they tune today. -->
-      <div class="preset-row ascii-controls" id="freefallControls" style="display:none">
-        <span class="ascii-controls-label">Size</span>
-        <input type="range" id="buildingWidthSlider" min="0.3" max="3" step="0.1" value="1">
-        <span class="ascii-controls-val" id="buildingWidthVal">1.0x</span>
-        <span class="ascii-controls-label">Bloom</span>
-        <input type="range" id="buildingHeightSlider" min="0.3" max="3" step="0.1" value="1">
-        <span class="ascii-controls-val" id="buildingHeightVal">1.0x</span>
-        <span class="ascii-controls-label">Count</span>
-        <input type="range" id="buildingCountSlider" min="5" max="120" step="1" value="40">
-        <span class="ascii-controls-val" id="buildingCountVal">40</span>
+      <!-- viz-controls merges these four groups into one shared
+           flex-wrap flow on large viewports (see .viz-controls > .preset-row's
+           own display:contents in style.css) instead of each claiming
+           its own full-width row -- mode buttons, sliders, and whichever
+           of ascii-controls/freefallControls is active all pack together
+           and wrap as needed, instead of leaving a big unused column
+           next to three separate short rows. Narrow viewports override
+           #vizModes specifically back to a real (scrollable, spin-wheel)
+           box -- see style.css's own max-width: 460px rules. -->
+      <div class="viz-controls">
+        <div class="preset-row" id="vizModes">
+          <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
+          <button class="viz-mode-btn" data-viz="bars">Bars</button>
+          <button class="viz-mode-btn" data-viz="mirror">Mirror</button>
+          <button class="viz-mode-btn" data-viz="scope">Scope</button>
+          <button class="viz-mode-btn" data-viz="spiral">Spiral</button>
+          <button class="viz-mode-btn" data-viz="pixels">Pixels</button>
+          <button class="viz-mode-btn active" data-viz="ascii">ASCII</button>
+          <button class="viz-mode-btn" data-viz="plasma">Plasma</button>
+          <button class="viz-mode-btn" data-viz="kaleido">Kaleido</button>
+          <button class="viz-mode-btn" data-viz="particles">Particles</button>
+          <button class="viz-mode-btn" data-viz="freefall">Freefall</button>
+        </div>
+        <!-- global, not ascii-specific -- Speed/Reactivity retune every
+             mode's own animation rate / audio sensitivity (see
+             orbit_visualizer.js's s.speed/s.reactivity), and Zoom is just
+             another way to set the same vizUserScale scroll-to-zoom
+             already controls. Always visible, unlike the two below it. -->
+        <div class="preset-row" id="globalControls">
+          <span class="ascii-controls-label">Speed</span>
+          <input type="range" id="speedSlider" min="0.2" max="3" step="0.1" value="1">
+          <span class="ascii-controls-val" id="speedVal">1.0x</span>
+          <span class="ascii-controls-label">React</span>
+          <input type="range" id="reactivitySlider" min="0.2" max="3" step="0.1" value="1">
+          <span class="ascii-controls-val" id="reactivityVal">1.0x</span>
+          <span class="ascii-controls-label">Zoom</span>
+          <input type="range" id="zoomSlider" min="0.15" max="8" step="any" value="1">
+          <span class="ascii-controls-val" id="zoomVal">1.00x</span>
+        </div>
+        <div class="preset-row ascii-controls" id="asciiControls">
+          <span class="ascii-controls-label">Res</span>
+          <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
+          <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
+          <span class="ascii-controls-label">Bri</span>
+          <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.8">
+          <span class="ascii-controls-val" id="asciiBriVal">1.8x</span>
+          <button class="viz-mode-btn" data-color="neon">Neon</button>
+          <button class="viz-mode-btn active" data-color="natural">Natural</button>
+        </div>
+        <!-- Freefall-only, same show/hide-by-mode treatment asciiControls
+             gets (see setVizMode in orbit_visualizer.js) -- Size/Bloom
+             retune every flower's own radius/recursive fullness live;
+             Count grows/shrinks the ring itself. Element ids still say
+             "building" (this mode used to draw buildings, not recursive
+             flowers -- see orbit_visualizer.js's own comments) but the
+             visible labels describe what they tune today. -->
+        <div class="preset-row ascii-controls mode-controls-hidden" id="freefallControls">
+          <span class="ascii-controls-label">Size</span>
+          <input type="range" id="buildingWidthSlider" min="0.3" max="3" step="0.1" value="1">
+          <span class="ascii-controls-val" id="buildingWidthVal">1.0x</span>
+          <span class="ascii-controls-label">Bloom</span>
+          <input type="range" id="buildingHeightSlider" min="0.3" max="3" step="0.1" value="1">
+          <span class="ascii-controls-val" id="buildingHeightVal">1.0x</span>
+          <span class="ascii-controls-label">Count</span>
+          <input type="range" id="buildingCountSlider" min="5" max="120" step="1" value="40">
+          <span class="ascii-controls-val" id="buildingCountVal">40</span>
+        </div>
       </div>
       <canvas id="vizCanvas"></canvas>
       <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; shift+1-9,0 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>

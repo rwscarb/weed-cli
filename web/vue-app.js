@@ -344,6 +344,29 @@ const app = createApp({
     // against them.
     easterEggVisible(visible) {
       if (visible) {
+        // Real report: opening the visualizer while the player was in
+        // real Fullscreen silently dropped it back to Theater. Setting
+        // #global-player to display:none (the {hidden: ...} binding in
+        // index.html, see openPlayer's own comment on why easterEggVisible
+        // alone hides it now) makes the *browser itself* automatically
+        // exit fullscreen -- per spec, a fullscreen element whose display
+        // becomes none forces an exit -- and nothing here ever found out
+        // that happened, since it's a real fullscreenchange this app
+        // never listens for. player.mode itself never changes (fullscreen
+        // was never one of its values, see cyclePlayerMode's own
+        // comment), so it was still sitting at whatever mode fullscreen
+        // had been reached *from* (Theater, usually) -- once the player
+        // reappeared after closing the visualizer, that's what showed.
+        // That mismatch between player.mode and the real (now-exited)
+        // fullscreen state is also why the Fullscreen button/`f` stopped
+        // doing anything useful afterward: toggleFullscreen/
+        // cyclePlayerMode both branch on document.fullscreenElement, and
+        // it no longer agreed with what the UI still implied. Recording
+        // whether fullscreen was actually active *before* any of that
+        // happens, and explicitly restoring it once the visualizer
+        // closes (below), keeps both in sync instead of leaving the
+        // browser's own auto-exit as the only thing that happened.
+        this._wasFullscreenBeforeOrbit = document.fullscreenElement === this.$refs.globalPlayer;
         this.$nextTick(() => {
           window.orbitViz.init();
           this.startOrbitVizFeed();
@@ -351,6 +374,13 @@ const app = createApp({
       } else {
         this.stopOrbitVizFeed();
         window.orbitViz.teardown();
+        if (this._wasFullscreenBeforeOrbit) {
+          this._wasFullscreenBeforeOrbit = false;
+          // $nextTick: the player has to actually be visible again
+          // (index.html's hidden binding cleared) before
+          // requestFullscreen on it can succeed at all
+          this.$nextTick(() => this.$refs.globalPlayer.requestFullscreen());
+        }
       }
     },
   },
