@@ -1865,6 +1865,15 @@ code {
      is picked some other way (Shift+digit, arrow-key cycling) than an
      actual swipe. */
   #orbit-egg-dialog #vizModes {
+    /* explicit despite .preset-row's own default already being flex --
+       .viz-controls > .preset-row (desktop, see its own comment) sets
+       display: contents so this row's buttons pack in with the rest of
+       the controls, and that rule doesn't stop applying just because
+       the viewport narrowed -- without resetting display back to flex
+       here, #vizModes would still be display:contents at this width,
+       which has no box of its own to scroll at all, breaking the spin
+       wheel below entirely. */
+    display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;
     scroll-snap-type: x mandatory;

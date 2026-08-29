@@ -201,8 +201,29 @@ def test_upload_rejects_non_video_extension(web_server, tmp_path):
     archive_dir = str(tmp_path / 'archive')
     status, resp = http_post_raw(_upload_url(web_server, 'notes.txt', archive_dir), b'hello')
     assert status == 400
-    assert 'not a recognized video extension' in resp['error']
+    assert 'not a recognized video or audio extension' in resp['error']
     assert not os.path.exists(archive_dir)  # never even created
+
+
+def test_upload_audio_produces_a_real_hostable_archive(web_server, tmp_path):
+    """Real ask: support audio (mp3, etc.) in addition to video --
+    uploading one should archive it exactly like a video does (real
+    chunk data, type: 'audio'), not get rejected the way it used to
+    before ott/node.py recognized audio as its own hostable type."""
+    archive_dir = str(tmp_path / 'archive')
+    data = os.urandom(200_000)
+    status, resp = http_post_raw(_upload_url(web_server, 'song.mp3', archive_dir), data)
+
+    assert status == 200
+    assert resp['ok'] is True
+    assert resp['type'] == 'audio'
+    assert resp['n_chunks'] >= 1
+
+    entries = node.load_manifest_entries(archive_dir)
+    assert len(entries) == 1
+    assert entries[0]['type'] == 'audio'
+    leaves = node.load_leaves(archive_dir, resp['content_hash'])
+    assert len(leaves) == resp['n_chunks']
 
 
 def test_upload_sanitizes_path_traversal_in_filename(web_server, tmp_path):

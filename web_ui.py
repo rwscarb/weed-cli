@@ -746,12 +746,13 @@ class Handler(BaseHTTPRequestHandler):
         with no separate `ott add` step -- same reasoning as the rest of
         this UI existing at all: don't make someone learn a second tool
         just to do the thing this one already knows how to do.
-        Video-only, matching ott's own is_video() -- a non-video upload
-        would just be a manifest entry that can never actually be
-        hosted (see load_manifest_entries' own video-only filter, added
-        after exactly that silently broke `host` for everything else in
-        the same archive_dir), so it's rejected up front instead."""
-        from ott import is_video, chunk_hashes, merkle_root, OttStore
+        Video or audio, matching ott's own is_video()/is_audio() -- an
+        upload of neither would just be a manifest entry that can never
+        actually be hosted (see load_manifest_entries' own video/audio-
+        only filter, added after exactly that silently broke `host` for
+        everything else in the same archive_dir), so it's rejected up
+        front instead."""
+        from ott import is_video, is_audio, chunk_hashes, merkle_root, OttStore
 
         qs = parse_qs(urlparse(self.path).query)
         raw_name = (qs.get('name') or [''])[0]
@@ -765,10 +766,15 @@ class Handler(BaseHTTPRequestHandler):
         if not safe_name or safe_name in ('.', '..'):
             return self._json({'error': f'invalid file name: {raw_name!r}'}, status=400)
 
-        if not is_video(safe_name):
+        if is_video(safe_name):
+            content_type = 'video'
+        elif is_audio(safe_name):
+            content_type = 'audio'
+        else:
             return self._json(
-                {'error': f'{safe_name}: not a recognized video extension -- only video '
-                           'files can be hosted (see ott.is_video)'}, status=400)
+                {'error': f'{safe_name}: not a recognized video or audio extension -- only '
+                           'video/audio files can be hosted (see ott.is_video/ott.is_audio)'},
+                status=400)
 
         archive_dir = os.path.expanduser(archive_dir)
         os.makedirs(archive_dir, exist_ok=True)
@@ -814,7 +820,7 @@ class Handler(BaseHTTPRequestHandler):
         entry = {
             'sha256': digest, 'name': safe_name, 'orig_path': safe_name, 'last_path': dest_path,
             'size': written, 'added': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
-            'type': 'video', 'n_chunks': len(chunks), 'chunk_size': chunk_size,
+            'type': content_type, 'n_chunks': len(chunks), 'chunk_size': chunk_size,
         }
 
         # _lock (not just for _jobs/_hosts/_library, see its own comment
@@ -857,7 +863,7 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(existing + json.dumps(entry) + '\n')
             os.replace(manifest_tmp, manifest_path)
 
-        self._json({'ok': True, 'name': safe_name, 'content_hash': digest,
+        self._json({'ok': True, 'name': safe_name, 'content_hash': digest, 'type': content_type,
                      'size': written, 'n_chunks': len(chunks), 'archive_dir': archive_dir})
 
     def _handle_host(self, body):

@@ -89,15 +89,22 @@ def _split_url(url):
     return host, int(port), '/' + path
 
 
-def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_536, video=True):
+def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_536, video=True,
+                       content_type=None):
     """Hand-writes a minimal but real .ott/manifest.jsonl + chunks file --
     real sha256 chunk hashes and a real merkle root via the same ott
     helpers node.py itself calls, just skipping ott's own add/stage/commit
     workflow (irrelevant to what node.py/web_ui.py actually read: the
-    final manifest.jsonl + chunks/<hash>.json shape). video=False produces
-    an 'image'-typed entry with no chunks file, for regression-testing the
-    mp3/photo-mixed-into-an-archive fix (load_manifest_entries filtering
-    to video-only)."""
+    final manifest.jsonl + chunks/<hash>.json shape).
+
+    content_type overrides video/False entirely when given ('video',
+    'audio', or 'image') -- video=True/False is kept as the original
+    shorthand for the two cases every existing test already uses.
+    'image' (or any other non-chunkable type) produces no chunks file,
+    for regression-testing the photo-mixed-into-an-archive fix
+    (load_manifest_entries filtering to video/audio only); 'video' and
+    'audio' both get real chunk data, same as ott's own cmd_add does for
+    either since a bare mp3 stopped being lumped in with 'image'."""
     os.makedirs(archive_dir, exist_ok=True)
     ott_dir = os.path.join(archive_dir, '.ott')
     os.makedirs(os.path.join(ott_dir, 'chunks'), exist_ok=True)
@@ -105,12 +112,16 @@ def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_
     with open(file_path, 'wb') as f:
         f.write(os.urandom(size))
 
-    if video:
+    if content_type is None:
+        content_type = 'video' if video else 'image'
+    chunkable = content_type in ('video', 'audio')
+
+    if chunkable:
         chunks = chunk_hashes(file_path, chunk_size)
         digest = merkle_root(chunks)
         entry = {
             'sha256': digest, 'name': name, 'orig_path': name, 'last_path': file_path,
-            'size': size, 'added': '2026-01-01T00:00:00Z', 'type': 'video',
+            'size': size, 'added': '2026-01-01T00:00:00Z', 'type': content_type,
             'n_chunks': len(chunks), 'chunk_size': chunk_size,
         }
         with open(os.path.join(ott_dir, 'chunks', f'{digest}.json'), 'w') as f:
@@ -119,7 +130,7 @@ def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_
         digest = hashlib.sha256(open(file_path, 'rb').read()).hexdigest()
         entry = {
             'sha256': digest, 'name': name, 'orig_path': name, 'last_path': file_path,
-            'size': size, 'added': '2026-01-01T00:00:00Z', 'type': 'image',
+            'size': size, 'added': '2026-01-01T00:00:00Z', 'type': content_type,
             'n_chunks': 1, 'chunk_size': None,
         }
 

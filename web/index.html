@@ -170,8 +170,8 @@
     <div class="host-dropzone" :class="{'host-dropzone-active': hostDropzoneActive}"
          @dragover.prevent="onHostDropzoneDragOver" @dragleave="onHostDropzoneDragLeave"
          @drop.prevent="onHostFilesDropped">
-      drag video files here to copy them into an archive_dir and chunk them for hosting
-      (webm/mp4/mkv/mov/etc — see ott's own recognized extensions)
+      drag video or audio files here to copy them into an archive_dir and chunk them for hosting
+      (webm/mp4/mkv/mov/mp3/flac/etc — see ott's own recognized extensions)
     </div>
     <div class="upload-list" v-if="uploads.length">
       <div class="upload-item" v-for="(u, idx) in uploads" :key="idx">

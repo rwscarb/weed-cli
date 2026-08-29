@@ -19,23 +19,46 @@ def test_load_manifest_entries_single_video(tmp_path):
 
 
 def test_load_manifest_entries_filters_non_video(tmp_path):
-    """The actual bug: an mp3 (typed 'image' by ott's extension-based
-    is_video()) sitting in the same archive_dir used to poison-pill
-    hosting the whole directory -- host <dir> with no --file should just
-    skip it and host the real video."""
+    """The original bug this filter exists for: a non-chunked file
+    (originally an mp3, back when ott's extension-based is_video() typed
+    it 'image' for lack of any 'audio' type at all -- see
+    test_load_manifest_entries_includes_audio_alongside_video below for
+    that no longer being true) sitting in the same archive_dir used to
+    poison-pill hosting the whole directory -- host <dir> with no --file
+    should just skip a genuinely non-hostable entry (a real photo, here)
+    and host the real video."""
     video = make_fake_archive(tmp_path, name='good.mp4')
-    make_fake_archive(tmp_path, name='song.mp3', video=False)
+    make_fake_archive(tmp_path, name='photo.jpg', content_type='image')
 
     entries = node.load_manifest_entries(str(tmp_path))
     assert [e['sha256'] for e in entries] == [video['sha256']]
 
 
+def test_load_manifest_entries_includes_audio_alongside_video(tmp_path):
+    """Real ask: support audio (mp3, etc.) in addition to video. ott's
+    own cmd_add now chunks audio the same way it always has video (see
+    its own is_audio()), so an audio-typed manifest entry has real chunk
+    data too -- this is the one place every hosting path (weed.py,
+    shell.py, web_ui.py) filters on 'is this actually hostable', and it
+    needs to say yes to both now, not just video."""
+    video = make_fake_archive(tmp_path, name='good.mp4')
+    audio = make_fake_archive(tmp_path, name='song.mp3', content_type='audio')
+
+    entries = node.load_manifest_entries(str(tmp_path))
+    assert {e['sha256'] for e in entries} == {video['sha256'], audio['sha256']}
+    # the audio entry got real chunk data, not the image-style single
+    # whole-file hash with no chunks
+    audio_entry = next(e for e in entries if e['sha256'] == audio['sha256'])
+    assert audio_entry['n_chunks'] > 1
+    assert node.load_leaves(str(tmp_path), audio['sha256']) is not None
+
+
 def test_load_manifest_entries_explicit_non_video_file_errors_clearly(tmp_path):
     make_fake_archive(tmp_path, name='good.mp4')
-    make_fake_archive(tmp_path, name='song.mp3', video=False)
+    make_fake_archive(tmp_path, name='photo.jpg', content_type='image')
 
-    with pytest.raises(SystemExit, match='no hostable video file found'):
-        node.load_manifest_entries(str(tmp_path), 'song.mp3')
+    with pytest.raises(SystemExit, match='no hostable video/audio file found'):
+        node.load_manifest_entries(str(tmp_path), 'photo.jpg')
 
 
 def test_load_manifest_entries_no_manifest_at_all(tmp_path):
