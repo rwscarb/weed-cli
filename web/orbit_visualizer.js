@@ -40,6 +40,82 @@ window.orbitViz = (function () {
   // computation would buy.
   const PLASMA_W = 64, PLASMA_H = 36;
 
+  // ── Plugin registry ────────────────────────────────────────────────
+  // Lets code outside this file add its own visualization modes without
+  // editing it at all. A plugin is a plain object:
+  //   { id, label?, draw(ctx), init(ctx)?, teardown()? }
+  // - id: a unique string, not one of the built-in VIZ_MODES above and
+  //   not another registered plugin's id -- this becomes the data-viz
+  //   value its button carries and what setVizMode/keyboard cycling
+  //   compare against, same as a built-in mode's own name.
+  // - label: button text (defaults to id).
+  // - draw(ctx): called once per animation frame while this is the
+  //   active mode. ctx is built fresh every frame by makeFrameContext()
+  //   inside init() below -- see its own comment for exactly what it
+  //   carries (canvas context, dimensions, audio data, the shared hue/
+  //   rotation/zoom state the Speed/Reactivity/Zoom sliders already
+  //   drive, ...).
+  // - init(ctx)?: called once, right when the visualizer dialog opens
+  //   (not lazily on first draw, unlike how several built-in modes set
+  //   up their own persistent state) -- ctx here additionally carries
+  //   `container` (the dialog's own #vizSection) and `canvas` (the real
+  //   <canvas id="vizCanvas">). There's no declarative way to add extra
+  //   controls (sliders, buttons, ...) -- this is the escape hatch: a
+  //   plugin that wants its own UI creates real DOM elements here and
+  //   removes them in teardown().
+  // - teardown()?: called once when the dialog closes, or the plugin is
+  //   unregistered while it's open -- undo whatever init() set up.
+  //
+  // Every call into a plugin's own draw/init/teardown is wrapped in
+  // try/catch (see callPlugin inside init() below): third-party code is
+  // far more likely to have bugs than this file's own already-debugged
+  // built-ins, and an uncaught throw inside drawViz's
+  // requestAnimationFrame loop fails *silently* -- no crash, no console
+  // output by default, the loop just quietly stops running forever
+  // (exactly the class of bug ASCII's own background-draw regression
+  // test elsewhere in this codebase exists to catch in this file's own
+  // code). A broken plugin should only ever break itself -- logged once,
+  // switched back to a built-in mode -- not take the whole visualizer
+  // down with it.
+  const pluginModes = new Map();
+
+  function registerMode(def) {
+    if (!def || typeof def.id !== 'string' || !def.id || typeof def.draw !== 'function') {
+      throw new Error('orbitViz.registerMode(def) requires at least {id: string, draw: function}');
+    }
+    if (VIZ_MODES.includes(def.id) || pluginModes.has(def.id)) {
+      throw new Error(`orbitViz.registerMode: a mode called ${JSON.stringify(def.id)} already exists`);
+    }
+    const mode = {
+      id: def.id,
+      label: def.label || def.id,
+      draw: def.draw,
+      init: typeof def.init === 'function' ? def.init : null,
+      teardown: typeof def.teardown === 'function' ? def.teardown : null,
+      broken: false,
+    };
+    pluginModes.set(mode.id, mode);
+    // the dialog is already open (state exists) -- mount it live
+    // instead of making the caller reopen the visualizer to see it
+    if (state) state.mountPlugin(mode);
+    return () => unregisterMode(mode.id);
+  }
+
+  function unregisterMode(id) {
+    const mode = pluginModes.get(id);
+    if (!mode) return false;
+    if (state) state.unmountPlugin(mode);
+    pluginModes.delete(id);
+    return true;
+  }
+
+  function listModes() {
+    return [
+      ...VIZ_MODES.map(id => ({ id, label: id, builtin: true })),
+      ...Array.from(pluginModes.values()).map(m => ({ id: m.id, label: m.label, builtin: false })),
+    ];
+  }
+
   let state = null;
 
   function init() {
@@ -160,6 +236,11 @@ window.orbitViz = (function () {
       reactivity: 1.0,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
+      // plugin mode id -> its dynamically-created <button>, so
+      // unmountPlugin (below) can find and remove exactly the one it
+      // added -- plugin buttons don't exist in index.html at all, only
+      // the 11 built-in ones do
+      pluginButtons: new Map(),
     };
     state = s;
 
@@ -171,6 +252,62 @@ window.orbitViz = (function () {
       target.addEventListener(type, fn, opts);
       s.listeners.push([target, type, fn, opts]);
     }
+
+    // ── plugin wiring -- see the registerMode/pluginModes comment at
+    // the top of this file for the full contract these implement ──────
+    function callPlugin(mode, hookName, ctx) {
+      const fn = mode[hookName];
+      if (!fn) return;
+      try {
+        fn(ctx);
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.error(`[orbit visualizer] plugin "${mode.id}" threw in ${hookName}():`, err);
+        mode.broken = true;
+        if (s.vizMode === mode.id) setVizMode('tunnel');
+      }
+    }
+    // Rebuilt fresh every frame (cheap -- a handful of property reads,
+    // not a deep clone) rather than handing a plugin the real internal
+    // `s` object directly: this is the one deliberately-stable, narrow
+    // surface plugins can rely on even as this file's own internals
+    // keep changing around it (new fields have been added to `s` in
+    // nearly every recent change to this file -- a plugin depending on
+    // its exact shape would break constantly).
+    function makeFrameContext() {
+      return {
+        vctx, VW: s.VW, VH: s.VH,
+        cx: s.VW / 2 + s.vizPanX, cy: s.VH / 2 + s.vizPanY,
+        hueBase: s.c60Hue * 360, vizRot: s.vizRot, vizUserScale: s.vizUserScale,
+        freqData: s.freqData, waveData: s.waveData, videoFrame: s.videoFrame,
+        speed: s.speed, reactivity: s.reactivity,
+      };
+    }
+    function mountPlugin(mode) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'viz-mode-btn';
+      btn.dataset.viz = mode.id;
+      btn.textContent = mode.label;
+      vizModesEl.appendChild(btn);
+      s.pluginButtons.set(mode.id, btn);
+      callPlugin(mode, 'init', { container: vizSection, canvas: vizCanvas, vctx });
+    }
+    function unmountPlugin(mode) {
+      callPlugin(mode, 'teardown', undefined);
+      const btn = s.pluginButtons.get(mode.id);
+      if (btn) { btn.remove(); s.pluginButtons.delete(mode.id); }
+      if (s.vizMode === mode.id) setVizMode('tunnel');
+    }
+    s.mountPlugin = mountPlugin;
+    s.unmountPlugin = unmountPlugin;
+    s.callPlugin = callPlugin;
+    // any plugin registered from an earlier dialog session (or before
+    // the visualizer was ever opened at all) needs its button re-created
+    // now -- index.html's v-if destroyed the previous dialog's whole DOM
+    // on close, plugin buttons included, but pluginModes itself is
+    // module-level state that outlives any single open/close cycle
+    for (const mode of pluginModes.values()) mountPlugin(mode);
 
     // shared by the Zoom slider's own 'input' event, scroll-to-zoom, and
     // the double-click reset below, so all three ways of changing it
@@ -234,7 +371,7 @@ window.orbitViz = (function () {
     // lit-class/resetVizNav/asciiControls-visibility bookkeeping
     // drifting out of sync with each other.
     function setVizMode(mode) {
-      if (!VIZ_MODES.includes(mode)) return;
+      if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       s.vizMode = mode;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       resetVizNav();
@@ -864,6 +1001,15 @@ window.orbitViz = (function () {
           const rotStep = b.seed * 0.002 + s.vizRot * 0.3;
           drawFlowerPetals(px, py, b.angle, baseSize, depth, hue, sat, baseLight, bloomFactor, energy, rotStep);
         }
+
+      } else {
+        // not one of the 11 built-in modes above -- a registered
+        // plugin, or nothing (a stale s.vizMode from a plugin that's
+        // since unregistered, in which case pluginModes.get returns
+        // undefined and this frame just draws nothing rather than
+        // erroring)
+        const plugin = pluginModes.get(s.vizMode);
+        if (plugin && !plugin.broken) callPlugin(plugin, 'draw', makeFrameContext());
       }
     }
     drawViz();
@@ -975,6 +1121,12 @@ window.orbitViz = (function () {
     state.running = false;
     if (state.resizeObserver) state.resizeObserver.disconnect();
     for (const [target, type, fn, opts] of state.listeners) target.removeEventListener(type, fn, opts);
+    // every registered plugin's own teardown() runs here too -- the DOM
+    // (their buttons included) is about to be destroyed wholesale by
+    // index.html's v-if regardless, but a plugin may have started its
+    // own timers/listeners/state in init() that only it knows how to
+    // clean up
+    for (const mode of pluginModes.values()) state.callPlugin(mode, 'teardown', undefined);
     state = null;
   }
 
@@ -984,5 +1136,10 @@ window.orbitViz = (function () {
     pushAudio: (freq, wave) => { if (state) state.pushAudio(freq, wave); },
     pushVideoFrame: (w, h, data) => { if (state) state.pushVideoFrame(w, h, data); },
     toggleFullscreen: () => { if (state) state.toggleVizFullscreen(); },
+    // the plugin API -- see the pluginModes/registerMode comment near
+    // the top of this file for the full contract
+    registerMode,
+    unregisterMode,
+    listModes,
   };
 })();
