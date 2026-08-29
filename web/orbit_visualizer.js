@@ -151,7 +151,19 @@ window.orbitViz = (function () {
     // shared by the Zoom slider's own 'input' event, scroll-to-zoom, and
     // the double-click reset below, so all three ways of changing it
     // move the slider thumb and clamp identically instead of scroll and
-    // the slider quietly drifting out of sync with each other
+    // the slider quietly drifting out of sync with each other.
+    //
+    // #zoomSlider's own step is "any" (index.html), not a fixed
+    // increment like the ASCII sliders use -- a real bug this avoided:
+    // Chromium silently snaps a range input's .value to the nearest
+    // step *whenever it's set programmatically*, not just via user drag,
+    // so a wheel-zoomed value like 1.07 assigned to a step="0.05" slider
+    // silently became 1.05 the instant it was read back, while this
+    // function's own label (zoomVal, built from the true s.vizUserScale)
+    // kept saying 1.07x -- the slider thumb and its own label
+    // disagreeing about the current zoom. Zoom changes continuously via
+    // scroll, unlike Speed/Reactivity (drag-only), so there's no fixed
+    // increment that would ever make sense to snap to here anyway.
     function setZoom(v) {
       s.vizUserScale = Math.min(8.0, Math.max(0.15, v));
       zoomSlider.value = s.vizUserScale;
