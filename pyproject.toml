@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weed-cli"
-version = "1.8.5"
+version = "1.8.6"
 description = "Censorship-resistant video PoC — discovery/hosting/download over signed relay events, a real Kademlia DHT, or a TLS-capable NAT-traversal tunnel"
 readme = "README.md"
 license = { text = "MIT" }

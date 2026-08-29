@@ -128,15 +128,20 @@ window.orbitViz = (function () {
       // videoFrame above already uses.
       particles: null,
       buildings: null,
-      // FREEFALL's own dimension sliders -- 1.0 multiplies footW/wallLen
-      // by exactly 1 (no change from the un-tuned default), applied at
-      // draw time rather than baked into each building's own stored
-      // halfW/heightScale, so moving a slider retunes every building on
-      // screen immediately instead of only the next ones spawned.
-      // buildingCount is the one exception -- it directly resizes
-      // s.buildings (see its own maintenance check in the freefall
-      // branch), since "how many" isn't a per-building draw-time
-      // multiplier the way width/height are.
+      // FREEFALL's own dimension sliders (labeled Size/Bloom/Count in
+      // index.html -- these names still say "building" from when this
+      // mode drew buildings instead of recursive flowers). 1.0 means no
+      // change from the un-tuned default, applied at draw time rather
+      // than baked into each flower's own stored halfW/heightScale, so
+      // moving a slider retunes every flower on screen immediately
+      // instead of only newly-spawned ones. buildingWidthScale scales
+      // each flower's overall radius (baseSize); buildingHeightScale
+      // controls how tightly each recursive level shrinks relative to
+      // its parent (bloomFactor -- see drawFlowerPetals' own call site).
+      // buildingCount is the one exception to "draw-time multiplier" --
+      // it directly resizes s.buildings (see its own maintenance check
+      // in the freefall branch), since "how many" isn't a per-flower
+      // scale the way size/bloom are.
       buildingWidthScale: 1.0,
       buildingHeightScale: 1.0,
       buildingCount: 40,
@@ -358,6 +363,45 @@ window.orbitViz = (function () {
       return frameAspect > canvasAspect
         ? { w: s.VW, h: s.VW / frameAspect }
         : { w: s.VH * frameAspect, h: s.VH };
+    }
+
+    // FREEFALL's recursive flower -- a ring of petals radiating from
+    // (x,y), each petal's own tip blooming a smaller ring of petals in
+    // turn, depth-limited so the recursion actually terminates. Defined
+    // once here (not per-flower-per-frame) and given everything it
+    // needs as plain parameters rather than closures, since it's called
+    // up to buildingCount times every single frame.
+    //
+    // depth is deliberately tied to the flower's own on-screen size at
+    // the call site (see the freefall branch below), not a fixed
+    // constant: a flower still tiny near the vanishing point can't show
+    // fine recursive detail anyway, and the *real* cost of this
+    // function is exponential in depth (petalCount^depth petals) --
+    // only the handful of flowers big enough to actually show it ever
+    // pay for the deeper recursion.
+    function drawFlowerPetals(x, y, angle, size, depth, hue, sat, light, bloomFactor, energy, rotStep) {
+      if (depth <= 0 || size < 1.5) return;
+      const petalCount = 5;
+      const petalWidth = size * 0.34 * (0.7 + energy * 0.6);
+      for (let i = 0; i < petalCount; i++) {
+        const pa = angle + (i / petalCount) * Math.PI * 2 + rotStep;
+        const tipX = x + Math.cos(pa) * size, tipY = y + Math.sin(pa) * size;
+        const perp = pa + Math.PI / 2;
+        const midX = x + Math.cos(pa) * size * 0.55, midY = y + Math.sin(pa) * size * 0.55;
+        vctx.beginPath();
+        vctx.moveTo(x, y);
+        vctx.quadraticCurveTo(midX + Math.cos(perp) * petalWidth, midY + Math.sin(perp) * petalWidth, tipX, tipY);
+        vctx.quadraticCurveTo(midX - Math.cos(perp) * petalWidth, midY - Math.sin(perp) * petalWidth, x, y);
+        vctx.closePath();
+        vctx.fillStyle = `hsla(${(hue + i * 8) % 360 | 0},${sat | 0}%,${light | 0}%,0.75)`;
+        vctx.fill();
+        // recurse: a smaller bloom opens at this petal's own tip, hue
+        // drifting and rotation twisting a bit more at each level so
+        // the levels read as distinct rather than a single flat pattern
+        // stamped on top of itself
+        drawFlowerPetals(tipX, tipY, pa, size * bloomFactor, depth - 1,
+          (hue + 22) % 360, sat, Math.min(85, light + 6), bloomFactor, energy, rotStep * 1.4 + 0.3);
+      }
     }
 
     // Draw loop -- same seven modes, same math, as the standalone page
@@ -701,16 +745,20 @@ window.orbitViz = (function () {
         }
 
       } else if (s.vizMode === 'freefall') {
-        // Looking straight down as you fall through an endless field of
-        // rooftops: each building spawns tiny right at the vanishing
-        // point (screen center, directly "below" you) and grows/moves
-        // outward as its own "dist" climbs linearly from 0 to 1 --
-        // perspectiveR below (not dist itself) is what turns that into
-        // the actual accelerating, rushing-at-the-end visual growth (see
-        // its own comment). The instant one crosses dist=1 (passed
-        // completely) it respawns at dist=0 with fresh random size/
-        // angle -- an endless supply, never actually "running out" the
-        // way a fixed skyline would.
+        // Falling through an endless field of recursive flowers: each
+        // one spawns tiny right at the vanishing point (screen center)
+        // and grows/moves outward as its own "dist" climbs linearly
+        // from 0 to 1 -- perspectiveR below (not dist itself) is what
+        // turns that into the actual accelerating, rushing-at-the-end
+        // visual growth (see its own comment). The instant one crosses
+        // dist=1 (passed completely) it respawns at dist=0 with fresh
+        // random size/angle -- an endless supply, never actually
+        // "running out." Internal field/function names below still say
+        // "building" (halfW, randomBuildingFields, ...) -- this used to
+        // draw one per ring slot; the perspective/spawn/respawn
+        // machinery that surrounds it didn't need to change at all when
+        // the *shape* did, only what happens at the very end of this
+        // branch (see drawFlowerPetals above).
         // shared by initial population, respawn-on-passing (below), and
         // the buildingCount slider growing the ring -- one place that
         // knows what a "fresh" building's random fields look like
@@ -779,88 +827,42 @@ window.orbitViz = (function () {
           const py = cy + Math.sin(b.angle) * r;
           const hue = (hueBase + b.hueOff + bass * 30) % 360;
           // Atmospheric depth on top of the size/position perspective
-          // above: real distant buildings look hazier and less
-          // saturated (more sky/haze between you and them), close ones
-          // read crisp and vivid.
-          const sat = 12 + b.dist * 30;
-          const baseLight = 8 + b.dist * 22;
+          // above: distant flowers read hazier and less saturated (more
+          // haze between you and them), close ones crisp and vivid --
+          // the baseline is pushed noticeably higher than the old
+          // buildings' own version of this used, since a muted, mostly-
+          // desaturated palette reads as concrete/glass but not as
+          // flower petals.
+          const sat = 35 + b.dist * 45;
+          const baseLight = 30 + b.dist * 30;
 
-          // Looking down at rooftops, not a side-on facade: (px,py) is
-          // this building's actual ground position (radius r, same as
-          // before). footW is its ground footprint width; footD is the
-          // rooftop's own footprint depth, a real rectangle rather than
-          // a thin sliver. wallLen is how far the roof appears to *lean
-          // away* from that ground position -- real aerial photography:
-          // a tall building's rooftop visibly leans away from the point
-          // directly below the viewer (the nadir) while its base stays
-          // near its true ground position, and the effect is stronger
-          // both for taller buildings and for ones farther off to the
-          // side of the view (scaled here by r/maxR). This lean is what
-          // actually reads as "a 3D box seen from above," which a flat
-          // vertical facade (the previous version) fundamentally
-          // couldn't -- that was a side-on view, not a top-down one.
-          // buildingWidthScale/buildingHeightScale (the Width/Height
-          // sliders) multiply in here, at draw time -- see their own
-          // comment in the state object for why that's a live-updating
-          // multiplier on every building at once rather than baked into
-          // each one's own stored halfW/heightScale
-          const footW = Math.max(3, b.halfW * r * 2 * s.buildingWidthScale);
-          const footD = Math.max(2, footW * 0.55);
-          const wallLen = footW * (0.5 + b.heightScale) * (0.3 + (r / maxR) * 1.3) * s.buildingHeightScale;
-
-          vctx.save();
-          vctx.translate(px, py);
-          // local +Y now points radially outward (away from the
-          // vanishing point) -- the direction the roof leans away from
-          // the base along
-          vctx.rotate(b.angle - Math.PI / 2);
-
-          // wall -- the visible shadowed side face connecting the
-          // ground-level base (local y=0, this building's actual
-          // position) to the rooftop (local y=wallLen, leaned further
-          // out)
-          const wallLight = Math.max(3, baseLight - 6);
-          vctx.fillStyle = `hsl(${hue | 0},${Math.max(6, sat - 12) | 0}%,${wallLight | 0}%)`;
-          vctx.fillRect(-footW / 2, 0, footW, wallLen);
-          // a subtle seam down the middle -- floor/panel lines, cheap
-          // texture so the wall doesn't read as one flat slab
-          vctx.fillStyle = `hsla(${hue | 0},${Math.max(6, sat - 12) | 0}%,${Math.max(2, wallLight - 4) | 0}%,0.6)`;
-          vctx.fillRect(-1, 0, 2, wallLen);
-
-          // roof -- the brightest, top-lit surface, sitting at the far
-          // (leaned-away) end of the wall, with a thin darker outline so
-          // it reads as its own distinct flat surface rather than a
-          // continuation of the wall's color
-          const roofLight = Math.min(70, baseLight + 22);
-          vctx.fillStyle = `hsl(${hue | 0},${sat | 0}%,${roofLight | 0}%)`;
-          vctx.fillRect(-footW / 2, wallLen, footW, footD);
-          vctx.strokeStyle = `hsla(${hue | 0},${sat | 0}%,${Math.max(4, baseLight - 4) | 0}%,0.8)`;
-          vctx.lineWidth = Math.max(1, footW * 0.025);
-          vctx.strokeRect(-footW / 2, wallLen, footW, footD);
-
-          // rooftop details -- a couple of small vents/units instead of
-          // a window grid, since we're looking down at the roof now, not
-          // the facade. Deterministic per building via its own seed (not
-          // fresh Math.random() every frame, so one doesn't flicker);
-          // how many read as "lit" brightens with bass, the same pulse-
-          // on-a-hit the old window grid gave the skyline.
-          const litFrac = 0.5 + bass * 0.3;
-          for (let i = 0; i < 3; i++) {
-            const n1 = Math.sin(b.seed + i * 12.9898) * 43758.5453;
-            const n2 = Math.sin(b.seed + i * 37.719 + 4.5) * 24634.634;
-            const fx = (n1 - Math.floor(n1)) * 2 - 1;  // -1..1 across footW
-            const fy = n2 - Math.floor(n2);             // 0..1 across footD
-            const dsize = Math.max(1, footW * 0.09);
-            const dx = fx * (footW / 2 - dsize);
-            const dy = wallLen + fy * footD;
-            const litHash = n1 + n2;
-            const lit = (litHash - Math.floor(litHash)) < litFrac;
-            vctx.fillStyle = lit
-              ? `hsla(${(hue + 40) % 360 | 0},70%,75%,0.9)`
-              : `hsla(${hue | 0},${sat | 0}%,${Math.max(3, baseLight - 8) | 0}%,0.9)`;
-            vctx.fillRect(dx - dsize / 2, dy - dsize / 2, dsize, dsize);
-          }
-          vctx.restore();
+          // (px,py) is this flower's own ground position (radius r,
+          // same perspective math as before). baseSize is its overall
+          // radius -- buildingWidthScale (the Width slider) multiplies
+          // in here, at draw time, so it retunes every flower on screen
+          // live rather than only newly-spawned ones (see its own
+          // comment in the state object). bloomFactor is how much each
+          // recursive level shrinks relative to its parent -- smaller
+          // buildingHeightScale (the Height slider) means a *tighter*
+          // shrink per level (a denser, more compact bloom); larger
+          // means each level stays closer to its parent's size (a
+          // fuller, more expansive bloom).
+          //
+          // depth is tied to baseSize, not a fixed constant: this
+          // recursion costs petalCount^depth petal draws, so only the
+          // handful of flowers big enough for the extra detail to
+          // actually be visible (the close ones, about to rush past)
+          // ever pay for the deeper levels -- see drawFlowerPetals'
+          // own comment.
+          const baseSize = Math.max(2, b.halfW * r * 2 * s.buildingWidthScale);
+          const bloomFactor = Math.min(0.75, Math.max(0.35, 0.75 - s.buildingHeightScale * 0.15));
+          const depth = baseSize > 46 ? 3 : baseSize > 16 ? 2 : 1;
+          // a slow per-flower rotation drift (its own seed, so they're
+          // not all spinning in lockstep), scaled by Speed via vizRot so
+          // the Speed slider retunes this the same way it retunes every
+          // other mode's own rotation
+          const rotStep = b.seed * 0.002 + s.vizRot * 0.3;
+          drawFlowerPetals(px, py, b.angle, baseSize, depth, hue, sat, baseLight, bloomFactor, energy, rotStep);
         }
       }
     }

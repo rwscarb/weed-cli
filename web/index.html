@@ -557,14 +557,17 @@
         <button class="viz-mode-btn active" data-color="natural">Natural</button>
       </div>
       <!-- Freefall-only, same show/hide-by-mode treatment asciiControls
-           gets (see setVizMode in orbit_visualizer.js) -- Width/Height
-           retune every building's footprint/wall-lean live; Count
-           grows/shrinks the ring itself. -->
+           gets (see setVizMode in orbit_visualizer.js) -- Size/Bloom
+           retune every flower's own radius/recursive fullness live;
+           Count grows/shrinks the ring itself. Element ids still say
+           "building" (this mode used to draw buildings, not recursive
+           flowers -- see orbit_visualizer.js's own comments) but the
+           visible labels describe what they tune today. -->
       <div class="preset-row ascii-controls" id="freefallControls" style="display:none">
-        <span class="ascii-controls-label">Width</span>
+        <span class="ascii-controls-label">Size</span>
         <input type="range" id="buildingWidthSlider" min="0.3" max="3" step="0.1" value="1">
         <span class="ascii-controls-val" id="buildingWidthVal">1.0x</span>
-        <span class="ascii-controls-label">Height</span>
+        <span class="ascii-controls-label">Bloom</span>
         <input type="range" id="buildingHeightSlider" min="0.3" max="3" step="0.1" value="1">
         <span class="ascii-controls-val" id="buildingHeightVal">1.0x</span>
         <span class="ascii-controls-label">Count</span>
