@@ -140,7 +140,7 @@ window.orbitViz = (function () {
     function setVizMode(mode) {
       if (!VIZ_MODES.includes(mode)) return;
       s.vizMode = mode;
-      document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('lit', b.dataset.viz === mode));
+      document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       resetVizNav();
       asciiControls.style.display = mode === 'ascii' ? 'flex' : 'none';
     }
@@ -191,7 +191,7 @@ window.orbitViz = (function () {
     document.querySelectorAll('#asciiControls [data-color]').forEach(btn => {
       on(btn, 'click', () => {
         s.asciiColorMode = btn.dataset.color;
-        document.querySelectorAll('#asciiControls [data-color]').forEach(b => b.classList.toggle('lit', b === btn));
+        document.querySelectorAll('#asciiControls [data-color]').forEach(b => b.classList.toggle('active', b === btn));
       });
     });
 

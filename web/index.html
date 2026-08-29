@@ -508,32 +508,32 @@
   <div id="orbit-egg-backdrop" @click="easterEggVisible = false"></div>
   <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Visualizer">
     <header>
-      <h1>ORBIT VISUALIZER</h1>
+      <h1>Orbit Visualizer</h1>
       <div class="transport">
-        <button class="btn" style="opacity:0.5;padding:4px 8px" @click="easterEggVisible = false">← BACK</button>
-        <button id="vizFsBtn" class="btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
+        <button class="viz-mode-btn" @click="easterEggVisible = false">← Back</button>
+        <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
       </div>
     </header>
     <div id="vizSection">
       <div class="idle-note" id="idleNote">reacts to whatever's playing in the weed player — nothing playing right now, so this is just idling</div>
       <div class="preset-row" id="vizModes">
-        <button class="btn" data-viz="tunnel">TUNNEL</button>
-        <button class="btn" data-viz="bars">BARS</button>
-        <button class="btn" data-viz="mirror">MIRROR</button>
-        <button class="btn" data-viz="scope">SCOPE</button>
-        <button class="btn" data-viz="spiral">SPIRAL</button>
-        <button class="btn" data-viz="pixels">PIXELS</button>
-        <button class="btn lit" data-viz="ascii">ASCII</button>
+        <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
+        <button class="viz-mode-btn" data-viz="bars">Bars</button>
+        <button class="viz-mode-btn" data-viz="mirror">Mirror</button>
+        <button class="viz-mode-btn" data-viz="scope">Scope</button>
+        <button class="viz-mode-btn" data-viz="spiral">Spiral</button>
+        <button class="viz-mode-btn" data-viz="pixels">Pixels</button>
+        <button class="viz-mode-btn active" data-viz="ascii">ASCII</button>
       </div>
       <div class="preset-row ascii-controls" id="asciiControls" style="display:flex">
-        <span class="ascii-controls-label">RES</span>
+        <span class="ascii-controls-label">Res</span>
         <input type="range" id="asciiResSlider" min="1" max="4" step="1" value="1">
         <span class="ascii-controls-val" id="asciiResVal">5184 chars</span>
-        <span class="ascii-controls-label">BRI</span>
+        <span class="ascii-controls-label">Bri</span>
         <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.8">
         <span class="ascii-controls-val" id="asciiBriVal">1.8x</span>
-        <button class="btn" data-color="neon">NEON</button>
-        <button class="btn lit" data-color="natural">NATURAL</button>
+        <button class="viz-mode-btn" data-color="neon">Neon</button>
+        <button class="viz-mode-btn active" data-color="natural">Natural</button>
       </div>
       <canvas id="vizCanvas"></canvas>
       <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; 1-7 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
