@@ -472,11 +472,28 @@ window.orbitViz = (function () {
         const idx = VIZ_MODES.indexOf(s.vizMode);
         setVizMode(VIZ_MODES[(idx + (e.code === 'ArrowRight' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
       }
-      // 1-7 jump straight to a mode, in the same left-to-right order the
-      // mode buttons themselves render in -- not gated to fullscreen
-      // like arrow-key cycling above, since these are absolute jumps.
-      if (e.code.startsWith('Digit')) {
-        const n = parseInt(e.code.slice(5), 10);
+      // Numpad 1-7 jump straight to a mode, in the same left-to-right
+      // order the mode buttons themselves render in -- not gated to
+      // fullscreen like arrow-key cycling above, since these are
+      // absolute jumps. Numpad, not the top-row Digit keys: this dialog
+      // is now inline in the same document as the rest of the app (see
+      // orbit_visualizer.js's own module docstring on why), so a
+      // top-row '1'-'5' here would land on document's own keydown
+      // listener too -- vue-app.js's onGlobalKeydown treats bare '1'-'5'
+      // as "switch to tab N" with no easterEggVisible guard, so pressing
+      // '1' to jump to Tunnel would *also* silently switch the main app
+      // to the Discover tab underneath. Numpad keys have their own
+      // distinct e.code values (NumpadN, not DigitN) that vue-app.js
+      // never binds anything to, so there's no overlap to guard against
+      // at all.
+      if (e.code.startsWith('Numpad')) {
+        // NumpadN (N=0-9) is exactly 7 characters -- NumpadEnter/Add/
+        // Subtract/Multiply/Divide/Decimal/Equal all differ in length,
+        // and slicing+parsing one of those would just produce NaN
+        // anyway (safely failing the range check below), but checking
+        // the length up front says what this is actually looking for
+        // instead of relying on that as an implicit side effect.
+        const n = e.code.length === 7 ? parseInt(e.code.slice(6), 10) : NaN;
         if (n >= 1 && n <= VIZ_MODES.length) { e.preventDefault(); setVizMode(VIZ_MODES[n - 1]); }
       }
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
