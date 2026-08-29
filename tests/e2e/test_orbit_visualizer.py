@@ -44,6 +44,25 @@ def test_ascii_mode_renders_several_frames_with_no_console_errors(page, golden_p
     assert errors == []
 
 
+def test_new_modes_render_several_frames_with_no_console_errors(page, golden_path_server):
+    """Plasma/Kaleido/Particles (added alongside the original seven, per
+    Ryan's "more visualizations" ask -- hand-rolled canvas 2D, no new
+    dependency, same reasoning as everything else in this file) each get
+    a real animation-frame run against a real playing video, watching
+    for a JS error the same way the ASCII regression test above does."""
+    errors = []
+    page.on('pageerror', lambda exc: errors.append(str(exc)))
+    page.on('console', lambda msg: errors.append(msg.text) if msg.type == 'error' else None)
+
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    for mode in ('plasma', 'kaleido', 'particles'):
+        page.click(f'[data-viz="{mode}"]')
+        page.wait_for_timeout(400)
+
+    assert errors == []
+
+
 def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     """Real ask: number keys should jump straight to a mode instead of
     only being reachable by clicking a button or, in fullscreen, cycling
@@ -54,8 +73,9 @@ def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
 
-    # VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels','ascii']
-    # -- '3' is the third button, MIRROR
+    # VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels',
+    # 'ascii','plasma','kaleido','particles'] -- '3' is the third button,
+    # MIRROR
     page.keyboard.press('Shift+Digit3')
     assert page.locator('[data-viz="mirror"]').evaluate('el => el.classList.contains("active")')
     assert not page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
@@ -70,10 +90,14 @@ def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     assert page.locator('#asciiControls').is_visible()
 
-    # out-of-range digits (8/9/0) are simply ignored, not an error and
-    # not wrapping around to some other mode
+    # the three new modes (8/9/10th) -- Digit0 is the 10th, not "0th"
+    # (see setVizMode's own caller for the raw-to-n mapping)
+    page.keyboard.press('Shift+Digit8')
+    assert page.locator('[data-viz="plasma"]').evaluate('el => el.classList.contains("active")')
     page.keyboard.press('Shift+Digit9')
-    assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
+    assert page.locator('[data-viz="kaleido"]').evaluate('el => el.classList.contains("active")')
+    page.keyboard.press('Shift+Digit0')
+    assert page.locator('[data-viz="particles"]').evaluate('el => el.classList.contains("active")')
 
     # doesn't also switch tabs -- Shift+Digit3's e.key is '#' (US layout),
     # not '3', so vue-app.js's tabByDigit lookup (keyed on e.key) never

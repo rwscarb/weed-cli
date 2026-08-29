@@ -26,7 +26,15 @@
 // open/close cycles don't stack zombie copies of any of that.
 window.orbitViz = (function () {
   const STEP_HUES = [0.33, 0.50, 0.62, 0.83, 0.10, 0.23];
-  const VIZ_MODES = ['tunnel', 'bars', 'mirror', 'scope', 'spiral', 'pixels', 'ascii'];
+  const VIZ_MODES = ['tunnel', 'bars', 'mirror', 'scope', 'spiral', 'pixels', 'ascii', 'plasma', 'kaleido', 'particles'];
+  // small, fixed-resolution grid for PLASMA's per-cell math -- computing
+  // a real plasma formula at full canvas resolution (VW*VH, easily a few
+  // million pixels once devicePixelRatio is in play) every frame would
+  // be far too slow; a small grid drawn with image smoothing on when
+  // it's scaled up (see the plasma branch below) is what actually gives
+  // it a soft, flowing look anyway, not the sharp detail a full-res
+  // computation would buy.
+  const PLASMA_W = 64, PLASMA_H = 36;
 
   let state = null;
 
@@ -42,6 +50,9 @@ window.orbitViz = (function () {
     const voffCtx = vizOff.getContext('2d');
     const vpixOff = document.createElement('canvas');
     const vpixOffCtx = vpixOff.getContext('2d');
+    const plasmaOff = document.createElement('canvas');
+    plasmaOff.width = PLASMA_W; plasmaOff.height = PLASMA_H;
+    const plasmaOffCtx = plasmaOff.getContext('2d');
     const idleNote = document.getElementById('idleNote');
     const asciiControls = document.getElementById('asciiControls');
     const asciiResSlider = document.getElementById('asciiResSlider');
@@ -86,6 +97,10 @@ window.orbitViz = (function () {
       // footage clear the bright<0.03 skip threshold and actually
       // render instead of leaving blank cells.
       asciiBrightness: 1.8,
+      // PARTICLES' own swarm -- null until that mode's first frame
+      // lazily populates it (see its branch in drawViz), same "declared
+      // here, filled in on demand" shape videoFrame above already uses.
+      particles: null,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
     };
@@ -447,6 +462,108 @@ window.orbitViz = (function () {
           }
           vctx.textAlign = 'left'; vctx.textBaseline = 'alphabetic';
         }
+
+      } else if (s.vizMode === 'plasma') {
+        // Classic demoscene plasma: four overlapping sine fields (two
+        // axis-aligned, one diagonal, one radial from center) summed and
+        // normalized to -1..1 -- the interference between them is what
+        // gives it that flowing, organic warp instead of looking like
+        // plain repeating stripes. Computed on the small PLASMA_W x
+        // PLASMA_H grid (see its own comment up top) and smoothed up to
+        // full size below.
+        const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
+        const bassEnd = Math.max(1, Math.floor(maxBin * 0.12));
+        const bass = s.freqData.slice(0, bassEnd).reduce((a, b) => a + b, 0) / (bassEnd * 255);
+        const t = performance.now() / 1000 * (1 + energy * 1.2);
+        for (let gy = 0; gy < PLASMA_H; gy++) {
+          for (let gx = 0; gx < PLASMA_W; gx++) {
+            const v = (
+              Math.sin(gx * 0.25 + t * 1.3) +
+              Math.sin(gy * 0.22 + t * 1.1) +
+              Math.sin((gx + gy) * 0.16 + t * 0.9) +
+              Math.sin(Math.hypot(gx - PLASMA_W / 2, gy - PLASMA_H / 2) * 0.30 - t * 1.6)
+            ) / 4;
+            const hue = (hueBase + v * 160 + bass * 90) % 360;
+            const light = Math.min(78, 28 + (v * 0.5 + 0.5) * 38 + energy * 12);
+            plasmaOffCtx.fillStyle = `hsl(${hue | 0},85%,${light | 0}%)`;
+            plasmaOffCtx.fillRect(gx, gy, 1, 1);
+          }
+        }
+        vctx.imageSmoothingEnabled = true;
+        vctx.drawImage(plasmaOff, 0, 0, PLASMA_W, PLASMA_H, 0, 0, s.VW, s.VH);
+
+      } else if (s.vizMode === 'kaleido') {
+        // One audio-reactive wedge, drawn once, then replicated around a
+        // full circle with alternating mirroring (scale(1,-1) every
+        // other repetition) -- the same construction a real optical
+        // kaleidoscope uses: one asymmetric pattern reflected enough
+        // times that the *seams* are what create the symmetry, not the
+        // source content itself needing to already be symmetric.
+        vctx.fillStyle = `hsla(${hueBase | 0},60%,5%,0.16)`; vctx.fillRect(0, 0, s.VW, s.VH);
+        const FOLDS = 8;
+        const wedgeAngle = (Math.PI * 2) / FOLDS;
+        const R = Math.min(s.VW, s.VH) * 0.48 * s.vizUserScale;
+        const bins = 28;
+        vctx.save();
+        vctx.translate(cx, cy);
+        for (let f = 0; f < FOLDS; f++) {
+          vctx.save();
+          vctx.rotate(f * wedgeAngle + s.vizRot * 0.4);
+          if (f % 2 === 1) vctx.scale(1, -1);
+          for (let i = 0; i < bins; i++) {
+            const t2 = i / bins;
+            const angle = t2 * wedgeAngle;
+            const v = s.freqData[Math.floor(t2 * maxBin)] / 255;
+            if (v < 0.02) continue;
+            const r0 = R * 0.12, r1 = r0 + v * R * 0.88;
+            const hue = (hueBase + t2 * 260 + f * 15) % 360;
+            vctx.beginPath();
+            vctx.moveTo(Math.cos(angle) * r0, Math.sin(angle) * r0);
+            vctx.lineTo(Math.cos(angle) * r1, Math.sin(angle) * r1);
+            vctx.strokeStyle = `hsla(${hue | 0},95%,${55 + v * 30 | 0}%,${(0.6 + v * 0.4).toFixed(2)})`;
+            vctx.lineWidth = 1.6;
+            vctx.stroke();
+          }
+          vctx.restore();
+        }
+        vctx.restore();
+
+      } else if (s.vizMode === 'particles') {
+        // A swarm that drifts with a slow random walk, sped up per-
+        // particle by whichever frequency bin it's assigned to (so the
+        // swarm as a whole visibly surges with the music instead of
+        // moving at one constant rate) -- a low-alpha wash instead of a
+        // hard clear each frame leaves a comet-tail behind every
+        // particle rather than a bare dot.
+        if (!s.particles) {
+          s.particles = [];
+          for (let i = 0; i < 180; i++) {
+            s.particles.push({
+              x: Math.random() * s.VW, y: Math.random() * s.VH,
+              vx: (Math.random() - 0.5) * 0.6, vy: (Math.random() - 0.5) * 0.6,
+              bin: Math.floor(Math.random() * maxBin), size: 1 + Math.random() * 2,
+            });
+          }
+        }
+        vctx.fillStyle = `hsla(${hueBase | 0},60%,4%,0.18)`; vctx.fillRect(0, 0, s.VW, s.VH);
+        const energy = s.freqData.slice(0, maxBin).reduce((a, b) => a + b, 0) / (maxBin * 255);
+        for (const p of s.particles) {
+          const v = s.freqData[Math.min(maxBin - 1, p.bin)] / 255;
+          const speed = 1 + v * 4 + energy * 2;
+          p.x += p.vx * speed; p.y += p.vy * speed;
+          p.vx += (Math.random() - 0.5) * 0.05; p.vy += (Math.random() - 0.5) * 0.05;
+          // clamp velocity so repeated random-walk jitter can't let a
+          // particle's own speed run away unbounded over time
+          const sp = Math.hypot(p.vx, p.vy);
+          if (sp > 1.2) { p.vx = (p.vx / sp) * 1.2; p.vy = (p.vy / sp) * 1.2; }
+          if (p.x < 0) p.x += s.VW; else if (p.x > s.VW) p.x -= s.VW;
+          if (p.y < 0) p.y += s.VH; else if (p.y > s.VH) p.y -= s.VH;
+          const hue = (hueBase + (p.bin / maxBin) * 260) % 360;
+          vctx.beginPath();
+          vctx.arc(p.x, p.y, p.size * devicePixelRatio * (1 + v * 2), 0, Math.PI * 2);
+          vctx.fillStyle = `hsla(${hue | 0},95%,${55 + v * 30 | 0}%,${(0.5 + v * 0.5).toFixed(2)})`;
+          vctx.fill();
+        }
       }
     }
     drawViz();
@@ -497,7 +614,11 @@ window.orbitViz = (function () {
       // digits keep meaning "switch tabs" and shifted ones mean "jump
       // viz mode," on completely disjoint e.key values, everywhere.
       if (e.shiftKey && e.code.startsWith('Digit')) {
-        const n = parseInt(e.code.slice(5), 10);
+        // Digit0 maps to the 10th mode, not "0th" -- there are now 10
+        // VIZ_MODES (the original 7 plus Plasma/Kaleido/Particles), one
+        // more than the top row's 1-9 alone can reach.
+        const raw = parseInt(e.code.slice(5), 10);
+        const n = raw === 0 ? 10 : raw;
         if (n >= 1 && n <= VIZ_MODES.length) { e.preventDefault(); setVizMode(VIZ_MODES[n - 1]); }
       }
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
