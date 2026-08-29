@@ -472,28 +472,32 @@ window.orbitViz = (function () {
         const idx = VIZ_MODES.indexOf(s.vizMode);
         setVizMode(VIZ_MODES[(idx + (e.code === 'ArrowRight' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
       }
-      // Numpad 1-7 jump straight to a mode, in the same left-to-right
-      // order the mode buttons themselves render in -- not gated to
-      // fullscreen like arrow-key cycling above, since these are
-      // absolute jumps. Numpad, not the top-row Digit keys: this dialog
-      // is now inline in the same document as the rest of the app (see
-      // orbit_visualizer.js's own module docstring on why), so a
-      // top-row '1'-'5' here would land on document's own keydown
-      // listener too -- vue-app.js's onGlobalKeydown treats bare '1'-'5'
-      // as "switch to tab N" with no easterEggVisible guard, so pressing
-      // '1' to jump to Tunnel would *also* silently switch the main app
-      // to the Discover tab underneath. Numpad keys have their own
-      // distinct e.code values (NumpadN, not DigitN) that vue-app.js
-      // never binds anything to, so there's no overlap to guard against
-      // at all.
-      if (e.code.startsWith('Numpad')) {
-        // NumpadN (N=0-9) is exactly 7 characters -- NumpadEnter/Add/
-        // Subtract/Multiply/Divide/Decimal/Equal all differ in length,
-        // and slicing+parsing one of those would just produce NaN
-        // anyway (safely failing the range check below), but checking
-        // the length up front says what this is actually looking for
-        // instead of relying on that as an implicit side effect.
-        const n = e.code.length === 7 ? parseInt(e.code.slice(6), 10) : NaN;
+      // Shift+1 through Shift+7 jump straight to a mode, in the same
+      // left-to-right order the mode buttons themselves render in --
+      // not gated to fullscreen like arrow-key cycling above, since
+      // these are absolute jumps.
+      //
+      // This used to be plain top-row digits, then Numpad -- both still
+      // collided with something. Plain digits collided with
+      // vue-app.js's onGlobalKeydown, which treats bare '1'-'5' as
+      // "switch to tab N" with no easterEggVisible guard at all (this
+      // dialog is inline in the same document now, not a separate
+      // <iframe>, so both listeners see the same keydown -- see this
+      // file's own module docstring). Numpad avoided that specific
+      // collision but traded it for a much more common one: most
+      // laptops have no physical numpad at all, so it was simply
+      // unreachable for anyone without one.
+      //
+      // Shift+Digit avoids both: e.code stays 'Digit1' (works on every
+      // keyboard, no numpad needed), but onGlobalKeydown's tabByDigit
+      // check is keyed on e.key, not e.code -- and e.key for
+      // Shift+Digit1 is '!' (US layout), '2' is '@', etc., none of
+      // which are in tabByDigit, so it never fires no matter what this
+      // does. No coordination between the two files needed: unshifted
+      // digits keep meaning "switch tabs" and shifted ones mean "jump
+      // viz mode," on completely disjoint e.key values, everywhere.
+      if (e.shiftKey && e.code.startsWith('Digit')) {
+        const n = parseInt(e.code.slice(5), 10);
         if (n >= 1 && n <= VIZ_MODES.length) { e.preventDefault(); setVizMode(VIZ_MODES[n - 1]); }
       }
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {

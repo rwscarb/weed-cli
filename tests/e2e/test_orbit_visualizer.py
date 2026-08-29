@@ -44,19 +44,19 @@ def test_ascii_mode_renders_several_frames_with_no_console_errors(page, golden_p
     assert errors == []
 
 
-def test_numpad_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
+def test_shift_digit_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
     """Real ask: number keys should jump straight to a mode instead of
     only being reachable by clicking a button or, in fullscreen, cycling
-    one step at a time with arrow keys. Numpad, not the top-row Digit
-    keys used before this -- see test_top_row_digit_keys_do_not_jump_
-    modes_and_still_switch_tabs below for the real collision that moved
-    this off the top row."""
+    one step at a time with arrow keys. Shift+digit, not a bare digit or
+    Numpad (both tried and rejected before this -- see
+    test_bare_digit_keys_do_not_jump_modes_and_still_switch_tabs below
+    for why)."""
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
 
     # VIZ_MODES = ['tunnel','bars','mirror','scope','spiral','pixels','ascii']
     # -- '3' is the third button, MIRROR
-    page.keyboard.press('Numpad3')
+    page.keyboard.press('Shift+Digit3')
     assert page.locator('[data-viz="mirror"]').evaluate('el => el.classList.contains("active")')
     assert not page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     # switching away from ascii hides its controls row -- confirms the
@@ -66,31 +66,44 @@ def test_numpad_keys_jump_directly_to_a_viz_mode(page, golden_path_server):
 
     # jump back to ASCII (7th button) directly, not by cycling through
     # every mode in between
-    page.keyboard.press('Numpad7')
+    page.keyboard.press('Shift+Digit7')
     assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     assert page.locator('#asciiControls').is_visible()
 
     # out-of-range digits (8/9/0) are simply ignored, not an error and
     # not wrapping around to some other mode
-    page.keyboard.press('Numpad9')
+    page.keyboard.press('Shift+Digit9')
     assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
 
+    # doesn't also switch tabs -- Shift+Digit3's e.key is '#' (US layout),
+    # not '3', so vue-app.js's tabByDigit lookup (keyed on e.key) never
+    # matches it at all; still on Discover, not Downloads
+    assert 'active' in (page.locator('.tab-btn:has-text("Discover")').get_attribute('class') or '')
 
-def test_top_row_digit_keys_do_not_jump_modes_and_still_switch_tabs(page, golden_path_server):
-    """Real report: with the visualizer now inline (not an <iframe> with
-    its own separate document -- see orbit_visualizer.js's own
-    docstring), its keydown listener and vue-app.js's own onGlobalKeydown
-    both sit on the same document. onGlobalKeydown treats bare '1'-'5' as
-    "switch to tab N" with no easterEggVisible guard at all, so while the
-    old top-row Digit hotkeys were still wired here, pressing '1' to jump
-    to Tunnel also silently switched the main app to the Discover tab
-    underneath. Moving this to Numpad (its own distinct e.code values)
-    means a top-row digit now does only its one normal job."""
+
+def test_bare_digit_keys_do_not_jump_modes_and_still_switch_tabs(page, golden_path_server):
+    """Real reports, in order: with the visualizer inline (not an
+    <iframe> with its own separate document -- see orbit_visualizer.js's
+    own docstring), its keydown listener and vue-app.js's own
+    onGlobalKeydown both sit on the same document.
+
+    First attempt, bare top-row digits: onGlobalKeydown treats bare
+    '1'-'5' as "switch to tab N" with no easterEggVisible guard at all,
+    so pressing '1' to jump to Tunnel also silently switched the main
+    app to the Discover tab underneath.
+
+    Second attempt, Numpad: no collision, but unreachable on most
+    laptops, which have no physical numpad at all.
+
+    Shift+Digit (see test_shift_digit_keys_jump_directly_to_a_viz_mode)
+    is the one that actually works everywhere: this confirms a *bare*
+    digit still does only its one normal job (switching tabs), not a
+    leftover mode-jump alongside it."""
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
 
     page.keyboard.press('Digit3')
-    # still ASCII (the default) -- a top-row digit no longer jumps modes
+    # still ASCII (the default) -- a bare digit doesn't jump modes
     assert page.locator('[data-viz="ascii"]').evaluate('el => el.classList.contains("active")')
     # its other, real job (switching tabs) still fires -- '3' is Downloads
     assert 'active' in (page.locator('.tab-btn:has-text("Downloads")').get_attribute('class') or '')
