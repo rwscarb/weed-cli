@@ -806,6 +806,24 @@ td button {
   }
 }
 
+/* Audio-only content: collapse the video area to just the native controls
+   bar. videoWidth === 0 at loadedmetadata sets the audio-mode class (see
+   vue-app.js). Theater/fullscreen keep their own dimensions so the controls
+   are still comfortably reachable at that size. */
+#global-player.audio-mode .player-video-wrap {
+  flex: none;
+  height: 54px;
+}
+
+#global-player.audio-mode.mode-pip {
+  min-height: unset;
+  width: min(320px, 90vw);
+}
+
+#global-player.audio-mode video {
+  background: var(--panel);
+}
+
 .transport-overlay-btn {
   pointer-events: auto;
   width: 2.2rem;

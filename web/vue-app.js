@@ -148,7 +148,7 @@ const app = createApp({
       // it, so switching tabs doesn't stop or hide playback.
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
-        contentHash: null, signerPubkey: null, isPlaying: false,
+        contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -592,6 +592,7 @@ const app = createApp({
         items: [{ content_hash: contentHash, title: title || null, signer_pubkey: signerPubkey || null }],
         index: 0, playlistId: null,
       };
+      this.player.isAudio = false;
       this.$nextTick(() => {
         const video = this.$refs.playerVideo;
         video.src = '/api/stream/' + jobId;

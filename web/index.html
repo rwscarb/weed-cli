@@ -402,7 +402,7 @@
      current fullscreen element also makes the browser auto-exit
      fullscreen (spec behavior, not something this needs to do by hand),
      so hiding it here doubles as leaving Fullscreen cleanly as well. -->
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible}]">
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
@@ -424,7 +424,8 @@
   </div>
   <div class="player-video-wrap">
     <video ref="playerVideo" controls
-           @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"></video>
+           @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"
+           @loadedmetadata="player.isAudio = $refs.playerVideo.videoWidth === 0"></video>
     <div class="player-transport-overlay" v-if="player.queue">
       <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="player.queue.index <= 0"
               @click.stop="playQueueOffset(-1)">⏮</button>
