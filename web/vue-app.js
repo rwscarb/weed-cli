@@ -205,7 +205,7 @@ const app = createApp({
         { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
         { keys: 's', desc: 'Shuffle the current queue (while a video is open)' },
         { keys: 'Space', desc: 'Play / pause (while a video is open)' },
-        { keys: 'Esc', desc: 'Close player / QR popup / error dialog / this list' },
+        { keys: 'Esc', desc: 'Close QR popup / error dialog / this list (does not stop playback)' },
         { keys: '?', desc: 'Toggle this list' },
       ],
 
@@ -791,7 +791,6 @@ const app = createApp({
         // as a browser's own Esc-closes-the-topmost-thing convention
         if (this.qr.visible) { this.qr.visible = false; return; }
         if (this.easterEggVisible) { this.easterEggVisible = false; return; }
-        if (this.player.visible) { this.closePlayer(); return; }
         if (this.errorDialog.visible) { this.closeError(); return; }
         if (this.shortcutsVisible) { this.shortcutsVisible = false; return; }
         if (typing) active.blur();
