@@ -1196,6 +1196,15 @@ td button {
 #orbit-egg-dialog .viz-controls > .preset-row { display: contents; }
 #orbit-egg-dialog .viz-controls > .preset-row.mode-controls-hidden { display: none; }
 #orbit-egg-dialog .ascii-controls-label { font-size: 0.78rem; color: var(--muted); }
+#orbit-egg-dialog .ascii-ramp-select {
+  font-size: 0.78rem;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.2rem 0.35rem;
+  cursor: pointer;
+}
 #orbit-egg-dialog .ascii-controls-val { font-size: 0.78rem; color: var(--text); min-width: 4.5rem; }
 #orbit-egg-dialog #globalControls input[type=range],
 #orbit-egg-dialog .ascii-controls input[type=range] {

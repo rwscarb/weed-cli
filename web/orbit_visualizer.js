@@ -25,6 +25,20 @@
 // the ResizeObserver, the requestAnimationFrame draw loop) so repeated
 // open/close cycles don't stack zombie copies of any of that.
 window.orbitViz = (function () {
+  // Named character ramps for ASCII mode, ordered sparse→dense so darker
+  // areas of the frame map to early characters and bright areas to late ones.
+  // Non-Latin scripts aren't perfectly luminance-ordered by font metrics, but
+  // the visual variety is the point -- they read unmistakably as that script.
+  const ASCII_RAMPS = {
+    classic:  ' .:-=+*#%@',
+    blocks:   ' ░▒▓█',
+    french:   ' .,·;:!éèêàâùûçœæ§',
+    japanese: ' ゛ーカキクケコサシスセソアイウエオ電波光影闇',
+    korean:   ' ㆍㄱㄴㄷㄹㅂㅅ가나다라바사아차',
+    chinese:  ' 一丨乙亠人入八刀力口土女大小山川木火水日月目石禾竹糸羊虫行衣',
+    symbols:  ' ·◦○◎●◆★✦⊕',
+  };
+
   const STEP_HUES = [0.33, 0.50, 0.62, 0.83, 0.10, 0.23];
   const VIZ_MODES = ['tunnel', 'bars', 'mirror', 'scope', 'spiral', 'pixels', 'ascii', 'plasma', 'kaleido', 'particles', 'freefall'];
   // freefall is the 11th mode -- one past what Shift+1-9,0 alone can
@@ -141,6 +155,7 @@ window.orbitViz = (function () {
     const asciiBriVal = document.getElementById('asciiBriVal');
     const asciiBgSlider = document.getElementById('asciiBgSlider');
     const asciiBgVal = document.getElementById('asciiBgVal');
+    const asciiRampSelect = document.getElementById('asciiRampSelect');
     const speedSlider = document.getElementById('speedSlider');
     const speedVal = document.getElementById('speedVal');
     const reactivitySlider = document.getElementById('reactivitySlider');
@@ -184,6 +199,7 @@ window.orbitViz = (function () {
       // set on the buttons/slider in index.html -- full resolution
       // (stride 1), natural color.
       asciiStride: 1,
+      asciiRampKey: 'classic',
       asciiColorMode: 'natural',
       // Multiplies the per-pixel luminance ASCII uses for both glyph
       // density (which RAMP character gets picked) and color intensity
@@ -449,6 +465,9 @@ window.orbitViz = (function () {
       asciiBgVal.textContent = s.asciiBgAlpha.toFixed(2);
     }
     on(asciiBgSlider, 'input', () => setAsciiBgAlpha(parseFloat(asciiBgSlider.value)));
+
+    // ASCII character set selector
+    on(asciiRampSelect, 'change', () => { s.asciiRampKey = asciiRampSelect.value; });
 
     // ASCII color mode -- NATURAL (the video's own per-cell color) vs
     // NEON (the rotating HSL palette for dim/desaturated real footage).
@@ -749,7 +768,7 @@ window.orbitViz = (function () {
         if (!s.videoFrame) {
           drawNoVideoMessage(hueBase);
         } else {
-          const RAMP = ' .:-=+*#%@';
+          const RAMP = ASCII_RAMPS[s.asciiRampKey] || ASCII_RAMPS.classic;
           const STRIDE = s.asciiStride;
           const cols = Math.floor(s.videoFrame.w / STRIDE);
           const rows = Math.floor(s.videoFrame.h / STRIDE);
