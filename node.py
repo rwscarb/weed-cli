@@ -249,10 +249,19 @@ def load_manifest_entries(archive_dir, file_name=None):
         sys.exit(f"no .ott/manifest.jsonl in {archive_dir} — archive a file with ott first")
     with open(manifest_path) as f:
         raw = [json.loads(line) for line in f if line.strip()]
-    if file_name:
-        raw = [e for e in raw if e['name'] == file_name]
-    by_name = {}
+    # Deduplicate by sha256 first (last-write-wins), matching ott's own
+    # load_manifest convention.  A rename appends a new entry with an
+    # updated name/last_path under the same sha256; without this step the
+    # old entry (wrong name, missing path) survives as a "different file"
+    # and causes a spurious "not found on disk" error at startup.
+    by_hash: dict = {}
     for e in raw:
+        by_hash[e['sha256']] = e
+    deduped = list(by_hash.values())
+    if file_name:
+        deduped = [e for e in deduped if e['name'] == file_name]
+    by_name = {}
+    for e in deduped:
         by_name[e['name']] = e
     all_entries = list(by_name.values())
     entries = [e for e in all_entries if e.get('type') in ('video', 'audio')]
