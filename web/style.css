@@ -1168,33 +1168,31 @@ td button {
   flex: 1; display: flex; flex-direction: column;
   padding: 0.6rem 0.85rem 0.85rem; position: relative; min-height: 0;
 }
-/* Real ask: the mode buttons, global sliders, and whichever of ascii-
-   controls/freefallControls is active used to each claim their own
-   full-width row -- on a wide dialog, none of the three comes close to
-   filling it, leaving a big unused column of space next to a short
-   stack of rows. display:contents on each .preset-row inside
-   .viz-controls removes *that wrapper's own box* from layout, so its
-   buttons/sliders/labels become direct children of .viz-controls'
-   own flex-wrap instead -- everything from all the visible groups packs
-   together and wraps as one shared flow, using the width instead of
-   leaving it empty. mode-controls-hidden is what actually hides the
-   inactive one of ascii-controls/freefallControls now (see setVizMode in
-   orbit_visualizer.js) -- inline style.display would've silently beaten
-   the display:contents rule below the moment it was set back to
-   'flex', undoing the packing every time.
-   Narrow viewports (max-width: 460px, further down) override #vizModes
-   specifically back to a real scrollable box for its own spin-wheel
-   behavior -- display:contents has no box to scroll at all. */
+/* Three clean rows: mode buttons / global sliders / mode-specific sliders.
+   Each .preset-row is its own flex row; mode-controls-hidden hides the
+   inactive mode-specific row entirely. */
 #orbit-egg-dialog .viz-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+#orbit-egg-dialog .viz-controls > .preset-row {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  column-gap: 1rem;
-  row-gap: 0.4rem;
-  margin-bottom: 0.5rem;
+  gap: 0.4rem;
 }
-#orbit-egg-dialog .viz-controls > .preset-row { display: contents; }
 #orbit-egg-dialog .viz-controls > .preset-row.mode-controls-hidden { display: none; }
+#orbit-egg-dialog #vizModes { gap: 0.3rem; }
+#orbit-egg-dialog #globalControls,
+#orbit-egg-dialog .ascii-controls {
+  border-top: 1px solid var(--border);
+  padding-top: 0.3rem;
+  width: 100%;
+  column-gap: 0.6rem;
+}
 #orbit-egg-dialog .ascii-controls-label { font-size: 0.78rem; color: var(--muted); }
 #orbit-egg-dialog .ascii-ramp-select {
   font-size: 0.78rem;
@@ -1205,7 +1203,8 @@ td button {
   padding: 0.2rem 0.35rem;
   cursor: pointer;
 }
-#orbit-egg-dialog .ascii-controls-val { font-size: 0.78rem; color: var(--text); min-width: 4.5rem; }
+#orbit-egg-dialog .ascii-controls-val { font-size: 0.78rem; color: var(--text); min-width: 2.8rem; }
+#orbit-egg-dialog #asciiResVal { min-width: 5.5rem; }
 #orbit-egg-dialog #globalControls input[type=range],
 #orbit-egg-dialog .ascii-controls input[type=range] {
   width: 80px; accent-color: var(--accent);
@@ -1931,14 +1930,6 @@ code {
      is picked some other way (Shift+digit, arrow-key cycling) than an
      actual swipe. */
   #orbit-egg-dialog #vizModes {
-    /* explicit despite .preset-row's own default already being flex --
-       .viz-controls > .preset-row (desktop, see its own comment) sets
-       display: contents so this row's buttons pack in with the rest of
-       the controls, and that rule doesn't stop applying just because
-       the viewport narrowed -- without resetting display back to flex
-       here, #vizModes would still be display:contents at this width,
-       which has no box of its own to scroll at all, breaking the spin
-       wheel below entirely. */
     display: flex;
     flex-wrap: nowrap;
     overflow-x: auto;

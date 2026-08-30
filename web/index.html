@@ -530,15 +530,10 @@
     </header>
     <div id="vizSection">
       <div class="idle-note" id="idleNote">reacts to whatever's playing in the weed player — nothing playing right now, so this is just idling</div>
-      <!-- viz-controls merges these four groups into one shared
-           flex-wrap flow on large viewports (see .viz-controls > .preset-row's
-           own display:contents in style.css) instead of each claiming
-           its own full-width row -- mode buttons, sliders, and whichever
-           of ascii-controls/freefallControls is active all pack together
-           and wrap as needed, instead of leaving a big unused column
-           next to three separate short rows. Narrow viewports override
-           #vizModes specifically back to a real (scrollable, spin-wheel)
-           box -- see style.css's own max-width: 460px rules. -->
+      <!-- viz-controls: three rows — mode buttons / global sliders /
+           mode-specific sliders. Narrow viewports turn #vizModes into
+           a horizontally scroll-snapping spin wheel instead of wrapping
+           buttons -- see style.css max-width: 460px rules. -->
       <div class="viz-controls">
         <div class="preset-row" id="vizModes">
           <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
