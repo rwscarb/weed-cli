@@ -821,7 +821,46 @@ td button {
 }
 
 #global-player.audio-mode video {
+  display: none;
+}
+
+#audio-transport {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  height: 100%;
   background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.audio-btn {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--text);
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
+  line-height: 1;
+  transition: background 0.12s;
+}
+.audio-btn:hover { background: rgba(255,255,255,0.08); }
+
+.audio-time {
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 2.6ch;
+}
+
+.audio-seek {
+  flex: 1;
+  height: 3px;
+  accent-color: var(--accent);
+  cursor: pointer;
 }
 
 .transport-overlay-btn {

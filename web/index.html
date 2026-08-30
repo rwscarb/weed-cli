@@ -423,9 +423,22 @@
     </div>
   </div>
   <div class="player-video-wrap">
-    <video ref="playerVideo" controls
+    <video ref="playerVideo" :controls="!player.isAudio"
            @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"
-           @loadedmetadata="player.isAudio = $refs.playerVideo.videoWidth === 0"></video>
+           @loadedmetadata="player.isAudio = $refs.playerVideo.videoWidth === 0; player.audioDuration = $refs.playerVideo.duration || 0"
+           @timeupdate="player.audioCurrentTime = $refs.playerVideo.currentTime"
+           @durationchange="player.audioDuration = $refs.playerVideo.duration || 0"
+           @volumechange="player.audioMuted = $refs.playerVideo.muted"></video>
+    <div v-if="player.isAudio" id="audio-transport" @click.stop>
+      <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
+              :title="player.isPlaying ? 'Pause' : 'Play'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
+      <span class="audio-time">{{ formatAudioTime(player.audioCurrentTime) }}</span>
+      <input type="range" class="audio-seek" min="0" :max="player.audioDuration || 0" step="0.5"
+             :value="player.audioCurrentTime" @input="audioSeek($event.target.value)">
+      <span class="audio-time">{{ formatAudioTime(player.audioDuration) }}</span>
+      <button class="audio-btn" @click.stop="audioToggleMute"
+              :title="player.audioMuted ? 'Unmute' : 'Mute'">{{ player.audioMuted ? '🔇' : '🔊' }}</button>
+    </div>
     <div class="player-transport-overlay" v-if="player.queue">
       <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="player.queue.index <= 0"
               @click.stop="playQueueOffset(-1)">⏮</button>
@@ -563,6 +576,9 @@
           <span class="ascii-controls-label">Bri</span>
           <input type="range" id="asciiBriSlider" min="0.3" max="3" step="0.1" value="1.8">
           <span class="ascii-controls-val" id="asciiBriVal">1.8x</span>
+          <span class="ascii-controls-label">BG</span>
+          <input type="range" id="asciiBgSlider" min="0" max="1" step="0.05" value="0.25">
+          <span class="ascii-controls-val" id="asciiBgVal">0.25</span>
           <button class="viz-mode-btn" data-color="neon">Neon</button>
           <button class="viz-mode-btn active" data-color="natural">Natural</button>
         </div>

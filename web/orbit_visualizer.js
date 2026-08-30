@@ -139,6 +139,8 @@ window.orbitViz = (function () {
     const asciiResVal = document.getElementById('asciiResVal');
     const asciiBriSlider = document.getElementById('asciiBriSlider');
     const asciiBriVal = document.getElementById('asciiBriVal');
+    const asciiBgSlider = document.getElementById('asciiBgSlider');
+    const asciiBgVal = document.getElementById('asciiBgVal');
     const speedSlider = document.getElementById('speedSlider');
     const speedVal = document.getElementById('speedVal');
     const reactivitySlider = document.getElementById('reactivitySlider');
@@ -190,6 +192,7 @@ window.orbitViz = (function () {
       // footage clear the bright<0.03 skip threshold and actually
       // render instead of leaving blank cells.
       asciiBrightness: 1.8,
+      asciiBgAlpha: 0.25,
       // PLASMA's own clock -- an accumulator like vizRot, not read
       // straight off performance.now() (see its branch in drawViz for
       // why that matters once the Speed slider is multiplying it: a
@@ -436,6 +439,16 @@ window.orbitViz = (function () {
       asciiBriVal.textContent = s.asciiBrightness.toFixed(1) + 'x';
     }
     on(asciiBriSlider, 'input', () => setAsciiBrightness(parseFloat(asciiBriSlider.value)));
+
+    // ASCII background video opacity slider -- controls how strongly the
+    // dimmed source frame shows through behind the glyphs (0 = pure black,
+    // 1 = fully opaque; default 0.25 matches the old hardcoded value).
+    function setAsciiBgAlpha(value) {
+      s.asciiBgAlpha = Math.min(1, Math.max(0, Math.round(value * 20) / 20));
+      asciiBgSlider.value = s.asciiBgAlpha;
+      asciiBgVal.textContent = s.asciiBgAlpha.toFixed(2);
+    }
+    on(asciiBgSlider, 'input', () => setAsciiBgAlpha(parseFloat(asciiBgSlider.value)));
 
     // ASCII color mode -- NATURAL (the video's own per-cell color) vs
     // NEON (the rotating HSL palette for dim/desaturated real footage).
@@ -761,7 +774,7 @@ window.orbitViz = (function () {
           vpixOffCtx.putImageData(s.videoFrame.imageData, 0, 0);
           const bgW = fit.w * s.vizUserScale, bgH = fit.h * s.vizUserScale;
           vctx.save();
-          vctx.globalAlpha = 0.25;
+          vctx.globalAlpha = s.asciiBgAlpha;
           vctx.drawImage(vpixOff, 0, 0, s.videoFrame.w, s.videoFrame.h, ox, oy, bgW, bgH);
           vctx.restore();
           vctx.font = `${Math.max(4, cellH * 1.15).toFixed(1)}px 'Courier New',monospace`;

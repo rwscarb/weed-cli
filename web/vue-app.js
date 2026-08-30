@@ -149,6 +149,7 @@ const app = createApp({
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
+        audioCurrentTime: 0, audioDuration: 0, audioMuted: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -627,6 +628,10 @@ const app = createApp({
       video.load();
       this.player.visible = false;
       this.player.isPlaying = false;
+      this.player.isAudio = false;
+      this.player.audioCurrentTime = 0;
+      this.player.audioDuration = 0;
+      this.player.audioMuted = false;
       this.player.queue = null;
     },
     setPlayerMode(mode) {
@@ -1312,6 +1317,19 @@ const app = createApp({
     // the *already-filtered*, already-downloaded items list playPlaylist
     // built, so every step here is immediately playable with no download
     // detour mid-queue.
+    formatAudioTime(s) {
+      if (!isFinite(s) || s < 0) return '0:00';
+      const m = Math.floor(s / 60);
+      return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+    },
+    audioSeek(val) {
+      const video = this.$refs.playerVideo;
+      if (video) video.currentTime = parseFloat(val);
+    },
+    audioToggleMute() {
+      const video = this.$refs.playerVideo;
+      if (video) video.muted = !video.muted;
+    },
     onPlayerEnded() {
       this.player.isPlaying = false;
       const q = this.player.queue;
