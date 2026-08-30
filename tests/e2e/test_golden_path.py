@@ -231,8 +231,8 @@ def test_closing_orbit_visualizer_restores_fullscreen_if_it_was_active(page, gol
     # to do anything after this sequence. One press from restored
     # fullscreen should cycle straight to pip, immediately.
     page.keyboard.press('f')
-    page.wait_for_selector('#global-player.mode-pip')
-    assert page.evaluate("() => document.fullscreenElement") is None
+    page.wait_for_function("() => document.fullscreenElement === null")
+    assert page.query_selector('#global-player.mode-pip') is not None
 
 
 def test_closing_orbit_visualizer_does_not_force_fullscreen_when_it_wasnt_active(page, golden_path_server):
