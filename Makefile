@@ -72,7 +72,7 @@ containers:
 
 trust:
 	certutil -d sql:$$HOME/.pki/nssdb -D -n "weed" 2>/dev/null || true
-	openssl s_client -connect weed:443 </dev/null 2>/dev/null \
+	openssl s_client -connect weed:8080 </dev/null 2>/dev/null \
 	  | openssl x509 -outform PEM > /tmp/weed-cert.pem
 	certutil -d sql:$$HOME/.pki/nssdb -A -t "CT,," -n "weed" -i /tmp/weed-cert.pem
 	@echo "Trusted. Run chrome://restart to pick it up."
