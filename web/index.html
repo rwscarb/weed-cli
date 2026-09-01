@@ -8,6 +8,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
+<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 <body>
 <div id="app">
@@ -415,6 +416,8 @@
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
+      <button type="button" class="icon-btn" v-if="player.castAvailable" :class="{active: player.castActive}"
+              :title="player.castActive ? 'Stop casting' : 'Cast to TV'" @click.stop="toggleCast">📺</button>
       <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
       <button type="button" class="icon-btn" title="Orbit Visualizer"
               @click.stop="easterEggVisible = !easterEggVisible">🌀</button>

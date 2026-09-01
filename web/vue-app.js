@@ -150,6 +150,7 @@ const app = createApp({
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
         audioCurrentTime: 0, audioDuration: 0, audioMuted: false,
+        castAvailable: false, castActive: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -432,6 +433,7 @@ const app = createApp({
       });
     }
 
+    this.initCast();
     this.refreshDiscover();
     this.refreshHosts();
     setInterval(this.refreshHosts, 3000);
@@ -600,6 +602,7 @@ const app = createApp({
         video.autoplay = true;
       });
       this.recordPlay(contentHash, this.player.title);
+      if (this.player.castActive) this.$nextTick(() => this.castCurrentMedia());
     },
     // Every real "start watching this" funnels through openPlayer above
     // (Discover's ▶ Play, a Downloads row, a playlist item, onPlayerEnded's
@@ -744,6 +747,53 @@ const app = createApp({
       } else {
         this.$refs.globalPlayer.requestFullscreen();
       }
+    },
+
+    // ── chromecast ────────────────────────────────────────────────────
+    initCast() {
+      window['__onGCastApiAvailable'] = (isAvailable) => {
+        if (!isAvailable) return;
+        const ctx = cast.framework.CastContext.getInstance();
+        ctx.setOptions({
+          receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
+          autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
+        });
+        ctx.addEventListener(
+          cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
+          (e) => {
+            const active = e.sessionState === cast.framework.SessionState.SESSION_STARTED
+                        || e.sessionState === cast.framework.SessionState.SESSION_RESUMED;
+            this.player.castActive = active;
+            if (!active && this.player.visible) this.$refs.playerVideo.play();
+          }
+        );
+        this.player.castAvailable = true;
+      };
+    },
+    async castCurrentMedia() {
+      const ctx = cast.framework.CastContext.getInstance();
+      try {
+        if (!ctx.getCurrentSession()) await ctx.requestSession();
+      } catch (e) { return; }
+      const session = ctx.getCurrentSession();
+      if (!session || !this.player.jobId) return;
+      const mediaInfo = new chrome.cast.media.MediaInfo(
+        location.origin + '/api/stream/' + this.player.jobId, 'video/mp4'
+      );
+      mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
+      mediaInfo.metadata.title = this.player.title;
+      await session.loadMedia(new chrome.cast.media.LoadRequest(mediaInfo));
+      this.player.castActive = true;
+      this.$refs.playerVideo.pause();
+    },
+    stopCast() {
+      const session = cast.framework.CastContext.getInstance().getCurrentSession();
+      if (session) session.endSession(true);
+      this.player.castActive = false;
+    },
+    toggleCast() {
+      if (this.player.castActive) this.stopCast();
+      else this.castCurrentMedia();
     },
 
     // ── discover ──────────────────────────────────────────────────────
