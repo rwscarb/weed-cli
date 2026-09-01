@@ -1,6 +1,6 @@
 .PHONY: help demo network stats chart reputation discovery real-archive \
         containers node node-down node-shell lightning-up lightning-down lightning-demo lightning-smoke \
-        all-stdlib clean install uninstall test test-e2e
+        all-stdlib clean install uninstall test test-e2e trust
 
 PYTHON ?= python3
 PREFIX ?= $(HOME)/.local
@@ -22,7 +22,8 @@ help:
 	@echo ""
 	@echo "Needs docker/podman compose:"
 	@echo "  make containers     same challenge test, real containers instead of loopback"
-	@echo "  make node           web_ui.py + its own local discovery relay, port 8080 — host/discover/download from a browser"
+	@echo "  make node           web_ui.py + relay, builds + runs, then auto-trusts the cert"
+	@echo "  make trust          (re)add the node's cert to Chrome's NSS trust store; run chrome://restart after"
 	@echo "  make node-down      stop both containers (data survives — see docker-compose.node.yml)"
 	@echo "  make node-shell     interactive weed shell inside the running node container"
 	@echo ""
@@ -69,8 +70,16 @@ containers:
 	docker compose up --build --abort-on-container-exit verifier
 	docker compose down
 
+trust:
+	certutil -d sql:$$HOME/.pki/nssdb -D -n "weed" 2>/dev/null || true
+	openssl s_client -connect weed:443 </dev/null 2>/dev/null \
+	  | openssl x509 -outform PEM > /tmp/weed-cert.pem
+	certutil -d sql:$$HOME/.pki/nssdb -A -t "CT,," -n "weed" -i /tmp/weed-cert.pem
+	@echo "Trusted. Run chrome://restart to pick it up."
+
 node:
 	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null) docker compose -f docker-compose.node.yml up --build
+	$(MAKE) trust
 
 node-down:
 	docker compose -f docker-compose.node.yml down
