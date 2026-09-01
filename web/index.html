@@ -8,7 +8,16 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
-<script src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
+<script>
+// Stub defined before the Cast SDK loads so the SDK always finds it,
+// regardless of whether Vue has mounted yet. initCast() reads _castReady
+// if it already fired, or registers _castReadyCb to be called later.
+window.__onGCastApiAvailable = function(ok) {
+  window._castReady = ok;
+  if (window._castReadyCb) window._castReadyCb(ok);
+};
+</script>
+<script async src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 <body>
 <div id="app">

@@ -751,7 +751,7 @@ const app = createApp({
 
     // ── chromecast ────────────────────────────────────────────────────
     initCast() {
-      window['__onGCastApiAvailable'] = (isAvailable) => {
+      const setup = (isAvailable) => {
         if (!isAvailable) return;
         const ctx = cast.framework.CastContext.getInstance();
         ctx.setOptions({
@@ -769,6 +769,10 @@ const app = createApp({
         );
         this.player.castAvailable = true;
       };
+      // SDK may have already fired before mounted() ran (fast cache hit),
+      // or it fires later (async load from CDN) -- handle both.
+      if (window._castReady !== undefined) setup(window._castReady);
+      else window._castReadyCb = setup;
     },
     async castCurrentMedia() {
       const ctx = cast.framework.CastContext.getInstance();
