@@ -21,7 +21,9 @@ import mimetypes
 import os
 import signal
 import socket
+import ssl
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -1239,13 +1241,76 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
-def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None):
+def _generate_self_signed_cert(host):
+    """Return (cert_path, key_path) for a self-signed cert written to a temp dir.
+
+    The temp dir is NOT cleaned up — it lives for the process lifetime so the
+    files stay valid as long as the server is running. Uses the `cryptography`
+    package already in requirements.txt.
+    """
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    import datetime, ipaddress
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, host)])
+    san_list = [x509.DNSName(host)]
+    try:
+        san_list.append(x509.IPAddress(ipaddress.ip_address(host)))
+    except ValueError:
+        pass
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(name)
+        .issuer_name(name)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now)
+        .not_valid_after(now + datetime.timedelta(days=825))
+        .add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+
+    tmp = tempfile.mkdtemp(prefix='weed-tls-')
+    cert_path = os.path.join(tmp, 'cert.pem')
+    key_path = os.path.join(tmp, 'key.pem')
+    with open(cert_path, 'wb') as f:
+        f.write(cert.public_bytes(serialization.Encoding.PEM))
+    with open(key_path, 'wb') as f:
+        f.write(key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+    return cert_path, key_path
+
+
+def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None,
+               tls=False, certfile=None, keyfile=None):
     global _lan_url
     _load_library()
     _rehydrate_jobs_from_library()
     _load_persisted_hosts()
     _resume_persisted_hosts()
     srv = WebUIServer((bind_host, port), Handler)
+
+    if tls:
+        if not certfile or not keyfile:
+            reachable_for_cert = advertise_host or (_detect_lan_ip() if bind_host == '0.0.0.0' else bind_host) or bind_host
+            if not quiet:
+                print(f"[web] generating self-signed TLS cert for {reachable_for_cert} …", flush=True)
+            certfile, keyfile = _generate_self_signed_cert(reachable_for_cert)
+            if not quiet:
+                print(f"[web] cert: {certfile}", flush=True)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(certfile, keyfile)
+        srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+
+    scheme = 'https' if tls else 'http'
 
     # `docker compose down` (and plain Ctrl-C) sends SIGTERM -- without
     # this, a host that goes offline just leaves a stale, now-unreachable
@@ -1318,16 +1383,4 @@ def main():
     parser.add_argument('--bind', default='127.0.0.1',
                          help='bind address (default: 127.0.0.1, local only -- no auth is '
                               'built, so only widen this on a network you trust)')
-    parser.add_argument('--advertise-host',
-                         help="IP/hostname to put in the phone QR and lan-url instead of "
-                              "auto-detecting it -- use this if the QR at startup was missing "
-                              "or pointed at the wrong address (auto-detection guesses via an "
-                              "outbound route, which can pick the wrong interface or fail "
-                              "outright on unusual networking)")
-    args = parser.parse_args()
-    port = args.port_flag if args.port_flag is not None else args.port
-    run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host)
-
-
-if __name__ == '__main__':
-    main()
+    parser.add_argume
