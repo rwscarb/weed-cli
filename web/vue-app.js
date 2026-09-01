@@ -600,6 +600,10 @@ const app = createApp({
         const video = this.$refs.playerVideo;
         video.src = '/api/stream/' + jobId;
         video.autoplay = true;
+        // Pre-warm the Web Audio graph before playback starts so the first
+        // Orbit Visualizer open doesn't glitch mid-playback (createMediaElementSource
+        // reroutes audio and causes a brief interruption if called while playing).
+        this._ensureOrbitAnalyser();
       });
       this.recordPlay(contentHash, this.player.title);
       if (this.player.castActive) this.$nextTick(() => this.castCurrentMedia());

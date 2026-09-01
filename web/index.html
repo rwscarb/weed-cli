@@ -537,6 +537,8 @@ window.__onGCastApiAvailable = function(ok) {
       <h1>Orbit Visualizer</h1>
       <div class="transport">
         <button class="viz-mode-btn" @click="easterEggVisible = false">← Back</button>
+        <button type="button" class="icon-btn" v-if="player.castAvailable" :class="{active: player.castActive}"
+                :title="player.castActive ? 'Stop casting' : 'Cast to TV'" @click.stop="toggleCast">📺</button>
         <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
       </div>
     </header>
