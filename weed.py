@@ -157,6 +157,10 @@ def build_parser():
                         help='IP/hostname for the phone QR and lan-url instead of '
                              'auto-detecting it — use this if the startup QR was missing or '
                              'pointed at the wrong address')
+    p_web.add_argument('--tls', action='store_true',
+                        help='enable HTTPS; auto-generates a self-signed cert if --cert/--key omitted')
+    p_web.add_argument('--cert', metavar='CERTFILE', help='PEM certificate file (used with --tls)')
+    p_web.add_argument('--key', metavar='KEYFILE', help='PEM private key file (used with --tls)')
 
     p_serve = sub.add_parser('serve', help='alias for "web" with positional args, '
                                             'e.g. `serve 0.0.0.0 8080`')
@@ -273,7 +277,10 @@ def cmd_subscribe(args):
 
 def cmd_web(args):
     import web_ui
-    web_ui.run_web_ui(port=args.port, bind_host=args.bind, advertise_host=args.advertise_host)
+    web_ui.run_web_ui(port=args.port, bind_host=args.bind, advertise_host=args.advertise_host,
+                      tls=getattr(args, 'tls', False),
+                      certfile=getattr(args, 'cert', None),
+                      keyfile=getattr(args, 'key', None))
 
 
 NATIVE_COMMANDS = {

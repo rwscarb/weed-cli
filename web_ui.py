@@ -1399,8 +1399,11 @@ def main():
                          help='path to PEM private key file (used with --tls; auto-generated if omitted)')
     args = parser.parse_args()
     port = args.port_flag if args.port_flag is not None else args.port
+    certfile = args.cert or os.environ.get('WEED_TLS_CERT')
+    keyfile  = args.key  or os.environ.get('WEED_TLS_KEY')
+    tls = args.tls or bool(certfile)
     run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host,
-               tls=args.tls, certfile=args.cert, keyfile=args.key)
+               tls=tls, certfile=certfile, keyfile=keyfile)
 
 
 if __name__ == '__main__':
