@@ -1335,7 +1335,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
     # just fixed by telling this explicitly instead of guessing
     reachable_host = advertise_host or (_detect_lan_ip() if bind_host == '0.0.0.0' else bind_host)
     if bind_host != '127.0.0.1' and reachable_host:
-        _lan_url = f'http://{reachable_host}:{port}/'
+        _lan_url = f'{scheme}://{reachable_host}:{port}/'
 
     if not quiet:
         # answers "is this container actually running the code I think it
@@ -1345,7 +1345,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         # place; printing it here means the same question doesn't need a
         # docker exec + grep to answer for the web UI specifically
         print(f"[web:{port}] {node.weed_banner()}", flush=True)
-        print(f"[web:{port}] weed control UI at http://{bind_host}:{port}/", flush=True)
+        print(f"[web:{port}] weed control UI at {scheme}://{bind_host}:{port}/", flush=True)
         if bind_host == '127.0.0.1':
             print("  bound to localhost only -- pass --bind 0.0.0.0 to reach this from your "
                   "phone (and get a scan-to-open QR here)", flush=True)
@@ -1383,4 +1383,25 @@ def main():
     parser.add_argument('--bind', default='127.0.0.1',
                          help='bind address (default: 127.0.0.1, local only -- no auth is '
                               'built, so only widen this on a network you trust)')
-    parser.add_argume
+    parser.add_argument('--advertise-host',
+                         help="IP/hostname to put in the phone QR and lan-url instead of "
+                              "auto-detecting it -- use this if the QR at startup was missing "
+                              "or pointed at the wrong address (auto-detection guesses via an "
+                              "outbound route, which can pick the wrong interface or fail "
+                              "outright on unusual networking)")
+    parser.add_argument('--tls', action='store_true',
+                         help='enable HTTPS; auto-generates a self-signed cert if --cert/--key '
+                              'are not provided (required for Chromecast and other browser APIs '
+                              'that need a secure origin)')
+    parser.add_argument('--cert', metavar='CERTFILE',
+                         help='path to PEM certificate file (used with --tls; auto-generated if omitted)')
+    parser.add_argument('--key', metavar='KEYFILE',
+                         help='path to PEM private key file (used with --tls; auto-generated if omitted)')
+    args = parser.parse_args()
+    port = args.port_flag if args.port_flag is not None else args.port
+    run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host,
+               tls=args.tls, certfile=args.cert, keyfile=args.key)
+
+
+if __name__ == '__main__':
+    main()
