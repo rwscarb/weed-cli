@@ -1140,6 +1140,10 @@ td button {
   margin: 0;
 }
 #orbit-egg-dialog .transport { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; white-space: nowrap; }
+.orbit-res-select { font-size: 0.72rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.2rem; cursor: pointer; }
+.orbit-delay-label { display: flex; align-items: center; gap: 0.35rem; font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
+.orbit-delay-label span { min-width: 5.5ch; text-align: right; }
+.orbit-delay-label input[type=range] { width: 80px; accent-color: var(--accent); cursor: pointer; }
 #orbit-egg-dialog .preset-row { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
 /* the mode buttons (Tunnel/Bars/.../ASCII) and ASCII's own Neon/Natural
    pair -- same segmented-toggle language .filter-toggle's Any/<label>/

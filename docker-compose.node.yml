@@ -41,11 +41,11 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.discovery-relay
-    ports:
-      # published to the host too, not just reachable from `node` --
-      # handy for curling /events directly, or pointing a non-Docker
-      # `weed.py`/shell.py at the exact same relay this node uses
-      - "9101:9101"
+    # host networking so 127.0.0.1:9101 is reachable from the node
+    # container (also on host mode) -- Docker's bridge NAT rules don't
+    # apply to loopback traffic, so the published port isn't accessible
+    # via 127.0.0.1 from a host-mode container without this.
+    network_mode: host
     volumes:
       - relay-data:/data
     restart: unless-stopped
@@ -61,6 +61,12 @@ services:
         GIT_COMMIT: ${GIT_COMMIT:-}
     depends_on:
       - relay
+    # host networking lets UDP multicast packets reach the LAN (bridge
+    # networking traps them inside Docker's virtual switch). The relay
+    # port (9101) is still reachable because the relay publishes it to
+    # the host -- WEED_RELAY below uses 127.0.0.1 instead of the
+    # bridge-only "relay" DNS name which no longer resolves in host mode.
+    network_mode: host
     ports:
       - "8080:8080"
     volumes:
@@ -84,7 +90,10 @@ services:
       # win over env_file for the same key, so a real WEED_RELAY/
       # WEED_TUNNEL in .env still overrides this; this only fills in the
       # container-appropriate default for whichever one .env leaves unset.
-      WEED_RELAY: ${WEED_RELAY:-http://relay:9101}
+      # 127.0.0.1 (not "relay") because network_mode: host means the
+      # container shares the host's network namespace -- Docker's bridge
+      # DNS doesn't exist there, but the relay's published port does.
+      WEED_RELAY: ${WEED_RELAY:-http://127.0.0.1:9101}
       WEED_TUNNEL: ${WEED_TUNNEL:-}
     restart: unless-stopped
 

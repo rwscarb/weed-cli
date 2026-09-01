@@ -22,6 +22,7 @@ import os
 import signal
 import socket
 import ssl
+import subprocess
 import sys
 import tempfile
 import threading
@@ -140,6 +141,16 @@ def _with_captured_detail(msg, captured):
 
 _hosts = {}   # host_id -> dict describing an actively-hosted file
 _jobs = {}    # job_id -> dict describing a download's progress/result
+
+# ── orbit multicast stream ────────────────────────────────────────────────
+# Browser pushes JPEG frames via POST /api/orbit-push; we pipe them into
+# an ffmpeg subprocess that encodes to MPEG-TS and sends to a UDP multicast
+# HTTP MPEG-TS broadcast: ffmpeg writes to stdout, we fan out to all
+# /api/orbit-view clients via a shared queue per subscriber.
+_orbit_proc = None   # ffmpeg subprocess, or None when not streaming
+_orbit_lock = threading.Lock()
+_orbit_subscribers = set()   # set of queue.Queue, one per HTTP client
+_orbit_subs_lock = threading.Lock()
 _job_logs = {}   # job_id -> the live io.StringIO node.py's prints are captured into (see _quiet)
 _host_logs = {}  # host_id -> same, for a host job (announce progress, [host:PORT] serving, ...)
 _lock = threading.Lock()
@@ -581,12 +592,15 @@ class WebUIServer(ThreadingHTTPServer):
         preconnects all do this. socketserver's default handle_error
         prints a full traceback for every one of these; only genuinely
         unexpected errors get that treatment here."""
-        if sys.exc_info()[0] in (ConnectionResetError, BrokenPipeError, TimeoutError):
+        import ssl as _ssl
+        if sys.exc_info()[0] in (ConnectionResetError, BrokenPipeError, TimeoutError, _ssl.SSLError, _ssl.SSLEOFError):
             return
         super().handle_error(request, client_address)
 
 
 class Handler(BaseHTTPRequestHandler):
+    protocol_version = 'HTTP/1.1'  # needed for streaming responses (orbit-view)
+
     def log_message(self, fmt, *args):
         pass  # quiet — this is a local UI, not a service worth logging every hit for
 
@@ -661,6 +675,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'pubkey': pubkey, 'score': score, 'why': why})
         if path.startswith('/api/stream/'):
             return self._handle_stream(path[len('/api/stream/'):])
+        if path == '/api/orbit-ws':
+            return self._handle_orbit_websocket()
+        if path == '/api/orbit-view':
+            return self._handle_orbit_view()
+        if path == '/api/orbit-stream':
+            return self._handle_orbit_stream_status()
         if path == '/api/qr':
             data = (qs.get('data') or [''])[0]
             if not data:
@@ -1126,6 +1146,264 @@ class Handler(BaseHTTPRequestHandler):
         with _quiet():
             result = node.verify_local_download(content_hash, relay_urls, rec['path'])
         self._json(result)
+
+    # ── orbit multicast (WebSocket → ffmpeg → UDP multicast) ─────────
+    def _handle_orbit_stream_status(self):
+        with _orbit_lock:
+            active = _orbit_proc is not None and _orbit_proc.poll() is None
+        with _orbit_subs_lock:
+            viewers = len(_orbit_subscribers)
+        host = self.headers.get('Host', '192.168.1.137:8080')
+        scheme = 'https' if hasattr(self.connection, 'read') and hasattr(self.server, '_tls') else 'http'
+        return self._json({
+            'active': active,
+            'viewers': viewers,
+            'url': f'{scheme}://{host}/api/orbit-view',
+            'vlc': f'{scheme}://{host}/api/orbit-view',
+        })
+
+    def _handle_orbit_view(self):
+        """HTTP MPEG-TS endpoint — VLC/any player on the LAN pulls here."""
+        import queue as _q
+        q = _q.Queue(maxsize=256)  # ~16MB buffer per subscriber
+        with _orbit_subs_lock:
+            _orbit_subscribers.add(q)
+        try:
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/mp2t')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            while True:
+                try:
+                    chunk = q.get(timeout=30)  # 30s keepalive; retries on Empty
+                except _q.Empty:
+                    continue  # no data yet, keep waiting
+                if chunk is None:
+                    break  # stream ended
+                try:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                except OSError:
+                    break  # client disconnected
+        except Exception:
+            pass
+        finally:
+            with _orbit_subs_lock:
+                _orbit_subscribers.discard(q)
+
+    def _handle_orbit_websocket(self):
+        import base64, hashlib, struct
+        global _orbit_proc
+
+        # WebSocket handshake — write directly to the raw socket to avoid
+        # BaseHTTPRequestHandler's headers buffer interfering with the upgrade.
+        key = self.headers.get('Sec-WebSocket-Key', '')
+        if not key:
+            self.send_response(400)
+            self.end_headers()
+            return
+        accept = base64.b64encode(
+            hashlib.sha1(
+                (key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()
+            ).digest()
+        ).decode()
+        self.connection.sendall((
+            'HTTP/1.1 101 Switching Protocols\r\n'
+            'Upgrade: websocket\r\n'
+            'Connection: Upgrade\r\n'
+            f'Sec-WebSocket-Accept: {accept}\r\n'
+            '\r\n'
+        ).encode())
+
+        # Parse resolution from query string (?res=480 etc.)
+        _qs = parse_qs(urlparse(self.path).query)
+        _res = _qs.get('res', ['720'])[0]
+        _dims = {'360': (640, 360), '480': (854, 480), '720': (1280, 720)}.get(_res, (1280, 720))
+        _w, _h = _dims
+        # Ensure even dimensions for H.264
+        _w = (_w // 2) * 2
+        _h = (_h // 2) * 2
+        _bitrate = {'360': '500k', '480': '800k', '720': '1500k'}.get(_res, '1500k')
+
+        # Start ffmpeg — writes MPEG-TS to stdout; _fanout thread reads
+        # and distributes to all /api/orbit-view HTTP subscribers.
+        try:
+            from PIL import Image as _PIL_Image, ImageFile as _PIL_ImageFile
+            import io as _io
+            _PIL_ImageFile.LOAD_TRUNCATED_IMAGES = True
+        except ImportError:
+            print('[orbit] Pillow not installed — rebuild the container', flush=True)
+            return
+        cmd = [
+            'ffmpeg', '-y',
+            # -re: read input at native 10fps rate so PTS matches wall clock.
+            # Without this, ffmpeg encodes bursts faster than real-time and
+            # VLC's PCR deadlocks because timestamps arrive from the future.
+            '-re',
+            '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{_w}x{_h}', '-pix_fmt', 'rgb24', '-framerate', '10',
+            '-i', 'pipe:0',
+            '-r', '10',
+            '-c:v', 'libx264', '-preset', 'ultrafast', '-tune', 'zerolatency',
+            '-pix_fmt', 'yuv420p', '-g', '3', '-bf', '0',
+            '-b:v', _bitrate,
+            '-video_track_timescale', '90000',
+            '-f', 'mpegts',
+            '-muxdelay', '0', '-muxpreload', '0',
+            '-pcr_period', '20',
+            'pipe:1',
+        ]
+        try:
+            proc = subprocess.Popen(
+                cmd, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            )
+        except FileNotFoundError:
+            print('[orbit] ffmpeg not found — rebuild the container', flush=True)
+            return
+        with _orbit_lock:
+            _orbit_proc = proc
+
+        import queue as _queue
+        jpeg_q = _queue.Queue(maxsize=4)   # WS reader → decode thread (raw JPEG bytes)
+        chunk_q = _queue.Queue(maxsize=8)  # decode thread → ffmpeg stdin (rawvideo frames)
+
+        def _decode_worker(jq, cq):
+            """Decode JPEG→RGB24 off the WS reader thread so it never blocks."""
+            while True:
+                payload = jq.get()
+                if payload is None:
+                    cq.put(None)
+                    break
+                try:
+                    img = _PIL_Image.open(_io.BytesIO(payload)).convert('RGB')
+                    raw = img.resize((_w, _h), _PIL_Image.BILINEAR).tobytes()
+                    try:
+                        cq.put_nowait(raw)
+                    except _queue.Full:
+                        try: cq.get_nowait()
+                        except _queue.Empty: pass
+                        try: cq.put_nowait(raw)
+                        except _queue.Full: pass
+                except Exception as _e:
+                    print(f'[orbit] frame skip: {_e}', flush=True)
+
+        def _drain_stderr(p):
+            for line in p.stderr:
+                print(f'[ffmpeg] {line.decode(errors="replace").rstrip()}', flush=True)
+
+        def _fanout(p):
+            """Read MPEG-TS chunks from ffmpeg stdout, broadcast to all HTTP subscribers.
+            Drops slow/stalled subscribers rather than dropping TS packets — a partial
+            TS stream causes H.264 GOP corruption on the decoder side."""
+            while True:
+                chunk = p.stdout.read(65536)  # larger read = fewer syscalls
+                if not chunk:
+                    break
+                with _orbit_subs_lock:
+                    subs = list(_orbit_subscribers)
+                    slow = []
+                    for q in subs:
+                        try:
+                            q.put_nowait(chunk)
+                        except _queue.Full:
+                            slow.append(q)  # subscriber can't keep up — drop it
+                    for q in slow:
+                        _orbit_subscribers.discard(q)
+                        try: q.put_nowait(None)
+                        except Exception: pass
+            # signal all subscribers that stream ended
+            with _orbit_subs_lock:
+                subs = list(_orbit_subscribers)
+            for q in subs:
+                try: q.put_nowait(None)
+                except Exception: pass
+
+        def _writer(p, q):
+            while True:
+                data = q.get()
+                if data is None:
+                    break
+                try:
+                    p.stdin.write(data)
+                    p.stdin.flush()
+                except OSError:
+                    break
+
+        threading.Thread(target=_decode_worker, args=(jpeg_q, chunk_q), daemon=True).start()
+        threading.Thread(target=_drain_stderr, args=(proc,), daemon=True).start()
+        threading.Thread(target=_fanout, args=(proc,), daemon=True).start()
+        threading.Thread(target=_writer, args=(proc, chunk_q), daemon=True).start()
+        print('[orbit] WebSocket open, ffmpeg started → http://<host>:8080/api/orbit-view', flush=True)
+
+        try:
+            msg_fragments = []
+            msg_opcode = 0
+            while True:
+                hdr = self._ws_read_exact(2)
+                if hdr is None:
+                    break
+                b0, b1 = hdr[0], hdr[1]
+                fin = bool(b0 & 0x80)
+                opcode = b0 & 0x0F
+                if opcode == 8:  # close
+                    break
+                masked = bool(b1 & 0x80)
+                length = b1 & 0x7F
+                if length == 126:
+                    ext = self._ws_read_exact(2)
+                    if ext is None: break
+                    length = struct.unpack('>H', ext)[0]
+                elif length == 127:
+                    ext = self._ws_read_exact(8)
+                    if ext is None: break
+                    length = struct.unpack('>Q', ext)[0]
+                mask_key = self._ws_read_exact(4) if masked else b'\x00\x00\x00\x00'
+                if mask_key is None: break
+                chunk = self._ws_read_exact(length)
+                if chunk is None: break
+                if masked:
+                    chunk = bytes(chunk[i] ^ mask_key[i % 4] for i in range(length))
+                if opcode == 2:
+                    msg_opcode = 2
+                    msg_fragments = [chunk]
+                elif opcode == 0 and msg_fragments:
+                    msg_fragments.append(chunk)
+                else:
+                    continue
+                if not fin:
+                    continue
+                payload = b''.join(msg_fragments)
+                msg_fragments = []
+                if msg_opcode == 2 and payload:
+                    try:
+                        jpeg_q.put_nowait(payload)
+                    except _queue.Full:
+                        try: jpeg_q.get_nowait()
+                        except _queue.Empty: pass
+                        try: jpeg_q.put_nowait(payload)
+                        except _queue.Full: pass
+        except Exception:
+            pass
+        finally:
+            print('[orbit] WebSocket closed, stopping ffmpeg', flush=True)
+            with _orbit_lock:
+                if _orbit_proc is proc:
+                    _orbit_proc = None
+            try: jpeg_q.put_nowait(None)
+            except Exception: pass
+            try: proc.stdin.close()
+            except OSError: pass
+            proc.wait()
+
+    def _ws_read_exact(self, n):
+        buf = b''
+        while len(buf) < n:
+            chunk = self.rfile.read(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
 
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range

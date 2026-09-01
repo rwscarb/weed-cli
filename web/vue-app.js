@@ -146,11 +146,13 @@ const app = createApp({
       // PIP-style in the corner, can grow to a centered theater modal, or
       // go true native fullscreen. Never tied to whichever tab/row started
       // it, so switching tabs doesn't stop or hide playback.
+      orbitStreaming: false,
+      orbitDelay: 0,
+      orbitRes: '720',
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
         audioCurrentTime: 0, audioDuration: 0, audioMuted: false,
-        castAvailable: false, castActive: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -327,6 +329,11 @@ const app = createApp({
       immediate: true,
       handler(title) { document.title = title; },
     },
+    orbitDelay(ms) {
+      if (this._orbitAnalyser?.delay) {
+        this._orbitAnalyser.delay.delayTime.value = ms / 1000;
+      }
+    },
     // replaceState, not pushState -- a tab switch isn't a "page" the
     // back button should step through one at a time (that would make
     // Back undo your last few tab clicks instead of leaving the site,
@@ -376,6 +383,8 @@ const app = createApp({
       } else {
         this.stopOrbitVizFeed();
         window.orbitViz.teardown();
+        // intentionally NOT stopping the stream when orbit closes —
+        // stream is independent of the visualizer panel
         if (this._wasFullscreenBeforeOrbit) {
           this._wasFullscreenBeforeOrbit = false;
           // $nextTick: the player has to actually be visible again
@@ -433,7 +442,6 @@ const app = createApp({
       });
     }
 
-    this.initCast();
     this.refreshDiscover();
     this.refreshHosts();
     setInterval(this.refreshHosts, 3000);
@@ -606,7 +614,6 @@ const app = createApp({
         this._ensureOrbitAnalyser();
       });
       this.recordPlay(contentHash, this.player.title);
-      if (this.player.castActive) this.$nextTick(() => this.castCurrentMedia());
     },
     // Every real "start watching this" funnels through openPlayer above
     // (Discover's ▶ Play, a Downloads row, a playlist item, onPlayerEnded's
@@ -753,56 +760,81 @@ const app = createApp({
       }
     },
 
-    // ── chromecast ────────────────────────────────────────────────────
-    initCast() {
-      const setup = (isAvailable) => {
-        if (!isAvailable) return;
-        const ctx = cast.framework.CastContext.getInstance();
-        ctx.setOptions({
-          receiverApplicationId: chrome.cast.media.DEFAULT_MEDIA_RECEIVER_APP_ID,
-          autoJoinPolicy: chrome.cast.AutoJoinPolicy.ORIGIN_SCOPED,
-        });
-        ctx.addEventListener(
-          cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
-          (e) => {
-            const active = e.sessionState === cast.framework.SessionState.SESSION_STARTED
-                        || e.sessionState === cast.framework.SessionState.SESSION_RESUMED;
-            this.player.castActive = active;
-            if (!active && this.player.visible) this.$refs.playerVideo.play();
+    // ── stream url (vlc / open network stream) ────────────────────────
+    copyStreamUrl() {
+      if (!this.player.jobId) return;
+      const url = location.origin + '/api/stream/' + this.player.jobId;
+      navigator.clipboard.writeText(url).catch(() => {
+        prompt('Copy this URL and open it in VLC (Media → Open Network Stream):', url);
+      });
+    },
+
+    // ── orbit multicast stream (WebSocket → ffmpeg → UDP multicast) ──
+    toggleOrbitStream() {
+      if (this.orbitStreaming) {
+        this.orbitStreaming = false;
+        if (this._orbitMirrorStop) { this._orbitMirrorStop(); this._orbitMirrorStop = null; }
+        if (this._orbitStreamInterval) { clearInterval(this._orbitStreamInterval); this._orbitStreamInterval = null; }
+        if (this._orbitWs) { this._orbitWs.close(); this._orbitWs = null; }
+      } else {
+        // Single offscreen canvas — always the capture source.
+        // rAF loop keeps it in sync with vizCanvas whenever orbit is open.
+        if (!this._orbitOffscreen) {
+          this._orbitOffscreen = document.createElement('canvas');
+          this._orbitOffscreen.width = 1280;
+          this._orbitOffscreen.height = 720;
+          this._orbitOffscreen._ctx = this._orbitOffscreen.getContext('2d');
+        }
+        // Start mirror rAF BEFORE opening orbit so there's no race
+        let _mirrorRunning = true;
+        this._orbitMirrorStop = () => { _mirrorRunning = false; };
+        const offscreen = this._orbitOffscreen;
+        const _mirror = () => {
+          if (!_mirrorRunning) return;
+          const vc = document.getElementById('vizCanvas');
+          if (vc && vc.width > 0) {
+            offscreen._ctx.drawImage(vc, 0, 0, offscreen.width, offscreen.height);
           }
-        );
-        this.player.castAvailable = true;
-      };
-      // SDK may have already fired before mounted() ran (fast cache hit),
-      // or it fires later (async load from CDN) -- handle both.
-      if (window._castReady !== undefined) setup(window._castReady);
-      else window._castReadyCb = setup;
+          requestAnimationFrame(_mirror);
+        };
+        requestAnimationFrame(_mirror);
+        // Open orbit so vizCanvas exists; wait a tick for v-if to render
+        if (!this.easterEggVisible) this.easterEggVisible = true;
+        this.$nextTick(() => {
+          const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+          const ws = new WebSocket(`${proto}//${location.host}/api/orbit-ws?res=${this.orbitRes}`);
+          ws.binaryType = 'arraybuffer';
+          ws.onopen = () => {
+            this._orbitWs = ws;
+            this.orbitStreaming = true;
+            let _inFlight = false;
+            this._orbitStreamInterval = setInterval(() => {
+              if (ws.readyState !== WebSocket.OPEN) return;
+              if (ws.bufferedAmount > 128 * 1024) return;
+              if (_inFlight) return;
+              _inFlight = true;
+              offscreen.toBlob(blob => {
+                _inFlight = false;
+                if (!blob || ws.readyState !== WebSocket.OPEN) return;
+                if (ws.bufferedAmount > 128 * 1024) return;
+                blob.arrayBuffer().then(buf => {
+                  if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 128 * 1024)
+                    ws.send(buf);
+                }).catch(() => {});
+              }, 'image/jpeg', 0.7);
+            }, 100);
+          };
+          ws.onerror = (e) => console.error('[orbit] WS error', e);
+          ws.onclose = () => {
+            if (this._orbitMirrorStop) { this._orbitMirrorStop(); this._orbitMirrorStop = null; }
+            if (this._orbitStreamInterval) { clearInterval(this._orbitStreamInterval); this._orbitStreamInterval = null; }
+            this._orbitWs = null;
+            this.orbitStreaming = false;
+          };
+        });
+      }
     },
-    async castCurrentMedia() {
-      const ctx = cast.framework.CastContext.getInstance();
-      try {
-        if (!ctx.getCurrentSession()) await ctx.requestSession();
-      } catch (e) { return; }
-      const session = ctx.getCurrentSession();
-      if (!session || !this.player.jobId) return;
-      const mediaInfo = new chrome.cast.media.MediaInfo(
-        location.origin + '/api/stream/' + this.player.jobId, 'video/mp4'
-      );
-      mediaInfo.metadata = new chrome.cast.media.GenericMediaMetadata();
-      mediaInfo.metadata.title = this.player.title;
-      await session.loadMedia(new chrome.cast.media.LoadRequest(mediaInfo));
-      this.player.castActive = true;
-      this.$refs.playerVideo.pause();
-    },
-    stopCast() {
-      const session = cast.framework.CastContext.getInstance().getCurrentSession();
-      if (session) session.endSession(true);
-      this.player.castActive = false;
-    },
-    toggleCast() {
-      if (this.player.castActive) this.stopCast();
-      else this.castCurrentMedia();
-    },
+    _pushOrbitFrame() {},  // kept for compat; no longer used
 
     // ── discover ──────────────────────────────────────────────────────
     // Clicking a column header once activates that column (Plays/Last
@@ -1461,10 +1493,13 @@ const app = createApp({
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.82;
-      source.connect(analyser);
-      source.connect(ctx.destination);
+      const delay = ctx.createDelay(31); // max 31s (spec requires integer ceiling)
+      delay.delayTime.value = this.orbitDelay / 1000;
+      source.connect(analyser);       // undelayed → visualizer data
+      source.connect(delay);          // delayed → speakers
+      delay.connect(ctx.destination);
       this._orbitAnalyser = {
-        ctx, analyser,
+        ctx, analyser, delay,
         freq: new Uint8Array(analyser.frequencyBinCount),
         wave: new Uint8Array(analyser.fftSize),
       };

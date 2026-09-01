@@ -8,16 +8,6 @@
 <link rel="icon" type="image/png" sizes="32x32" href="favicon-32.png">
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="stylesheet" href="style.css">
-<script>
-// Stub defined before the Cast SDK loads so the SDK always finds it,
-// regardless of whether Vue has mounted yet. initCast() reads _castReady
-// if it already fired, or registers _castReadyCb to be called later.
-window.__onGCastApiAvailable = function(ok) {
-  window._castReady = ok;
-  if (window._castReadyCb) window._castReadyCb(ok);
-};
-</script>
-<script async src="https://www.gstatic.com/cv/js/sender/v1/cast_sender.js?loadCastFramework=1"></script>
 </head>
 <body>
 <div id="app">
@@ -425,8 +415,19 @@ window.__onGCastApiAvailable = function(ok) {
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
-      <button type="button" class="icon-btn" v-if="player.castAvailable" :class="{active: player.castActive}"
-              :title="player.castActive ? 'Stop casting' : 'Cast to TV'" @click.stop="toggleCast">📺</button>
+      <button type="button" class="icon-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
+      <select v-if="!orbitStreaming" v-model="orbitRes" @click.stop class="orbit-res-select" title="Stream resolution">
+        <option value="720">720p</option>
+        <option value="480">480p</option>
+        <option value="360">360p</option>
+      </select>
+      <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
+              :title="orbitStreaming ? 'Stop stream' : 'Stream Orbit to network'"
+              @click.stop="toggleOrbitStream">📡</button>
+      <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay audio to sync with VLC">
+        <span>delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
+        <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+      </label>
       <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
       <button type="button" class="icon-btn" title="Orbit Visualizer"
               @click.stop="easterEggVisible = !easterEggVisible">🌀</button>
@@ -537,8 +538,19 @@ window.__onGCastApiAvailable = function(ok) {
       <h1>Orbit Visualizer</h1>
       <div class="transport">
         <button class="viz-mode-btn" @click="easterEggVisible = false">← Back</button>
-        <button type="button" class="icon-btn" v-if="player.castAvailable" :class="{active: player.castActive}"
-                :title="player.castActive ? 'Stop casting' : 'Cast to TV'" @click.stop="toggleCast">📺</button>
+        <button type="button" class="icon-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
+        <select v-if="!orbitStreaming" v-model="orbitRes" @click.stop class="orbit-res-select" title="Stream resolution">
+          <option value="720">720p</option>
+          <option value="480">480p</option>
+          <option value="360">360p</option>
+        </select>
+        <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
+                :title="orbitStreaming ? 'Stop stream' : 'Stream to network'"
+                @click.stop="toggleOrbitStream">📡</button>
+        <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay frames before sending — use to sync VLC with the audio">
+          <span>audio delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
+          <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+        </label>
         <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
       </div>
     </header>
