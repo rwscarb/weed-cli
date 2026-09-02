@@ -427,8 +427,8 @@
         <option value="0.7">q·high</option>
         <option value="0.85">q·max</option>
       </select>
-      <button type="button" class="icon-btn" :class="{active: orbitStreaming && easterEggVisible, paused: orbitStreaming && !easterEggVisible}"
-              :title="orbitStreaming ? (easterEggVisible ? 'Stop stream' : 'Stream paused — nothing is captured while the visualizer is closed. Open it (🌀) to resume, or click to stop.') : 'Stream Orbit to network'"
+      <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
+              :title="orbitStreaming ? 'Stop stream (keeps running while the visualizer is closed)' : 'Stream Orbit to network'"
               @click.stop="toggleOrbitStream">📡</button>
       <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
             :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"
@@ -540,9 +540,14 @@
      separate document loaded into one (see orbit_visualizer.js's own
      docstring for why that existed and why it doesn't need to anymore)
      -- everything below is that same page's markup, inlined. -->
-<template v-if="easterEggVisible">
-  <div id="orbit-egg-backdrop" @click="easterEggVisible = false"></div>
-  <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Visualizer">
+<!-- ...except while the network stream is running: the stream captures
+     #vizCanvas, so the dialog then stays mounted and drawing when "closed"
+     -- just invisible and untouchable (.stream-bg, see style.css) -- and
+     the player drops back to PIP over it. The orbitStreaming watch tears
+     it down once the stream stops with the dialog still hidden. -->
+<template v-if="easterEggVisible || orbitStreaming">
+  <div id="orbit-egg-backdrop" v-show="easterEggVisible" @click="easterEggVisible = false"></div>
+  <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Visualizer" :class="{'stream-bg': !easterEggVisible}">
     <header>
       <h1>Orbit Visualizer</h1>
       <div class="transport">

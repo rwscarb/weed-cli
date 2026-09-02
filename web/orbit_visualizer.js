@@ -184,6 +184,11 @@ window.orbitViz = (function () {
       freqData: new Uint8Array(1024),
       waveData: new Uint8Array(2048),
       hasSignal: false,
+      // true while the dialog is hidden but kept alive for the network
+      // stream (vue-app.js's easterEggVisible watch): drawing continues,
+      // the document-level keyboard handler below stands down so the
+      // app's own hotkeys don't steer an invisible visualizer
+      backgrounded: false,
       videoFrame: null,
       VW: 0, VH: 0,
       vizPanX: 0, vizPanY: 0, vizUserScale: 1.0, vizRot: 0,
@@ -1076,11 +1081,22 @@ window.orbitViz = (function () {
     }
     s.toggleVizFullscreen = toggleVizFullscreen;
 
+    function setBackgrounded(bg) {
+      s.backgrounded = !!bg;
+      // a fullscreen vizSection that just went visibility:hidden would
+      // leave the user staring at a black fullscreen surface
+      if (bg && document.fullscreenElement === vizSection) {
+        (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      }
+    }
+    s.setBackgrounded = setBackgrounded;
+
     on(document, 'fullscreenchange', () => {
       resizeVizCanvas();
       if (vizFsBtn) vizFsBtn.textContent = document.fullscreenElement ? '✕' : '⛶';
     });
     on(document, 'keydown', function (e) {
+      if (s.backgrounded) return;
       if (e.code === 'KeyF') toggleVizFullscreen();
       if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
         e.preventDefault();
@@ -1188,6 +1204,10 @@ window.orbitViz = (function () {
     pushAudio: (freq, wave) => { if (state) state.pushAudio(freq, wave); },
     pushVideoFrame: (w, h, data) => { if (state) state.pushVideoFrame(w, h, data); },
     toggleFullscreen: () => { if (state) state.toggleVizFullscreen(); },
+    // background-for-the-stream lifecycle, driven by vue-app.js's
+    // easterEggVisible/orbitStreaming watches
+    isActive: () => !!state,
+    setBackgrounded: (bg) => { if (state) state.setBackgrounded(bg); },
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,

@@ -459,8 +459,6 @@ td button {
 
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
 .icon-btn.active { border-color: var(--accent); color: var(--accent); }
-/* stream is up but has no canvas to capture (visualizer closed) */
-.icon-btn.paused { border-color: #e0a526; color: #e0a526; }
 .icon-btn:disabled { cursor: default; }
 
 /* Any / <label> / Not <label> segmented toggle -- three buttons sharing
@@ -1175,6 +1173,12 @@ td button {
   color: var(--text);
   border-color: var(--accent);
 }
+/* The network stream is running and the dialog was "closed": it stays
+   mounted and drawing (the stream captures #vizCanvas every frame),
+   just invisible and untouchable. visibility rather than display so
+   the canvas keeps its layout size -- a display:none canvas measures
+   0x0, and the draw loop would have nothing to render into. */
+#orbit-egg-dialog.stream-bg { visibility: hidden; pointer-events: none; }
 #orbit-egg-dialog #vizSection {
   flex: 1; display: flex; flex-direction: column;
   padding: 0.6rem 0.85rem 0.85rem; position: relative; min-height: 0;

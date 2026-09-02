@@ -386,19 +386,34 @@ const app = createApp({
         // closes (below), keeps both in sync instead of leaving the
         // browser's own auto-exit as the only thing that happened.
         this._wasFullscreenBeforeOrbit = document.fullscreenElement === this.$refs.globalPlayer;
+        // Already running in the background for the network stream (see
+        // the else branch): nothing to init, just make it visible and
+        // give it its keyboard back.
+        if (window.orbitViz.isActive()) {
+          window.orbitViz.setBackgrounded(false);
+          return;
+        }
         this.$nextTick(() => {
           window.orbitViz.init();
           this.startOrbitVizFeed();
         });
       } else {
-        this.stopOrbitVizFeed();
-        window.orbitViz.teardown();
-        // intentionally NOT stopping the stream when orbit closes -- the
-        // socket and worker stay up, so reopening resumes instantly with
-        // no VLC reconnect. But nothing is *captured* while the dialog
-        // is closed (no #vizCanvas), so the 📡 button shows a paused
-        // state meanwhile (index.html), and openPlayer() reopens the
-        // dialog when the next track starts.
+        if (this.orbitStreaming) {
+          // The stream captures #vizCanvas every frame, so "closing" the
+          // visualizer while streaming must not stop it drawing (real
+          // report: dropping the player back to PIP silently froze the
+          // stream, with the 📡 button still lit). index.html keeps the
+          // dialog mounted while orbitStreaming and hides it with
+          // .stream-bg; this keeps the draw loop and the audio/video feed
+          // running, and only mutes the visualizer's document-level
+          // keyboard handling so app hotkeys don't reach it. Teardown
+          // happens in the orbitStreaming watch below, once the stream
+          // actually stops.
+          window.orbitViz.setBackgrounded(true);
+        } else {
+          this.stopOrbitVizFeed();
+          window.orbitViz.teardown();
+        }
         if (this._wasFullscreenBeforeOrbit) {
           this._wasFullscreenBeforeOrbit = false;
           // $nextTick: the player has to actually be visible again
@@ -406,6 +421,19 @@ const app = createApp({
           // requestFullscreen on it can succeed at all
           this.$nextTick(() => this.$refs.globalPlayer.requestFullscreen());
         }
+      }
+    },
+    // The other half of the easterEggVisible watch's streaming branch:
+    // a visualizer that was kept alive in the background purely for the
+    // stream gets torn down the moment the stream ends. Runs pre-render,
+    // so the listeners and rAF loops are gone before index.html's v-if
+    // actually removes the DOM. With the dialog still open this is a
+    // no-op -- easterEggVisible keeps it mounted and its own watch owns
+    // the teardown.
+    orbitStreaming(streaming) {
+      if (!streaming && !this.easterEggVisible && window.orbitViz.isActive()) {
+        this.stopOrbitVizFeed();
+        window.orbitViz.teardown();
       }
     },
   },
@@ -613,16 +641,6 @@ const app = createApp({
       // already chose to watch in.
       if (!this.player.visible) this.player.mode = 'pip';
       this.player.visible = true;
-      // The network stream captures #vizCanvas, which only exists while
-      // the visualizer dialog is open (index.html v-if). Picking the next
-      // track means closing that dialog to reach the list, and from that
-      // moment the capture loop found no canvas and sent nothing -- with
-      // the stream still flagged active (real report: "shows the stream
-      // as active, but nothing gets streamed until I turn it off and
-      // back on"; toggling it on only helped because that reopens the
-      // dialog). So starting a track while streaming brings the
-      // visualizer back, the same way starting the stream opens it.
-      if (this.orbitStreaming && !this.easterEggVisible) this.easterEggVisible = true;
       this.player.queue = queue || {
         items: [{ content_hash: contentHash, title: title || null, signer_pubkey: signerPubkey || null }],
         index: 0, playlistId: null,
