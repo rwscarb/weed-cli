@@ -131,6 +131,12 @@ window.orbitViz = (function () {
   }
 
   let state = null;
+  // true while something else (vue-app.js's stream code, while the tab
+  // is hidden and rAF is frozen) is calling step() to drive frames, so
+  // drawViz must not also schedule itself. Module-level rather than on
+  // `s` so it survives a teardown/init cycle and a fresh init starts in
+  // the right mode.
+  let externalClock = false;
 
   function init() {
     // defensive, not expected in normal use -- vue-app.js's
@@ -189,6 +195,7 @@ window.orbitViz = (function () {
       // the document-level keyboard handler below stands down so the
       // app's own hotkeys don't steer an invisible visualizer
       backgrounded: false,
+      rafPending: false,   // a drawViz rAF is already queued -- see scheduleDraw
       videoFrame: null,
       VW: 0, VH: 0,
       vizPanX: 0, vizPanY: 0, vizUserScale: 1.0, vizRot: 0,
@@ -601,9 +608,18 @@ window.orbitViz = (function () {
     // Draw loop -- same seven modes, same math, as the standalone page
     // this was ported from, just reading state pushed directly via
     // pushAudio/pushVideoFrame below instead of a postMessage listener.
-    function drawViz() {
-      if (!s.running) return;
+    // rafPending is what makes switching clocks safe: flipping back to
+    // self-scheduling while a frame is already queued (or step() landing
+    // during the last self-scheduled frame) can't stack a second loop.
+    function scheduleDraw() {
+      if (s.rafPending) return;
+      s.rafPending = true;
       requestAnimationFrame(drawViz);
+    }
+    function drawViz() {
+      s.rafPending = false;
+      if (!s.running) return;
+      if (!externalClock) scheduleDraw();
       if (!s.VW || !s.VH) return;
 
       // slow independent color drift -- a steady drift gives the same
@@ -1069,6 +1085,8 @@ window.orbitViz = (function () {
         if (plugin && !plugin.broken) callPlugin(plugin, 'draw', makeFrameContext());
       }
     }
+    s.drawViz = drawViz;
+    s.scheduleDraw = scheduleDraw;
     drawViz();
 
     // Fullscreen
@@ -1208,6 +1226,14 @@ window.orbitViz = (function () {
     // easterEggVisible/orbitStreaming watches
     isActive: () => !!state,
     setBackgrounded: (bg) => { if (state) state.setBackgrounded(bg); },
+    // hidden-tab clock: with the external clock on, drawViz stops
+    // scheduling itself and only runs when step() is called; turning it
+    // off re-arms the rAF loop (no-op if a frame is already queued)
+    setExternalClock: (on) => {
+      externalClock = !!on;
+      if (state && !externalClock && state.running) state.scheduleDraw();
+    },
+    step: () => { if (state && externalClock && state.running) state.drawViz(); },
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,

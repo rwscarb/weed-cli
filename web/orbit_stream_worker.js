@@ -15,8 +15,10 @@
 // Protocol, main -> worker:
 //   {type:'open', url, width, height, quality}
 //   {type:'frame', buf, width, height}   RGBA bytes, transferred (zero-copy)
+//   {type:'clock', on, fps}              start/stop ticking the page (hidden tab)
 // worker -> main:
 //   {type:'open'} | {type:'close'} | {type:'error', message}
+//   {type:'tick'}                one per clock interval while on
 //   {type:'sent', bytes, ms}     one per frame that went out; ms = put+encode+send
 //   {type:'skipped', reason}     'backlog' = socket has too much unsent data
 //   {type:'done'}                after every 'frame', sent or not -- main's
@@ -27,6 +29,7 @@ let ws = null;
 let canvas = null;
 let ctx = null;
 let quality = 0.5;
+let clock = null;
 // ~3 frames of unsent backlog before we skip rather than queue -- a
 // sending-side backlog is viewer latency, and the server drops-oldest
 // on its side too, so skipping here is the only thing that actually
@@ -44,6 +47,17 @@ self.onmessage = async (e) => {
     ws.onopen = () => self.postMessage({ type: 'open' });
     ws.onerror = () => self.postMessage({ type: 'error', message: 'WebSocket error' });
     ws.onclose = () => { ws = null; self.postMessage({ type: 'close' }); };
+    return;
+  }
+  if (m.type === 'clock') {
+    // A clock for the page while its tab is hidden. Browsers freeze
+    // requestAnimationFrame outright and throttle main-thread timers
+    // once a tab goes to the background -- but a dedicated worker's
+    // timers, and its messages to the page, are not throttled. So the
+    // page asks this thread to tick it instead; every 'tick' drives one
+    // feed + draw + capture step over there (see vue-app.js _setClock).
+    if (clock) { clearInterval(clock); clock = null; }
+    if (m.on) clock = setInterval(() => self.postMessage({ type: 'tick' }), 1000 / (m.fps || 60));
     return;
   }
   if (m.type === 'frame') {

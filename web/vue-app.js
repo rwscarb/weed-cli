@@ -857,19 +857,36 @@ const app = createApp({
           // skipped (backlog = socket behind, i.e. network or server;
           // inflight = the worker was still busy with the previous
           // frame). The server prints the matching rx line.
-          const _stat = { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, t0: performance.now() };
+          const _stat = { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, ticks: 0, t0: performance.now() };
           const _report = () => {
             const dt = (performance.now() - _stat.t0) / 1000;
             if (dt < 5) return;
             const per = (v) => _stat.sent ? (v / _stat.sent).toFixed(1) : '-';
             console.log(`[orbit] sent ${(_stat.sent / dt).toFixed(1)} fps, ${(_stat.bytes / dt / 1024).toFixed(0)} KB/s, `
               + `avg capture ${per(_stat.capMs)} ms, encode+send ${per(_stat.encMs)} ms, `
-              + `skipped: backlog=${_stat.skipBacklog} inflight=${_stat.skipInflight}`);
-            Object.assign(_stat, { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, t0: performance.now() });
+              + `skipped: backlog=${_stat.skipBacklog} inflight=${_stat.skipInflight}, `
+              + `clock=${_external ? `worker (${(_stat.ticks / dt).toFixed(0)} ticks/s)` : 'rAF'}`);
+            Object.assign(_stat, { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, ticks: 0, t0: performance.now() });
           };
-          const _capture = (now) => {
+          // Two clocks. Visible tab: rAF, like every other loop here.
+          // Hidden tab: browsers freeze rAF outright and throttle main-
+          // thread timers, which was exactly the "stream pauses whenever
+          // I switch tabs" report -- so the encoder worker's own
+          // setInterval (worker timers and their messages aren't
+          // throttled) ticks the page instead, and each tick drives one
+          // feed + draw + capture step. _setClock flips all three loops
+          // together, and _rafPending makes the flip back safe.
+          let _external = false;
+          let _rafPending = false;
+          let _lastTick = 0;
+          const _scheduleCapture = () => { if (_rafPending) return; _rafPending = true; requestAnimationFrame(_captureLoop); };
+          const _captureLoop = (now) => {
+            _rafPending = false;
             if (!_running) return;
-            requestAnimationFrame(_capture);
+            if (!_external) _scheduleCapture();
+            _captureStep(now);
+          };
+          const _captureStep = (now) => {
             if (now < _due) return;
             if (_inFlight) { _stat.skipInflight++; return; }
             const vc = document.getElementById('vizCanvas');
@@ -892,10 +909,20 @@ const app = createApp({
             // worker in O(1), and `img` is dead after this line
             worker.postMessage({ type: 'frame', buf: img.data.buffer, width: img.width, height: img.height }, [img.data.buffer]);
           };
+          const _setClock = (external) => {
+            _external = external;
+            window.orbitViz.setExternalClock(external);
+            this._setOrbitFeedClock(external);
+            worker.postMessage({ type: 'clock', on: external, fps: 60 });
+            if (!external && _running) _scheduleCapture();
+          };
+          const _onVisibility = () => _setClock(document.hidden);
           // terminating the worker drops its WebSocket too -- the server
           // sees EOF and logs "WebSocket closed" exactly as before
           const _stop = () => {
             _running = false;
+            document.removeEventListener('visibilitychange', _onVisibility);
+            if (_external) _setClock(false);   // hand the viz/feed loops back to rAF
             worker.terminate();
             if (this._orbitWorker === worker) this._orbitWorker = null;
             this.orbitStreaming = false;
@@ -919,9 +946,30 @@ const app = createApp({
                 this.orbitViewUrl = `${location.protocol}//${location.host}/api/orbit-view`;
                 navigator.clipboard.writeText(this.orbitViewUrl).catch(() => {});
                 _running = true;
-                requestAnimationFrame(_capture);
+                document.addEventListener('visibilitychange', _onVisibility);
+                if (document.hidden) _setClock(true); else _scheduleCapture();
                 break;
               }
+              case 'tick':
+                // hidden-tab clock (see _setClock): feed first so this
+                // frame's audio/video lands in the viz, then draw, then
+                // capture what was just drawn
+                if (_running && _external) {
+                  // The worker ticks on its own interval regardless of
+                  // how long the last step took here, so a heavy mode
+                  // can have several ticks queued by the time this runs.
+                  // Those must be dropped, not worked through: honoring
+                  // every queued tick back-to-back would grow the queue
+                  // without bound and starve the page.
+                  const now = performance.now();
+                  if (now - _lastTick < 12) break;
+                  _lastTick = now;
+                  _stat.ticks++;
+                  if (this._orbitFeedStep) this._orbitFeedStep();
+                  window.orbitViz.step();
+                  _captureStep(now);
+                }
+                break;
               case 'done': _inFlight = false; break;
               case 'sent': _stat.sent++; _stat.bytes += m.bytes; _stat.encMs += m.ms; _report(); break;
               case 'skipped': _stat.skipBacklog++; break;
@@ -1666,8 +1714,10 @@ const app = createApp({
       if (ctx.state === 'suspended') ctx.resume();
       this._orbitVizRunning = true;
       let frameCount = 0;
-      const tick = () => {
-        if (!this._orbitVizRunning) return;
+      // one feed step, separate from its scheduling: the rAF loop below
+      // calls it while the tab is visible, and the stream's hidden-tab
+      // clock calls it directly (this._orbitFeedStep) when rAF is frozen
+      const step = () => {
         analyser.getByteFrequencyData(freq);
         analyser.getByteTimeDomainData(wave);
         window.orbitViz.pushAudio(freq, wave);
@@ -1692,12 +1742,32 @@ const app = createApp({
             window.orbitViz.pushVideoFrame(vcanvas.width, vcanvas.height, imageData.data);
           }
         }
-        requestAnimationFrame(tick);
       };
-      tick();
+      this._orbitFeedStep = step;
+      let rafPending = false;
+      const loop = () => {
+        rafPending = false;
+        if (!this._orbitVizRunning) return;
+        if (!this._orbitFeedExternal) schedule();
+        step();
+      };
+      const schedule = () => { if (rafPending) return; rafPending = true; requestAnimationFrame(loop); };
+      this._orbitFeedResume = schedule;
+      loop();
     },
     stopOrbitVizFeed() {
       this._orbitVizRunning = false;
+      this._orbitFeedStep = null;
+      this._orbitFeedResume = null;
+    },
+    // Called by the stream's _setClock: external = the tab is hidden and
+    // the encoder worker is ticking the page, so the feed must stop
+    // scheduling itself on (frozen) rAF and just run when stepped; false
+    // hands it back to rAF. Remembered even when the feed isn't running
+    // yet, so a feed that starts while the tab is hidden starts stepped.
+    _setOrbitFeedClock(external) {
+      this._orbitFeedExternal = external;
+      if (!external && this._orbitVizRunning && this._orbitFeedResume) this._orbitFeedResume();
     },
     toggleOrbitFullscreen() {
       window.orbitViz.toggleFullscreen();
