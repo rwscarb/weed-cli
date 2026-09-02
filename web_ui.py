@@ -21,7 +21,9 @@ import mimetypes
 import os
 import signal
 import socket
+import queue
 import ssl
+import struct
 import subprocess
 import sys
 import tempfile
@@ -146,6 +148,7 @@ _jobs = {}    # job_id -> dict describing a download's progress/result
 # Browser sends JPEG frames via WebSocket /api/orbit-ws; server fans them
 # out as MJPEG (multipart/x-mixed-replace) on /api/orbit-view.
 _orbit_ws_connected = False  # True while a browser WS is open and pushing frames
+_orbit_res = None            # the streamer's ?res= ('720'/'480'/'360') while connected
 _orbit_ws_lock = threading.Lock()
 # last 5s window of what the WS reader actually received / had to drop,
 # written by the reader thread, read by /api/orbit-stream -- see the
@@ -153,6 +156,107 @@ _orbit_ws_lock = threading.Lock()
 _orbit_rx = {'fps': 0.0, 'kbps': 0, 'dropped': 0}
 _orbit_subscribers = set()   # set of queue.Queue, one per HTTP client
 _orbit_subs_lock = threading.Lock()
+
+
+def _orbit_fanout(payload):
+    """Hand one JPEG to every viewer's queue. Returns how many viewers
+    were behind (queue full) when it arrived.
+
+    A full queue means that viewer's writer thread hasn't kept up. The
+    policy is drop-oldest, never disconnect: pop its stalest frame and
+    put this one, so a momentary stall (VLC buffering, a wifi hiccup)
+    costs a skipped frame rather than the whole stream -- and never
+    letting a backlog build is what keeps a viewer's latency pinned
+    near zero."""
+    dropped = 0
+    with _orbit_subs_lock:
+        for q in _orbit_subscribers:
+            try:
+                q.put_nowait(payload)
+            except queue.Full:
+                try: q.get_nowait()
+                except queue.Empty: pass
+                try: q.put_nowait(payload)
+                except queue.Full: pass
+                dropped += 1
+    return dropped
+
+
+def _ws_unmask(data, mask_key):
+    """Client->server WebSocket payloads arrive XOR-masked with a 4-byte
+    key. Done as one big-int XOR rather than a per-byte Python loop:
+    ~25x faster (0.4ms vs ~9ms per 120KB frame on a desktop; on the Pi
+    the per-byte loop alone was eating most of a 30fps frame budget and
+    showed up as stutter on every viewer)."""
+    n = len(data)
+    if n == 0:
+        return data
+    mask = (mask_key * (n // 4 + 1))[:n]
+    return (int.from_bytes(data, 'little') ^ int.from_bytes(mask, 'little')).to_bytes(n, 'little')
+
+
+def _ws_messages(rfile):
+    """Yield (opcode, payload) for each complete WebSocket message read
+    from the file-like `rfile`: length prefixes decoded, masks removed,
+    continuation frames reassembled. Stops at EOF, at a truncated frame,
+    or at a close frame (opcode 8). Control frames (ping 9 / pong 10)
+    are yielded as they arrive so the caller can answer them; only data
+    frames take part in reassembly. A pure function of the byte stream
+    -- no socket, no globals -- so tests drive it with io.BytesIO."""
+    def read_exact(n):
+        buf = b''
+        while len(buf) < n:
+            chunk = rfile.read(n - len(buf))
+            if not chunk:
+                return None
+            buf += chunk
+        return buf
+
+    fragments = []
+    msg_opcode = 0
+    while True:
+        hdr = read_exact(2)
+        if hdr is None:
+            return
+        b0, b1 = hdr[0], hdr[1]
+        fin = bool(b0 & 0x80)
+        opcode = b0 & 0x0F
+        masked = bool(b1 & 0x80)
+        length = b1 & 0x7F
+        if length == 126:
+            ext = read_exact(2)
+            if ext is None:
+                return
+            length = struct.unpack('>H', ext)[0]
+        elif length == 127:
+            ext = read_exact(8)
+            if ext is None:
+                return
+            length = struct.unpack('>Q', ext)[0]
+        mask_key = read_exact(4) if masked else None
+        if masked and mask_key is None:
+            return
+        chunk = read_exact(length)
+        if chunk is None:
+            return
+        if masked:
+            chunk = _ws_unmask(chunk, mask_key)
+        if opcode == 8:
+            return
+        if opcode >= 8:            # ping / pong: never fragmented
+            yield opcode, chunk
+            continue
+        if opcode != 0:            # text (1) / binary (2): starts a message
+            msg_opcode = opcode
+            fragments = [chunk]
+        elif fragments:            # continuation of one already started
+            fragments.append(chunk)
+        else:
+            continue               # continuation with nothing to continue
+        if fin:
+            payload = b''.join(fragments)
+            fragments = []
+            yield msg_opcode, payload
 _job_logs = {}   # job_id -> the live io.StringIO node.py's prints are captured into (see _quiet)
 _host_logs = {}  # host_id -> same, for a host job (announce progress, [host:PORT] serving, ...)
 _lock = threading.Lock()
@@ -678,7 +782,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith('/api/stream/'):
             return self._handle_stream(path[len('/api/stream/'):])
         if path == '/api/orbit-ws':
-            return self._handle_orbit_websocket()
+            return self._handle_orbit_websocket(qs)
         if path == '/api/orbit-view':
             return self._handle_orbit_view()
         if path == '/api/orbit-stream':
@@ -1152,13 +1256,14 @@ class Handler(BaseHTTPRequestHandler):
     # ── orbit MJPEG stream ─────────────────────────────────────────────
     def _handle_orbit_stream_status(self):
         with _orbit_ws_lock:
-            active = _orbit_ws_connected
+            active, res = _orbit_ws_connected, _orbit_res
         with _orbit_subs_lock:
             viewers = len(_orbit_subscribers)
         host = self.headers.get('Host', '192.168.1.137:8080')
         scheme = 'https' if hasattr(self.connection, 'read') and hasattr(self.server, '_tls') else 'http'
         return self._json({
             'active': active,
+            'res': res,
             'viewers': viewers,
             'rx': dict(_orbit_rx),
             'url': f'{scheme}://{host}/api/orbit-view',
@@ -1215,9 +1320,14 @@ class Handler(BaseHTTPRequestHandler):
             with _orbit_subs_lock:
                 _orbit_subscribers.discard(q)
 
-    def _handle_orbit_websocket(self):
-        import base64, hashlib, struct, queue as _queue
-        global _orbit_ws_connected
+    def _handle_orbit_websocket(self, qs):
+        """The streamer's side: one browser pushes JPEG frames here as
+        binary WebSocket messages; each one is fanned out to every
+        /api/orbit-view subscriber. Frame parsing lives in _ws_messages
+        and the fanout policy in _orbit_fanout -- this method is just
+        the handshake, the loop, and the 5-second rx counters."""
+        import base64, hashlib
+        global _orbit_ws_connected, _orbit_res
 
         # WebSocket handshake — write directly to the raw socket to avoid
         # BaseHTTPRequestHandler's headers buffer interfering with the upgrade.
@@ -1239,94 +1349,44 @@ class Handler(BaseHTTPRequestHandler):
             '\r\n'
         ).encode())
 
+        res = (qs.get('res') or [None])[0]
         with _orbit_ws_lock:
             _orbit_ws_connected = True
-        print('[orbit] WebSocket open — streaming MJPEG to /api/orbit-view', flush=True)
+            _orbit_res = res
+        print(f'[orbit] WebSocket open ({res or "?"}p) — streaming MJPEG to /api/orbit-view', flush=True)
 
         try:
-            msg_fragments = []
-            msg_opcode = 0
             rx_n = rx_bytes = rx_dropped = 0
             rx_t0 = time.monotonic()
-            while True:
-                hdr = self._ws_read_exact(2)
-                if hdr is None:
-                    break
-                b0, b1 = hdr[0], hdr[1]
-                fin = bool(b0 & 0x80)
-                opcode = b0 & 0x0F
-                if opcode == 8:  # close
-                    break
-                masked = bool(b1 & 0x80)
-                length = b1 & 0x7F
-                if length == 126:
-                    ext = self._ws_read_exact(2)
-                    if ext is None: break
-                    length = struct.unpack('>H', ext)[0]
-                elif length == 127:
-                    ext = self._ws_read_exact(8)
-                    if ext is None: break
-                    length = struct.unpack('>Q', ext)[0]
-                mask_key = self._ws_read_exact(4) if masked else b'\x00\x00\x00\x00'
-                if mask_key is None: break
-                chunk = self._ws_read_exact(length)
-                if chunk is None: break
-                if masked:
-                    # Unmask as one big-int XOR instead of a per-byte Python
-                    # loop: ~25x faster (0.4ms vs ~9ms per 120KB frame on a
-                    # desktop; on the Pi the per-byte loop alone was eating
-                    # most of a 30fps frame budget and showed up as stutter
-                    # on every viewer).
-                    mask = (mask_key * (length // 4 + 1))[:length]
-                    chunk = (int.from_bytes(chunk, 'little')
-                             ^ int.from_bytes(mask, 'little')).to_bytes(length, 'little')
-                if opcode == 2:
-                    msg_opcode = 2
-                    msg_fragments = [chunk]
-                elif opcode == 0 and msg_fragments:
-                    msg_fragments.append(chunk)
-                else:
+            for opcode, payload in _ws_messages(self.rfile):
+                if opcode == 9:
+                    # ping -> pong with the same payload. Browsers don't
+                    # send these unprompted, but a proxy in between might;
+                    # server->client frames are never masked.
+                    if len(payload) < 126:
+                        self.connection.sendall(b'\x8a' + bytes([len(payload)]) + payload)
                     continue
-                if not fin:
+                if opcode != 2 or not payload:
                     continue
-                payload = b''.join(msg_fragments)
-                msg_fragments = []
-                if msg_opcode == 2 and payload:
+                rx_dropped += _orbit_fanout(payload)
+                rx_n += 1
+                rx_bytes += len(payload)
+                now = time.monotonic()
+                if now - rx_t0 >= 5:
+                    dt = now - rx_t0
+                    _orbit_rx['fps'] = round(rx_n / dt, 1)
+                    _orbit_rx['kbps'] = round(rx_bytes / dt / 1024)
+                    _orbit_rx['dropped'] = rx_dropped
                     with _orbit_subs_lock:
-                        for q in _orbit_subscribers:
-                            try:
-                                q.put_nowait(payload)
-                            except _queue.Full:
-                                # viewer is behind: drop its oldest queued
-                                # frame and hand it this one, rather than
-                                # disconnecting it. A momentary stall (VLC
-                                # buffering, a wifi hiccup) should skip a
-                                # frame, not kill the stream -- and never
-                                # letting a backlog build is what keeps
-                                # the viewer's latency pinned near zero.
-                                try: q.get_nowait()
-                                except _queue.Empty: pass
-                                try: q.put_nowait(payload)
-                                except _queue.Full: pass
-                                rx_dropped += 1
-                    rx_n += 1
-                    rx_bytes += len(payload)
-                    now = time.monotonic()
-                    if now - rx_t0 >= 5:
-                        dt = now - rx_t0
-                        _orbit_rx['fps'] = round(rx_n / dt, 1)
-                        _orbit_rx['kbps'] = round(rx_bytes / dt / 1024)
-                        _orbit_rx['dropped'] = rx_dropped
-                        with _orbit_subs_lock:
-                            nviewers = len(_orbit_subscribers)
-                        # dropped > 0 here means a *viewer* write is the
-                        # slow link (its queue filled); fps well under
-                        # what the browser says it sent means the WS
-                        # path in between is
-                        print(f"[orbit] rx {_orbit_rx['fps']} fps, {_orbit_rx['kbps']} KB/s, "
-                              f"viewers={nviewers}, dropped={rx_dropped}", flush=True)
-                        rx_n = rx_bytes = rx_dropped = 0
-                        rx_t0 = now
+                        nviewers = len(_orbit_subscribers)
+                    # dropped > 0 here means a *viewer* write is the slow
+                    # link (its queue filled); fps well under what the
+                    # browser's own console line says it sent means the
+                    # network between browser and this socket is.
+                    print(f"[orbit] rx {_orbit_rx['fps']} fps, {_orbit_rx['kbps']} KB/s, "
+                          f"viewers={nviewers}, dropped={rx_dropped}", flush=True)
+                    rx_n = rx_bytes = rx_dropped = 0
+                    rx_t0 = now
         except Exception:
             pass
         finally:
@@ -1334,20 +1394,12 @@ class Handler(BaseHTTPRequestHandler):
             _orbit_rx.update(fps=0.0, kbps=0, dropped=0)
             with _orbit_ws_lock:
                 _orbit_ws_connected = False
+                _orbit_res = None
             with _orbit_subs_lock:
                 subs = list(_orbit_subscribers)
             for q in subs:
                 try: q.put_nowait(None)
                 except Exception: pass
-
-    def _ws_read_exact(self, n):
-        buf = b''
-        while len(buf) < n:
-            chunk = self.rfile.read(n - len(buf))
-            if not chunk:
-                return None
-            buf += chunk
-        return buf
 
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range

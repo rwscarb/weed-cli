@@ -149,6 +149,16 @@ const app = createApp({
       orbitStreaming: false,
       orbitDelay: 0,
       orbitRes: '720',
+      // JPEG quality for the stream. Encoding happens in a worker now
+      // (see toggleOrbitStream), so this costs bandwidth, not frame
+      // rate: 0.7 is visibly cleaner than the old 0.5 for roughly 2x
+      // the bytes, still a few Mbit at 720p/30fps.
+      orbitQuality: '0.7',
+      // /api/orbit-view URL while streaming, shown inline next to the
+      // stream button with click-to-copy -- replaced a prompt() that
+      // blocked all JS (and therefore the stream) until dismissed
+      orbitViewUrl: '',
+      orbitUrlCopied: false,
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
@@ -858,6 +868,8 @@ const app = createApp({
             if (this._orbitWorker === worker) this._orbitWorker = null;
             this.orbitStreaming = false;
             window._orbitStreaming = false;
+            this.orbitViewUrl = '';
+            this.orbitUrlCopied = false;
           };
           this._orbitCaptureStop = _stop;
           worker.onmessage = (e) => {
@@ -866,9 +878,14 @@ const app = createApp({
               case 'open': {
                 this.orbitStreaming = true;
                 window._orbitStreaming = true;
-                const viewUrl = `${location.protocol}//${location.host}/api/orbit-view`;
-                navigator.clipboard.writeText(viewUrl).catch(() => {});
-                prompt('Open in VLC (Media → Open Network Stream):', viewUrl);
+                // shown inline (click to copy) rather than prompt()ed:
+                // a modal dialog blocks every rAF and worker message
+                // until dismissed, so the stream never actually started
+                // until the user clicked it away. The clipboard write
+                // may be refused outside a user gesture (Firefox); the
+                // inline click-to-copy covers that case.
+                this.orbitViewUrl = `${location.protocol}//${location.host}/api/orbit-view`;
+                navigator.clipboard.writeText(this.orbitViewUrl).catch(() => {});
                 _running = true;
                 requestAnimationFrame(_capture);
                 break;
@@ -881,9 +898,17 @@ const app = createApp({
             }
           };
           worker.onerror = (e) => { console.error('[orbit] stream worker failed:', e.message || e); _stop(); };
-          worker.postMessage({ type: 'open', url: wsUrl, width: _rw, height: _rh, quality: 0.5 });
+          worker.postMessage({ type: 'open', url: wsUrl, width: _rw, height: _rh,
+                               quality: parseFloat(this.orbitQuality) || 0.7 });
         });
       }
+    },
+    copyOrbitViewUrl() {
+      if (!this.orbitViewUrl) return;
+      navigator.clipboard.writeText(this.orbitViewUrl).then(() => {
+        this.orbitUrlCopied = true;
+        setTimeout(() => { this.orbitUrlCopied = false; }, 1500);
+      }).catch(() => {});
     },
     _pushOrbitFrame() {},  // kept for compat; no longer used
 

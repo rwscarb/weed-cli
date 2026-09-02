@@ -421,9 +421,18 @@
         <option value="480">480p</option>
         <option value="360">360p</option>
       </select>
+      <select v-if="!orbitStreaming" v-model="orbitQuality" @click.stop class="orbit-res-select" title="Stream JPEG quality (bandwidth, not frame rate)">
+        <option value="0.4">q·low</option>
+        <option value="0.55">q·med</option>
+        <option value="0.7">q·high</option>
+        <option value="0.85">q·max</option>
+      </select>
       <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
               :title="orbitStreaming ? 'Stop stream' : 'Stream Orbit to network'"
               @click.stop="toggleOrbitStream">📡</button>
+      <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
+            :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"
+            @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? 'copied ✓' : orbitViewUrl }}</span>
       <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay audio to sync with VLC">
         <span>delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
         <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
@@ -544,9 +553,18 @@
           <option value="480">480p</option>
           <option value="360">360p</option>
         </select>
+        <select v-if="!orbitStreaming" v-model="orbitQuality" @click.stop class="orbit-res-select" title="Stream JPEG quality (bandwidth, not frame rate)">
+          <option value="0.4">q·low</option>
+          <option value="0.55">q·med</option>
+          <option value="0.7">q·high</option>
+          <option value="0.85">q·max</option>
+        </select>
         <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
                 :title="orbitStreaming ? 'Stop stream' : 'Stream to network'"
                 @click.stop="toggleOrbitStream">📡</button>
+        <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
+              :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"
+              @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? 'copied ✓' : orbitViewUrl }}</span>
         <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay frames before sending — use to sync VLC with the audio">
           <span>audio delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
           <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
