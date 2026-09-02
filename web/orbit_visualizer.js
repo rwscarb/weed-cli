@@ -170,6 +170,7 @@ window.orbitViz = (function () {
     const buildingCountSlider = document.getElementById('buildingCountSlider');
     const buildingCountVal = document.getElementById('buildingCountVal');
     const vizModesEl = document.getElementById('vizModes');
+    const vizModeSelect = document.getElementById('vizModeSelect');
     const vizSection = document.getElementById('vizSection');
     const vizFsBtn = document.getElementById('vizFsBtn');
 
@@ -393,6 +394,7 @@ window.orbitViz = (function () {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       s.vizMode = mode;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
+      if (vizModeSelect && vizModeSelect.value !== mode) vizModeSelect.value = mode;
       resetVizNav();
       // a class, not inline style.display -- .viz-controls > .preset-row
       // is display:contents on large viewports (see style.css) so these
@@ -418,6 +420,7 @@ window.orbitViz = (function () {
       const btn = e.target.closest('[data-viz]'); if (!btn) return;
       setVizMode(btn.dataset.viz);
     });
+    if (vizModeSelect) on(vizModeSelect, 'change', () => setVizMode(vizModeSelect.value));
 
     // ASCII resolution slider -- STRIDE 1-4, i.e. every source pixel
     // down to every 4th one, labeled with the actual resulting

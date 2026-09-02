@@ -769,68 +769,119 @@ const app = createApp({
       });
     },
 
-    // ── orbit multicast stream (WebSocket → ffmpeg → UDP multicast) ──
+    // ── orbit MJPEG stream (WebSocket → server fanout → /api/orbit-view) ──
     toggleOrbitStream() {
       if (this.orbitStreaming) {
         this.orbitStreaming = false;
-        if (this._orbitMirrorStop) { this._orbitMirrorStop(); this._orbitMirrorStop = null; }
-        if (this._orbitStreamInterval) { clearInterval(this._orbitStreamInterval); this._orbitStreamInterval = null; }
-        if (this._orbitWs) { this._orbitWs.close(); this._orbitWs = null; }
+        window._orbitStreaming = false;
+        if (this._orbitCaptureStop) { this._orbitCaptureStop(); this._orbitCaptureStop = null; }
       } else {
-        // Single offscreen canvas — always the capture source.
-        // rAF loop keeps it in sync with vizCanvas whenever orbit is open.
-        if (!this._orbitOffscreen) {
+        // Staging canvas on the main thread, sized to the selected stream
+        // resolution: vizCanvas (whatever size the dialog or fullscreen
+        // made it) is downscaled into this, read back as raw RGBA, and
+        // *transferred* to the encoder worker. willReadFrequently keeps
+        // it CPU-backed so that readback is a memcpy, not a GPU sync.
+        const _resDims = { '360': [640, 360], '480': [854, 480], '720': [1280, 720] };
+        const [_rw, _rh] = _resDims[this.orbitRes] || [1280, 720];
+        if (!this._orbitOffscreen || this._orbitOffscreen.width !== _rw || this._orbitOffscreen.height !== _rh) {
           this._orbitOffscreen = document.createElement('canvas');
-          this._orbitOffscreen.width = 1280;
-          this._orbitOffscreen.height = 720;
-          this._orbitOffscreen._ctx = this._orbitOffscreen.getContext('2d');
+          this._orbitOffscreen.width = _rw;
+          this._orbitOffscreen.height = _rh;
+          this._orbitOffscreen._ctx = this._orbitOffscreen.getContext('2d', { willReadFrequently: true });
         }
-        // Start mirror rAF BEFORE opening orbit so there's no race
-        let _mirrorRunning = true;
-        this._orbitMirrorStop = () => { _mirrorRunning = false; };
         const offscreen = this._orbitOffscreen;
-        const _mirror = () => {
-          if (!_mirrorRunning) return;
-          const vc = document.getElementById('vizCanvas');
-          if (vc && vc.width > 0) {
-            offscreen._ctx.drawImage(vc, 0, 0, offscreen.width, offscreen.height);
-          }
-          requestAnimationFrame(_mirror);
-        };
-        requestAnimationFrame(_mirror);
         // Open orbit so vizCanvas exists; wait a tick for v-if to render
         if (!this.easterEggVisible) this.easterEggVisible = true;
         this.$nextTick(() => {
+          // The WebSocket and the JPEG encode both live in a worker (see
+          // orbit_stream_worker.js for why: Chrome's toBlob encodes on
+          // *idle* time, and a heavy viz mode leaves none -- measured
+          // 1.1-1.7s per frame with the tab fully visible). The main
+          // thread's only per-frame job is drawImage + getImageData,
+          // both synchronous, so nothing here ever waits for a task slot.
           const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-          const ws = new WebSocket(`${proto}//${location.host}/api/orbit-ws?res=${this.orbitRes}`);
-          ws.binaryType = 'arraybuffer';
-          ws.onopen = () => {
-            this._orbitWs = ws;
-            this.orbitStreaming = true;
-            let _inFlight = false;
-            this._orbitStreamInterval = setInterval(() => {
-              if (ws.readyState !== WebSocket.OPEN) return;
-              if (ws.bufferedAmount > 128 * 1024) return;
-              if (_inFlight) return;
-              _inFlight = true;
-              offscreen.toBlob(blob => {
-                _inFlight = false;
-                if (!blob || ws.readyState !== WebSocket.OPEN) return;
-                if (ws.bufferedAmount > 128 * 1024) return;
-                blob.arrayBuffer().then(buf => {
-                  if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 128 * 1024)
-                    ws.send(buf);
-                }).catch(() => {});
-              }, 'image/jpeg', 0.7);
-            }, 100);
+          const wsUrl = `${proto}//${location.host}/api/orbit-ws?res=${this.orbitRes}`;
+          const worker = new Worker('orbit_stream_worker.js');
+          this._orbitWorker = worker;
+          const _TARGET_FPS = 30;
+          const _FRAME_DT = 1000 / _TARGET_FPS;
+          let _inFlight = false;
+          let _due = 0;   // timestamp the next frame is owed at
+          let _running = false;
+          // 5-second rolling counters, logged to the console, so the
+          // sender's side of "why is the stream choppy" is a number
+          // rather than a guess: fps actually sent, bytes, main-thread
+          // capture cost, worker encode+send cost, and *why* frames were
+          // skipped (backlog = socket behind, i.e. network or server;
+          // inflight = the worker was still busy with the previous
+          // frame). The server prints the matching rx line.
+          const _stat = { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, t0: performance.now() };
+          const _report = () => {
+            const dt = (performance.now() - _stat.t0) / 1000;
+            if (dt < 5) return;
+            const per = (v) => _stat.sent ? (v / _stat.sent).toFixed(1) : '-';
+            console.log(`[orbit] sent ${(_stat.sent / dt).toFixed(1)} fps, ${(_stat.bytes / dt / 1024).toFixed(0)} KB/s, `
+              + `avg capture ${per(_stat.capMs)} ms, encode+send ${per(_stat.encMs)} ms, `
+              + `skipped: backlog=${_stat.skipBacklog} inflight=${_stat.skipInflight}`);
+            Object.assign(_stat, { sent: 0, bytes: 0, capMs: 0, encMs: 0, skipBacklog: 0, skipInflight: 0, t0: performance.now() });
           };
-          ws.onerror = (e) => console.error('[orbit] WS error', e);
-          ws.onclose = () => {
-            if (this._orbitMirrorStop) { this._orbitMirrorStop(); this._orbitMirrorStop = null; }
-            if (this._orbitStreamInterval) { clearInterval(this._orbitStreamInterval); this._orbitStreamInterval = null; }
-            this._orbitWs = null;
+          const _capture = (now) => {
+            if (!_running) return;
+            requestAnimationFrame(_capture);
+            if (now < _due) return;
+            if (_inFlight) { _stat.skipInflight++; return; }
+            const vc = document.getElementById('vizCanvas');
+            if (!vc || vc.width === 0) return;
+            // Accumulator, not a "now - last >= dt" gap test: rAF
+            // doesn't tick at a clean 60Hz while the viz is heavy, and
+            // a gap test against uneven ticks quietly lands at *half*
+            // the target (a 25ms tick just misses a ~30ms gate, so the
+            // next one at 50ms is what fires -> 20fps from a 30fps
+            // setting). Owing the next frame at due+dt keeps the
+            // average on target; the max() bound means a long stall
+            // can catch up by at most one frame instead of bursting.
+            _due = Math.max(_due + _FRAME_DT, now - _FRAME_DT);
+            _inFlight = true;
+            const t0 = performance.now();
+            offscreen._ctx.drawImage(vc, 0, 0, offscreen.width, offscreen.height);
+            const img = offscreen._ctx.getImageData(0, 0, offscreen.width, offscreen.height);
+            _stat.capMs += performance.now() - t0;
+            // transfer, not copy: the ~3.7MB RGBA buffer moves to the
+            // worker in O(1), and `img` is dead after this line
+            worker.postMessage({ type: 'frame', buf: img.data.buffer, width: img.width, height: img.height }, [img.data.buffer]);
+          };
+          // terminating the worker drops its WebSocket too -- the server
+          // sees EOF and logs "WebSocket closed" exactly as before
+          const _stop = () => {
+            _running = false;
+            worker.terminate();
+            if (this._orbitWorker === worker) this._orbitWorker = null;
             this.orbitStreaming = false;
+            window._orbitStreaming = false;
           };
+          this._orbitCaptureStop = _stop;
+          worker.onmessage = (e) => {
+            const m = e.data;
+            switch (m.type) {
+              case 'open': {
+                this.orbitStreaming = true;
+                window._orbitStreaming = true;
+                const viewUrl = `${location.protocol}//${location.host}/api/orbit-view`;
+                navigator.clipboard.writeText(viewUrl).catch(() => {});
+                prompt('Open in VLC (Media → Open Network Stream):', viewUrl);
+                _running = true;
+                requestAnimationFrame(_capture);
+                break;
+              }
+              case 'done': _inFlight = false; break;
+              case 'sent': _stat.sent++; _stat.bytes += m.bytes; _stat.encMs += m.ms; _report(); break;
+              case 'skipped': _stat.skipBacklog++; break;
+              case 'error': console.error('[orbit] stream worker:', m.message); break;
+              case 'close': _stop(); break;
+            }
+          };
+          worker.onerror = (e) => { console.error('[orbit] stream worker failed:', e.message || e); _stop(); };
+          worker.postMessage({ type: 'open', url: wsUrl, width: _rw, height: _rh, quality: 0.5 });
         });
       }
     },

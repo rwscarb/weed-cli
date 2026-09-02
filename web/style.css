@@ -1190,6 +1190,7 @@ td button {
 }
 #orbit-egg-dialog .viz-controls > .preset-row.mode-controls-hidden { display: none; }
 #orbit-egg-dialog #vizModes { gap: 0.3rem; }
+#orbit-egg-dialog #vizModeSelect { display: none; }
 #orbit-egg-dialog #globalControls,
 #orbit-egg-dialog .ascii-controls {
   border-top: 1px solid var(--border);
@@ -1933,26 +1934,17 @@ code {
      what keeps the wheel centered on whatever's active even when a mode
      is picked some other way (Shift+digit, arrow-key cycling) than an
      actual swipe. */
-  #orbit-egg-dialog #vizModes {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scroll-snap-type: x mandatory;
-    -webkit-overflow-scrolling: touch;
-    scrollbar-width: none;
-    /* half the viewport's own width minus roughly half a button, on
-       each side -- lets the *first* and *last* buttons still scroll all
-       the way to the centered position instead of stopping dead against
-       the strip's own edge once they reach it, the standard trick for a
-       centered-item scroll-snap carousel. Button width varies with each
-       mode's own label length, so this is an approximation tuned to the
-       shorter labels (Bars, Scope, ...) -- close enough that even the
-       longest ones (Particles) still center out reasonably. */
-    padding: 0 calc(50% - 2.4rem);
-  }
-  #orbit-egg-dialog #vizModes::-webkit-scrollbar { display: none; }
-  #orbit-egg-dialog #vizModes .viz-mode-btn {
-    scroll-snap-align: center;
-    flex-shrink: 0;
+  /* swap spin-wheel for a plain dropdown at narrow widths */
+  #orbit-egg-dialog #vizModes .viz-mode-btn { display: none; }
+  #orbit-egg-dialog #vizModeSelect {
+    display: block;
+    width: 100%;
+    padding: 0.4rem 0.5rem;
+    background: var(--bg2, #1a1a1a);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
   }
 }

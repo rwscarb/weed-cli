@@ -573,6 +573,20 @@
           <button class="viz-mode-btn" data-viz="kaleido">Kaleido</button>
           <button class="viz-mode-btn" data-viz="particles">Particles</button>
           <button class="viz-mode-btn" data-viz="freefall">Freefall</button>
+          <!-- shown only on narrow viewports (≤460px) instead of the button row -->
+          <select id="vizModeSelect" class="viz-mode-select">
+            <option value="tunnel">Tunnel</option>
+            <option value="bars">Bars</option>
+            <option value="mirror">Mirror</option>
+            <option value="scope">Scope</option>
+            <option value="spiral">Spiral</option>
+            <option value="pixels">Pixels</option>
+            <option value="ascii" selected>ASCII</option>
+            <option value="plasma">Plasma</option>
+            <option value="kaleido">Kaleido</option>
+            <option value="particles">Particles</option>
+            <option value="freefall">Freefall</option>
+          </select>
         </div>
         <!-- global, not ascii-specific -- Speed/Reactivity retune every
              mode's own animation rate / audio sensitivity (see

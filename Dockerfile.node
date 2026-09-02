@@ -27,7 +27,6 @@ WORKDIR /app
 # no entry to find either.
 COPY node.py web_ui.py poc_reputation.py weed.py shell.py discovery_relay.py lightning_settle.py dht.py pyproject.toml ./
 COPY web/ ./web/
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 RUN pip install --no-cache-dir btcvm cryptography qrcode pillow kademlia
 
 # The commit hash node.weed_banner() shows (see _git_commit_hash's own
