@@ -621,11 +621,12 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                 _hosts[host_id].update(files=files, name=files[0]['name'],
                                         content_hash=files[0]['content_hash'],
                                         announced_on=announced, status='running')
-            if tunnel:
-                # one control connection per file, each registered under its
-                # own content hash — see shell.py do_host's docstring
-                relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
-                expanded_dir = os.path.expanduser(archive_dir)
+            # one control connection per file per relay, each registered
+            # under its own content hash — see shell.py do_host's docstring.
+            # `tunnel` is a list of addresses (or, from a config persisted
+            # before that, a single string -- _parse_tunnels takes either)
+            expanded_dir = os.path.expanduser(archive_dir)
+            for relay_host, relay_port, use_tls in node._parse_tunnels(tunnel):
                 for entry in entries:
                     file_path = node.resolve_file_path(entry, expanded_dir)
                     threading.Thread(target=node.run_host_tunnel,
@@ -842,6 +843,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
             '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
+            '/api/sync-relays': self._handle_sync_relays,
             '/api/verify': self._handle_verify, '/api/play': self._handle_play,
             '/api/playlists/create': self._handle_playlist_create,
             '/api/playlists/rename': self._handle_playlist_rename,
@@ -1002,7 +1004,9 @@ class Handler(BaseHTTPRequestHandler):
         price = int(body.get('price') or 0)
         relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
         advertise_host = body.get('advertise_host') or '127.0.0.1'
-        tunnel = body.get('tunnel') or None
+        # one address, a comma-separated string, or a list -- kept as a
+        # list of addresses; the host registers with every one
+        tunnel = node._split_tunnel_spec(body.get('tunnel')) or None
         ln_node = body.get('lightning_node') or None
 
         file_name = body.get('file_name')
@@ -1093,8 +1097,7 @@ class Handler(BaseHTTPRequestHandler):
         if not content_hash:
             return self._json({'error': 'content_hash required'}, status=400)
         identity = _identity()
-        event = identity.sign_event('like', content_hash=content_hash)
-        result = node.post_event(body.get('relay') or DEFAULT_RELAY, event)
+        result = node.like(identity, _as_list(body.get('relay'), [DEFAULT_RELAY]), content_hash)
         with _lock:
             if content_hash not in _library['likes']:
                 _library['likes'].append(content_hash)
@@ -1106,13 +1109,22 @@ class Handler(BaseHTTPRequestHandler):
         if not target_pubkey:
             return self._json({'error': 'target_pubkey required'}, status=400)
         identity = _identity()
-        event = identity.sign_event('subscribe', target_pubkey=target_pubkey)
-        result = node.post_event(body.get('relay') or DEFAULT_RELAY, event)
+        result = node.subscribe(identity, _as_list(body.get('relay'), [DEFAULT_RELAY]), target_pubkey)
         with _lock:
             if target_pubkey not in _library['subscriptions']:
                 _library['subscriptions'].append(target_pubkey)
                 _save_library()
         self._json({'result': result})
+
+    def _handle_sync_relays(self, body):
+        """POST /api/sync-relays {relay: [...], all: bool} -- one on-demand
+        pass of node.sync_relays; the periodic version is
+        _relay_sync_loop (run_web_ui)."""
+        relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
+        if len(relay_urls) < 2:
+            return self._json({'error': 'sync needs at least two relays to mirror between'}, status=400)
+        report = node.sync_relays(relay_urls, identity=_identity(), all_signers=bool(body.get('all')))
+        self._json(report)
 
     def _handle_play(self, body):
         """Called once per openPlayer() on the frontend (Discover's ▶ Play,
@@ -1563,6 +1575,42 @@ def _generate_self_signed_cert(host):
     return cert_path, key_path
 
 
+def _sync_relay_set():
+    """Every relay this node has any reason to care about: the default,
+    plus whatever each persisted/active host announces on."""
+    relays = [DEFAULT_RELAY]
+    with _lock:
+        for cfg in _persisted_hosts.values():
+            relays.extend(cfg.get('relay') or [])
+        for h in _hosts.values():
+            relays.extend(h.get('announced_on') or [])
+    return list(dict.fromkeys(r for r in relays if r))
+
+
+def _relay_sync_loop(interval=600, initial_delay=60, quiet=False):
+    """Automatic relay redundancy for this node's own events: every
+    `interval` seconds, mirror them across every relay it knows (see
+    node.sync_relays for what/why). A relay that was down when a host
+    announced, or that lost its data, catches up on the next pass with
+    no one having to notice. Own events only -- a node re-broadcasting
+    strangers' events to every relay it knows would make one spammy
+    relay everyone's problem."""
+    time.sleep(initial_delay)
+    while True:
+        relays = _sync_relay_set()
+        if len(relays) >= 2:
+            try:
+                report = node.sync_relays(relays, identity=_identity())
+                added = sum(r['added'] for r in report['relays'].values())
+                if added and not quiet:
+                    print(f"[web] relay sync: mirrored {added} event(s) across "
+                          f"{len(report['relays'])} relay(s)", flush=True)
+            except Exception as e:
+                if not quiet:
+                    print(f"[web] relay sync failed: {type(e).__name__}: {e}", flush=True)
+        time.sleep(interval)
+
+
 def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None,
                tls=False, certfile=None, keyfile=None):
     global _lan_url
@@ -1570,6 +1618,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
     _rehydrate_jobs_from_library()
     _load_persisted_hosts()
     _resume_persisted_hosts()
+    threading.Thread(target=_relay_sync_loop, kwargs={'quiet': quiet}, daemon=True).start()
     srv = WebUIServer((bind_host, port), Handler)
 
     if tls:

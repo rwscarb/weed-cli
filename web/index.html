@@ -40,6 +40,9 @@
           <input type="text" v-model="discoverRelays">
         </label>
         <button type="submit" class="refresh-btn" :disabled="discoverLoading">{{ discoverLoading ? 'Discovering…' : 'Refresh' }}</button>
+        <button type="button" class="refresh-btn" @click="syncRelays" :disabled="discoverRelaysList.length < 2"
+                title="Copy your own signed events (publishes, likes, subscribes) to every relay listed that's missing them — needs two or more relays">⟳ Sync relays</button>
+        <span class="sync-result" v-if="syncResult">{{ syncResult }}</span>
       </form>
       <form class="inline-form" @submit.prevent>
         <label>Search
@@ -211,8 +214,8 @@
         <input type="checkbox" v-model="hostForm.tunnelEnabled">
         Behind NAT — use a tunnel relay
       </label>
-      <label :class="{hidden: !hostForm.tunnelEnabled}">Tunnel relay (host:port)
-        <input type="text" v-model="hostForm.tunnelAddr" placeholder="127.0.0.1:9199">
+      <label :class="{hidden: !hostForm.tunnelEnabled}">Tunnel relay(s) — host:port, comma-separated; registers with every one, downloaders fail over in this order
+        <input type="text" v-model="hostForm.tunnelAddr" placeholder="127.0.0.1:9199, tls://tunnel.example.org:9199">
       </label>
       <button type="submit">Start hosting</button>
     </form>
@@ -225,7 +228,7 @@
           <td>{{ !h.name ? '(starting…)' : (h.files && h.files.length > 1 ? h.files.length + ' files' : h.name) }}</td>
           <td>{{ h.port }}</td>
           <td>{{ h.price ? h.price + ' sat' : 'free' }}</td>
-          <td>{{ h.tunnel || '—' }}</td>
+          <td>{{ (Array.isArray(h.tunnel) ? h.tunnel.join(', ') : h.tunnel) || '—' }}</td>
           <td :title="ottStatusTitle(h.ott_status)">{{ ottStatusText(h.ott_status) }}</td>
           <td :class="h.status === 'error' ? 'status-error' : (h.status === 'running' ? 'status-done' : 'status-running')">
             {{ h.status === 'error' ? 'error: ' + h.error : h.status }}
@@ -587,9 +590,9 @@
            buttons -- see style.css max-width: 460px rules. -->
       <div class="viz-controls">
         <div class="preset-row" id="vizModes" title="Click the lit mode again to turn the effects off and watch the plain video">
-          <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
           <button class="viz-mode-btn" data-viz="bars">Bars</button>
           <button class="viz-mode-btn" data-viz="mirror">Mirror</button>
+          <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
           <button class="viz-mode-btn" data-viz="scope">Scope</button>
           <button class="viz-mode-btn" data-viz="spiral">Spiral</button>
           <button class="viz-mode-btn" data-viz="pixels">Pixels</button>
@@ -600,9 +603,9 @@
           <button class="viz-mode-btn" data-viz="freefall">Freefall</button>
           <!-- shown only on narrow viewports (≤460px) instead of the button row -->
           <select id="vizModeSelect" class="viz-mode-select">
-            <option value="tunnel">Tunnel</option>
             <option value="bars">Bars</option>
             <option value="mirror">Mirror</option>
+            <option value="tunnel">Tunnel</option>
             <option value="scope">Scope</option>
             <option value="spiral">Spiral</option>
             <option value="pixels">Pixels</option>

@@ -690,15 +690,20 @@ class HostConnection:
     command (the old behavior) is untenable once a tunnel relay is in the
     path."""
 
-    def __init__(self, sock):
+    def __init__(self, sock, via=None):
         self.sock = sock
+        # human-readable "where this session actually goes" -- 'host:port'
+        # or 'tunnel relay:port' -- for download()'s own progress lines,
+        # now that a tunneled download may have failed over between relays
+        # before landing on the one that answered
+        self.via = via or 'host'
 
     @classmethod
     def connect_direct(cls, host, port, timeout=10):
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect((host, port))
-        return cls(sock)
+        return cls(sock, via=f'{host}:{port}')
 
     @classmethod
     def connect_via_tunnel(cls, relay_host, relay_port, token, use_tls=False, timeout=10):
@@ -712,7 +717,7 @@ class HostConnection:
             ctx = ssl.create_default_context()
             sock = ctx.wrap_socket(sock, server_hostname=relay_host)
         sock.sendall(f'CONNECT {token}\n'.encode())
-        return cls(sock)
+        return cls(sock, via=f'tunnel {relay_host}:{relay_port}')
 
     def request(self, line):
         self.sock.sendall((line + '\n').encode())
@@ -750,17 +755,84 @@ def _parse_tunnel(tunnel_addr):
     return relay_host, int(relay_port), use_tls
 
 
+def _split_tunnel_spec(spec):
+    """One or more tunnel relay addresses -> list of address strings.
+    Accepts None, one '[tls://]host:port', a comma-separated string of
+    them, or a list/tuple of either. Blank entries dropped, duplicates
+    collapsed, order kept -- order is the failover order on the client
+    side (see open_connection)."""
+    if not spec:
+        return []
+    parts = [spec] if isinstance(spec, str) else list(spec)
+    out = []
+    for p in parts:
+        for piece in (p or '').split(','):
+            piece = piece.strip()
+            if piece and piece not in out:
+                out.append(piece)
+    return out
+
+
+def _parse_tunnels(spec):
+    """_parse_tunnel over every entry of _split_tunnel_spec: a list of
+    (relay_host, relay_port, use_tls)."""
+    return [_parse_tunnel(s) for s in _split_tunnel_spec(spec)]
+
+
+def candidate_tunnels(candidate):
+    """The tunnel relays a discovered publish event names, parsed, in the
+    host's own order: 'tunnels' (a list, on events from hosts that
+    registered with more than one relay) falling back to 'tunnel' (the
+    single field every tunneled event has always carried, and the only
+    one an older client reads). [] means the host is directly
+    reachable at its advertised address."""
+    return _parse_tunnels(candidate.get('tunnels') or candidate.get('tunnel'))
+
+
 def open_connection(host_addr, tunnel=None, content_hash=None, timeout=10):
     """host_addr is 'host:port' — used directly unless tunnel is given, in
     which case it's ignored and content_hash is used as the tunnel
     rendezvous token instead (the host isn't reachable at host_addr at
-    all in that case). tunnel is a pre-parsed _parse_tunnel() result."""
-    if tunnel:
+    all in that case). tunnel is one pre-parsed _parse_tunnel() result or
+    a list of them (candidate_tunnels): tried in order, the first that
+    actually reaches the host wins.
+
+    "Connected to the relay" proves nothing on its own: a tunnel relay
+    accepts any CONNECT, and only afterwards either answers 'ERR no such
+    host' or, if the host is registered but never dials back, closes
+    after its own pairing timeout. So every tunnel gets probed with one
+    real INFO round trip before being handed back -- that's what makes
+    failing over to the next relay possible at all, treating a relay
+    that's up but doesn't know this host the same as one that's down.
+    INFO is idempotent; the caller's own INFO afterward is unaffected."""
+    if isinstance(tunnel, tuple):
+        tunnels = [tunnel]
+    else:
+        tunnels = list(tunnel) if tunnel else []
+    if tunnels:
         if not content_hash:
             raise ValueError("tunnel connection requires content_hash as the rendezvous token")
-        relay_host, relay_port, use_tls = tunnel
-        return HostConnection.connect_via_tunnel(relay_host, relay_port, content_hash,
-                                                   use_tls=use_tls, timeout=timeout)
+        last_err = None
+        for relay_host, relay_port, use_tls in tunnels:
+            try:
+                conn = HostConnection.connect_via_tunnel(relay_host, relay_port, content_hash,
+                                                         use_tls=use_tls, timeout=timeout)
+            except OSError as e:
+                last_err = e
+                continue
+            try:
+                probe = conn.request('INFO')
+            except OSError as e:
+                conn.close()
+                last_err = e
+                continue
+            if not probe.startswith('{'):
+                conn.close()
+                last_err = OSError(f"tunnel {relay_host}:{relay_port}: "
+                                   f"{probe or 'closed the connection (host not registered there?)'}")
+                continue
+            return conn
+        raise last_err
     host, port_s = host_addr.rsplit(':', 1)
     return HostConnection.connect_direct(host, int(port_s), timeout=timeout)
 
@@ -770,8 +842,8 @@ def download(host_addr, out_path, tunnel=None, content_hash=None, on_progress=No
     from ott import merkle_root  # pip install btcvm
 
     out_path = os.path.expanduser(out_path)
-    via = f"tunnel {tunnel[0]}:{tunnel[1]}" if tunnel else host_addr
     with open_connection(host_addr, tunnel=tunnel, content_hash=content_hash) as conn:
+        via = conn.via
         if content_hash and not tunnel:
             # tunnel connections are already scoped to one file by the relay's
             # rendezvous token (see run_host_tunnel) — SELECT is only needed
@@ -860,7 +932,7 @@ def verify_local_download(content_hash, relay_urls, path):
     if not hosts:
         return {'ok': False, 'error': 'no host currently advertising this content_hash on the given relay(s)'}
     match = hosts[0]
-    tunnel = _parse_tunnel(match['tunnel']) if match.get('tunnel') else None
+    tunnel = candidate_tunnels(match)
 
     with open_connection(match['host'], tunnel=tunnel, content_hash=content_hash) as conn:
         if content_hash and not tunnel:
@@ -1002,7 +1074,7 @@ def select_host(candidates, k=3, reputation=None, trust_in_signers=None):
 
     scored = []
     for c in candidates:
-        tunnel = _parse_tunnel(c.get('tunnel'))
+        tunnel = candidate_tunnels(c)
         try:
             with open_connection(c['host'], tunnel=tunnel, content_hash=c['content_hash']) as conn:
                 if not tunnel:
@@ -1109,7 +1181,7 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
     # session that then serves the bytes — see its own docstring for why:
     # this host's own INVOICE, paid by lightning_node, not a fixed demo
     # pair settled regardless of who actually won the auction
-    path = download(c['host'], out_path or c['title'], tunnel=_parse_tunnel(c.get('tunnel')),
+    path = download(c['host'], out_path or c['title'], tunnel=candidate_tunnels(c),
                      content_hash=c['content_hash'], on_progress=on_progress,
                      price=winner['price'], use_lightning=use_lightning, lightning_node=lightning_node)
 
@@ -1259,6 +1331,121 @@ def ott_commit_status(archive_dir):
         return None
 
 
+def _relay_list(relay_urls):
+    """A relay argument as every caller here may pass it -- one URL, or a
+    list/tuple/set of them -- normalized to a list. None/'' -> []."""
+    if not relay_urls:
+        return []
+    return [relay_urls] if isinstance(relay_urls, str) else list(relay_urls)
+
+
+def broadcast_event(relay_urls, event):
+    """post_event to every relay in the list. ok is True if *any* relay
+    took it -- one dead relay in the list is routine (see post_event),
+    not a reason to call the whole post failed; the per-relay results
+    are there for anyone who wants to know exactly which ones did."""
+    results = {r: post_event(r, event) for r in _relay_list(relay_urls)}
+    return {'ok': any(bool(r.get('ok')) for r in results.values()),
+            'results': results, 'event_id': attestation_id(event)}
+
+
+def _post_to(relay_url, event):
+    """One URL keeps post_event's own return shape (a single relay's own
+    {'ok': ..} reply -- what every existing caller and test checks); a
+    list gets broadcast_event's summary."""
+    if isinstance(relay_url, (list, tuple, set)):
+        return broadcast_event(relay_url, event)
+    return post_event(relay_url, event)
+
+
+def like(identity, relay_urls, content_hash):
+    """Sign and post a like to every relay given -- one relay dying
+    shouldn't be able to erase a signal that was meant for the network."""
+    return broadcast_event(relay_urls, identity.sign_event('like', content_hash=content_hash))
+
+
+def subscribe(identity, relay_urls, target_pubkey):
+    return broadcast_event(relay_urls, identity.sign_event('subscribe', target_pubkey=target_pubkey))
+
+
+def _relay_signer_cap():
+    try:
+        import discovery_relay
+        return discovery_relay.MAX_EVENTS_PER_SIGNER
+    except Exception:
+        return 200
+
+
+def sync_relays(relay_urls, identity=None, all_signers=False, per_signer_cap=None):
+    """Mirror events between relays so that nothing lives on exactly one
+    of them. Relays never talk to each other by design (a relay is a dumb
+    store-and-forward box, see discovery_relay.py) -- so redundancy is
+    the *client's* job: read every reachable relay, take the union of
+    every validly-signed event, and post each relay whatever it's
+    missing. Relays verify signatures on the way in and dedupe by event
+    id, so re-posting someone else's signed event is both safe (it can't
+    be altered) and idempotent (a second sync adds nothing).
+
+    Scope: by default only events *you* signed (identity's own publishes,
+    likes, subscribes, attestations) -- that's the exposure you actually
+    control, and every node mirroring its own events gives the whole
+    network redundancy without any one node re-broadcasting strangers'
+    spam to every relay it knows. all_signers=True mirrors everything.
+
+    per_signer_cap (default: the relay's own MAX_EVENTS_PER_SIGNER) keeps
+    this from fighting a relay's per-signer eviction forever: only a
+    signer's newest N events are considered mirror-worthy, so an old
+    event a relay already evicted isn't pushed back in (evicting a newer
+    one) just to be evicted again on the next pass.
+
+    Returns {'relays': {url: {'had', 'added', 'failed'}}, 'unreachable':
+    [urls], 'events': n_considered}."""
+    cap = per_signer_cap or _relay_signer_cap()
+    mine = identity.pubkey_hex() if identity is not None else None
+    have = {}      # relay -> set of event ids it already serves
+    union = {}     # event id -> event
+    unreachable = []
+    for relay_url in _relay_list(relay_urls):
+        events = fetch_events(relay_url)
+        if events is None:
+            unreachable.append(relay_url)
+            continue
+        ids = set()
+        for e in events:
+            ok, _ = verify_attestation(e)
+            if not ok:
+                continue
+            if not all_signers and e['payload'].get('signer_pubkey') != mine:
+                continue
+            eid = attestation_id(e)
+            ids.add(eid)
+            union.setdefault(eid, e)
+        have[relay_url] = ids
+
+    by_signer = {}
+    for eid, e in union.items():
+        by_signer.setdefault(e['payload'].get('signer_pubkey'), []).append((e['payload'].get('ts', 0), eid))
+    keep = set()
+    for stamped in by_signer.values():
+        stamped.sort(reverse=True)
+        keep.update(eid for _, eid in stamped[:cap])
+
+    report = {}
+    for relay_url, ids in have.items():
+        missing = [union[eid] for eid in keep - ids]
+        # oldest first: if a relay's cap does evict something as these
+        # land, it evicts the oldest, i.e. exactly what we'd least mind
+        missing.sort(key=lambda e: e['payload'].get('ts', 0))
+        added = failed = 0
+        for e in missing:
+            if post_event(relay_url, e).get('ok'):
+                added += 1
+            else:
+                failed += 1
+        report[relay_url] = {'had': len(ids), 'added': added, 'failed': failed}
+    return {'relays': report, 'unreachable': unreachable, 'events': len(keep)}
+
+
 def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ott_status=None):
     """tunnel, if given, is 'relay_host:relay_port' for a tunnel_relay.py
     instance this host registered with — additive and backward compatible,
@@ -1268,9 +1455,19 @@ def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ot
     optional field — an event without it just means the discovering
     client doesn't get a BTC-commit answer for that listing, same as
     before this existed."""
-    event = identity.sign_event('publish', content_hash=content_hash, title=title,
-                                 host=host_addr, tunnel=tunnel, ott_status=ott_status)
-    return post_event(relay_url, event)
+    # tunnel may name several relays (see _split_tunnel_spec) -- the
+    # event keeps the single 'tunnel' field every client has always read
+    # (the first one), and adds 'tunnels' (all of them, in failover
+    # order) only when there's more than one, so a single-relay event's
+    # payload is byte-for-byte what it was before this existed.
+    # relay_url may likewise be one URL or a list -- see _post_to.
+    tunnels = _split_tunnel_spec(tunnel)
+    fields = dict(content_hash=content_hash, title=title, host=host_addr,
+                  tunnel=tunnels[0] if tunnels else None, ott_status=ott_status)
+    if len(tunnels) > 1:
+        fields['tunnels'] = tunnels
+    event = identity.sign_event('publish', **fields)
+    return _post_to(relay_url, event)
 
 
 def unpublish(identity, relay_url, content_hash):
@@ -1285,7 +1482,7 @@ def unpublish(identity, relay_url, content_hash):
     publish for the same content_hash — this is scoped to this signer's
     own listing only, same as everything else keyed off signer_pubkey."""
     event = identity.sign_event('unpublish', content_hash=content_hash)
-    return post_event(relay_url, event)
+    return _post_to(relay_url, event)
 
 
 def discover(relay_urls):

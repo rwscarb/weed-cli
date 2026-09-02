@@ -389,6 +389,40 @@ def test_resume_persisted_hosts_auto_prunes_permanently_broken_entries(web_serve
     assert bad_key not in web_ui._persisted_hosts
 
 
+def test_like_goes_to_every_relay_listed_and_sync_mirrors_the_rest(web_server, relay, relay2):
+    import web_ui
+    status, resp = http_post_json(f'{web_server}/api/like', {'content_hash': 'c' * 64, 'relay': [relay, relay2]})
+    assert status == 200
+    assert resp['result']['ok'] is True
+    assert set(resp['result']['results']) == {relay, relay2}
+
+    # something this node signed that only ever reached one relay
+    node.publish(web_ui._identity(), relay, content_hash='d' * 64, title='v', host_addr='127.0.0.1:9201')
+    assert node.discover([relay2]) == []
+    status, report = http_post_json(f'{web_server}/api/sync-relays', {'relay': [relay, relay2]})
+    assert status == 200
+    assert report['relays'][relay2]['added'] == 1
+    assert len(node.discover([relay2])) == 1
+
+    status, err = http_post_json(f'{web_server}/api/sync-relays', {'relay': [relay]})
+    assert status == 400 and 'two relays' in err['error']
+
+
+def test_host_accepts_a_comma_separated_tunnel_list(web_server, tmp_path):
+    import web_ui
+    archive_dir = str(tmp_path / 'archive')
+    make_fake_archive(archive_dir)
+    status, resp = http_post_json(f'{web_server}/api/host', {
+        'archive_dir': archive_dir, 'port': free_port(), 'relay': [],
+        'tunnel': '127.0.0.1:1, 127.0.0.1:2',
+    })
+    assert status == 200
+    cfg = next(iter(web_ui._persisted_hosts.values()))
+    assert cfg['tunnel'] == ['127.0.0.1:1', '127.0.0.1:2']
+    hosts = http_get_json(f'{web_server}/api/hosts')['hosts']
+    assert hosts[0]['tunnel'] == ['127.0.0.1:1', '127.0.0.1:2']
+
+
 def test_cross_origin_post_rejected(web_server):
     """No auth at all by design (see web_ui.py's module docstring) --
     Origin-checking is the only thing standing between this and any other

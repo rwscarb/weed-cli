@@ -84,6 +84,10 @@ weed discover --relay http://127.0.0.1:9101
 weed download <content_hash_prefix> --relay http://127.0.0.1:9101 --out downloaded.mp4
 weed like <content_hash> --relay http://127.0.0.1:9101
 weed subscribe <target_pubkey> --relay http://127.0.0.1:9101
+
+# --relay is repeatable everywhere: an event goes to every relay named,
+# and this copies anything you signed that one relay has and another lacks
+weed sync-relays --relay http://127.0.0.1:9101 --relay https://relay.example.org
 ```
 
 `--advertise-host` matters once you're off localhost — there's no NAT
@@ -289,12 +293,18 @@ downloader `CONNECT`s; the relay asks the host to dial back
 sockets, no opinion on the tunneled protocol. Supports TLS at the edge
 (`tls://` prefix, for relays like Fly that terminate TLS themselves) and
 a periodic heartbeat so idle control connections survive proxies that
-reset connections after a few minutes of silence.
+reset connections after a few minutes of silence. `--tunnel` is
+repeatable: the host registers with every relay named, the publish
+event lists them all in order, and a downloader tries each in turn —
+probing with a real `INFO` round trip, since a relay accepts any
+`CONNECT` and only afterwards says whether it knows the host — so one
+tunnel relay being down (or restarted, or having never heard of this
+host) is a skipped entry, not a failed download.
 
 ```bash
 python3 discovery_relay.py 9101
 python3 tunnel_relay.py 9199
-weed host real_archive --port 9201 --tunnel 127.0.0.1:9199 \
+weed host real_archive --port 9201 --tunnel 127.0.0.1:9199 --tunnel tls://tunnel.example.org:9199 \
     --relay http://127.0.0.1:9101 --advertise-host 10.255.255.1
 weed download <content_hash> --relay http://127.0.0.1:9101 --out downloaded.mp4
 ```
@@ -349,8 +359,12 @@ mechanisms hold up:
 
 - Loopback timing separation isn't airtight on a single sample —
   averaging repeated challenges is required.
-- Relay death loses anything posted exclusively there; redundancy
-  across relays isn't automatic.
+- Relays still never talk to each other. Every event a node signs now
+  goes to every relay it names, the web UI mirrors its own events across
+  its relays every few minutes, and `weed sync-relays` does the same on
+  demand — but that redundancy is per node, scoped to that node's own
+  events by default (`--all` mirrors everyone's). An event whose signer
+  only ever named one relay, and never syncs, still dies with it.
 - Lightning settlement is regtest-only, and both sides still have to
   name which of exactly two demo LND identities (`alice`/`bob`) they
   are — the protocol pays whoever really won, but the pool of real
@@ -358,8 +372,9 @@ mechanisms hold up:
   an arbitrary host's own independently-run LND node.
 - The DHT covers host-discovery only, not the richer publish/like/
   subscribe/attestation event system.
-- The tunnel relay (even with TLS) is a single point of failure and
-  bandwidth cost, with no redundancy story the way discovery relays have.
-- The web UI has no authentication; it's local-only by design. It also
-  doesn't expose `--lightning-node` in its Host/Download forms yet,
-  even though the API accepts it.
+- A host can register with several tunnel relays and downloaders fail
+  over between them, but each relay is still a bandwidth cost the host
+  can't avoid — every tunneled byte crosses it — and an active download
+  doesn't migrate if its relay dies mid-transfer; it restarts on the
+  next one.
+- The web UI has no authentication; it's local-only by design.

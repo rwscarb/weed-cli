@@ -67,16 +67,15 @@ def web_server(isolated_paths):
     srv.server_close()
 
 
-@pytest.fixture()
-def relay(tmp_path):
+def _spawn_relay(tmp_path, name):
     """A real discovery_relay.py, run as a genuinely separate process (not
     imported in-process) -- its event store is plain module globals, so
     two relays sharing one interpreter would silently share state, which
     is exactly wrong for a test that wants two *independent* relays (see
-    test_discovery_relay.py's failover test). Same subprocess pattern
-    poc_discovery.py's own demo already uses for the same reason."""
+    test_discovery_relay.py's failover and sync tests). Same subprocess
+    pattern poc_discovery.py's own demo already uses for the same reason."""
     port = free_port()
-    data_path = str(tmp_path / 'relay_events.jsonl')
+    data_path = str(tmp_path / f'{name}_events.jsonl')
     env = dict(os.environ, WEED_RELAY_DATA=data_path)
     repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     proc = subprocess.Popen(
@@ -92,3 +91,15 @@ def relay(tmp_path):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+
+@pytest.fixture()
+def relay(tmp_path):
+    yield from _spawn_relay(tmp_path, 'relay')
+
+
+@pytest.fixture()
+def relay2(tmp_path):
+    """A second, fully independent relay -- for everything about posting
+    to several relays and mirroring between them."""
+    yield from _spawn_relay(tmp_path, 'relay2')

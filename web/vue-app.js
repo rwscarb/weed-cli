@@ -47,6 +47,7 @@ const app = createApp({
       activeTab: tabs.some(t => t.id === hashTab) ? hashTab : 'discover',
 
       discoverRelays: 'http://127.0.0.1:9101',
+      syncResult: '',
       discoverResults: [],
       // true until the first refreshDiscover() actually resolves -- starts
       // true (not false) since mounted() awaits whoami/config/library
@@ -1226,16 +1227,33 @@ const app = createApp({
     // so the player header (which only ever knows content_hash/
     // signer_pubkey, not a full discover result) can call the exact same
     // logic instead of a separate copy
+    // every relay in the Discover box, not just the first: a like or
+    // subscribe is meant for the network, and one relay dying shouldn't
+    // be able to lose it (the server posts to each and reports per relay)
     async like(contentHash) {
-      await this.apiPost('/api/like', { content_hash: contentHash, relay: this.discoverRelaysList[0] });
+      await this.apiPost('/api/like', { content_hash: contentHash, relay: this.discoverRelaysList });
       this.library.likes.add(contentHash);
     },
 
     // outline -> filled star on subscribe, same toggle language as
     // GitHub/Twitter follow stars
     async subscribe(signerPubkey) {
-      await this.apiPost('/api/subscribe', { target_pubkey: signerPubkey, relay: this.discoverRelaysList[0] });
+      await this.apiPost('/api/subscribe', { target_pubkey: signerPubkey, relay: this.discoverRelaysList });
       this.library.subscriptions.add(signerPubkey);
+    },
+
+    // one on-demand pass of the server's relay mirroring (it also runs
+    // one on its own every few minutes for the relays its hosts use)
+    async syncRelays() {
+      const relays = this.discoverRelaysList;
+      if (relays.length < 2) { this.syncResult = 'name at least two relays to sync between'; return; }
+      this.syncResult = 'syncing…';
+      const r = await this.apiPost('/api/sync-relays', { relay: relays });
+      if (r.error) { this.syncResult = 'error: ' + r.error; return; }
+      const added = Object.values(r.relays || {}).reduce((n, x) => n + (x.added || 0), 0);
+      const dead = (r.unreachable || []).length;
+      this.syncResult = `${r.events} of your event(s) on ${Object.keys(r.relays || {}).length} relay(s), `
+        + `${added} copied` + (dead ? `, ${dead} unreachable` : '');
     },
 
     // ── playlists ─────────────────────────────────────────────────────

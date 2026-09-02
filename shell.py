@@ -141,7 +141,7 @@ class WeedShell(cmd.Cmd):
         relay = self.default_relay
         no_announce = '--no-announce' in parts
         advertise_host = '127.0.0.1'
-        tunnel = self.default_tunnel
+        tunnel_args = []   # every --tunnel given; falls back to the session default below
         ln_node = None
         i = 1
         while i < len(parts):
@@ -162,11 +162,14 @@ class WeedShell(cmd.Cmd):
                 advertise_host = parts[i]
             elif parts[i] == '--tunnel' and i + 1 < len(parts):
                 i += 1
-                tunnel = parts[i]
+                tunnel_args.append(parts[i])
             elif parts[i] == '--lightning-node' and i + 1 < len(parts):
                 i += 1
                 ln_node = parts[i]
             i += 1
+        # one string or a list, either possibly comma-separated -- every
+        # consumer below goes through node._split_tunnel_spec/_parse_tunnels
+        tunnel = tunnel_args or self.default_tunnel
 
         # remember an explicit --relay/--tunnel for the rest of the
         # session, same as `discover` already does for --relay
@@ -204,11 +207,10 @@ class WeedShell(cmd.Cmd):
                 print(f'  announced {entry["name"]} on {relay}: {result}')
         elif not relay:
             print('  no relay set (run `relay` first, or pass --relay) — hosting without announcing')
-        if tunnel:
-            # one control connection per file, each registered under its
-            # own content hash — see do_host's docstring
-            relay_host, relay_port, use_tls = node._parse_tunnel(tunnel)
-            expanded_dir = os.path.expanduser(archive_dir)
+        # one control connection per file per relay, each registered
+        # under its own content hash — see do_host's docstring
+        expanded_dir = os.path.expanduser(archive_dir)
+        for relay_host, relay_port, use_tls in node._parse_tunnels(tunnel):
             for entry in entries:
                 file_path = node.resolve_file_path(entry, expanded_dir)
                 tt = threading.Thread(target=_bg,
@@ -226,7 +228,8 @@ class WeedShell(cmd.Cmd):
         t.start()
         self._host_threads.append(t)
         price_note = f', {price} sat/download' if price else ', free'
-        tunnel_note = f', tunneled via {tunnel}' if tunnel else ''
+        tunnel_names = node._split_tunnel_spec(tunnel)
+        tunnel_note = f", tunneled via {', '.join(tunnel_names)}" if tunnel_names else ''
         if len(entries) == 1:
             print(f'  hosting {entries[0]["name"]} on port {port} in the background{price_note}'
                   f'{tunnel_note} — shell still usable')
@@ -427,31 +430,60 @@ class WeedShell(cmd.Cmd):
         node.download_with_auction(prefix, [relay], out_path=out, k=rounds,
                                     use_lightning=use_lightning, lightning_node=ln_node)
 
+    def _relay_args(self, parts):
+        """Every `--relay URL` in parts (repeatable), else the session
+        default -- and the remaining positional args."""
+        relays, rest = [], []
+        i = 0
+        while i < len(parts):
+            if parts[i] == '--relay' and i + 1 < len(parts):
+                relays.append(parts[i + 1])
+                i += 2
+                continue
+            rest.append(parts[i])
+            i += 1
+        return (relays or [self.default_relay]), rest
+
+    def _print_broadcast(self, result):
+        for relay_url, r in result['results'].items():
+            print(f"  {'✓' if r.get('ok') else '✗'} {relay_url}: {r}")
+
     def do_like(self, arg):
-        """like <content_hash> [--relay URL]  — sign and post a real like event."""
-        parts = shlex.split(arg)
-        if not parts:
-            print('  usage: like <content_hash> [--relay URL]')
+        """like <content_hash> [--relay URL ...]  — sign and post a real like event
+        to every relay named (default: the session relay)."""
+        relays, rest = self._relay_args(shlex.split(arg))
+        if not rest:
+            print('  usage: like <content_hash> [--relay URL ...]')
             return
-        relay = self.default_relay
-        if '--relay' in parts:
-            i = parts.index('--relay')
-            relay = parts[i + 1]
-        event = self.identity.sign_event('like', content_hash=parts[0])
-        print(f'  {node.post_event(relay, event)}')
+        self._print_broadcast(node.like(self.identity, relays, rest[0]))
 
     def do_subscribe(self, arg):
-        """subscribe <target_pubkey> [--relay URL]  — sign and post a real subscribe event."""
-        parts = shlex.split(arg)
-        if not parts:
-            print('  usage: subscribe <target_pubkey> [--relay URL]')
+        """subscribe <target_pubkey> [--relay URL ...]  — sign and post a real subscribe
+        event to every relay named (default: the session relay)."""
+        relays, rest = self._relay_args(shlex.split(arg))
+        if not rest:
+            print('  usage: subscribe <target_pubkey> [--relay URL ...]')
             return
-        relay = self.default_relay
-        if '--relay' in parts:
-            i = parts.index('--relay')
-            relay = parts[i + 1]
-        event = self.identity.sign_event('subscribe', target_pubkey=parts[0])
-        print(f'  {node.post_event(relay, event)}')
+        self._print_broadcast(node.subscribe(self.identity, relays, rest[0]))
+
+    def do_sync(self, arg):
+        """sync --relay URL --relay URL [...] [--all]  — mirror events between relays
+        so nothing lives on just one of them (see node.sync_relays). Your own
+        signed events by default; --all mirrors everyone's."""
+        parts = shlex.split(arg)
+        all_signers = '--all' in parts
+        relays, _ = self._relay_args([p for p in parts if p != '--all'])
+        if len(relays) < 2:
+            print('  usage: sync --relay URL --relay URL [...] [--all]  (needs at least two relays)')
+            return
+        report = node.sync_relays(relays, identity=self.identity, all_signers=all_signers)
+        for relay_url, r in report['relays'].items():
+            failed = f", {r['failed']} failed" if r['failed'] else ''
+            print(f"  {relay_url}: had {r['had']}, added {r['added']}{failed}")
+        for relay_url in report['unreachable']:
+            print(f'  {relay_url}: unreachable, skipped')
+        scope = '' if all_signers else " (yours only — --all mirrors everyone's)"
+        print(f"  {report['events']} event(s) mirrored across {len(report['relays'])} relay(s){scope}")
 
     def do_quit(self, arg):
         """quit  — exit the shell."""

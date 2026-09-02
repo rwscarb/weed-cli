@@ -68,6 +68,14 @@ def _default_relay_list():
     return [relay] if relay else []
 
 
+def _default_tunnel_list():
+    # --tunnel is action='append' too (see p_host): seed it from
+    # $WEED_TUNNEL when set -- which may itself be comma-separated, see
+    # node._split_tunnel_spec
+    tunnel = os.environ.get('WEED_TUNNEL')
+    return [tunnel] if tunnel else []
+
+
 def build_parser():
     import node
     import lightning_settle
@@ -105,13 +113,16 @@ def build_parser():
                          help='address to tell the relay to advertise (set this to your real '
                               'reachable IP if hosting off localhost — or use --tunnel if you '
                               'have no reachable address at all, e.g. behind NAT/CGNAT)')
-    p_host.add_argument('--tunnel', metavar='[tls://]RELAY_HOST:PORT', default=os.environ.get('WEED_TUNNEL'),
+    p_host.add_argument('--tunnel', metavar='[tls://]RELAY_HOST:PORT', action='append',
+                         default=_default_tunnel_list(),
                          help='tunnel_relay.py address to register with instead of relying on a '
                               'reachable inbound port — see tunnel_relay.py. Downloaders connect '
-                              'through the relay, not to you directly. Prefix with tls:// if the '
-                              'relay terminates TLS at the edge (e.g. a Fly service with '
-                              'handlers = ["tls"]) — the relay process itself never needs to know. '
-                              'Default: $WEED_TUNNEL if set.')
+                              'through the relay, not to you directly. Repeatable (or comma-'
+                              'separated): the host registers with every relay named, and a '
+                              'downloader tries them in this order, so one relay being down is '
+                              'not the end of it. Prefix with tls:// if the relay terminates TLS '
+                              'at the edge (e.g. a Fly service with handlers = ["tls"]) — the '
+                              'relay process itself never needs to know. Default: $WEED_TUNNEL if set.')
 
     p_discover = sub.add_parser('discover', help='list real content announced on one or more relays')
     p_discover.add_argument('--relay', action='append', default=[_default_relay()],
@@ -139,13 +150,22 @@ def build_parser():
 
     p_like = sub.add_parser('like', help='sign and post a real like event')
     p_like.add_argument('content_hash')
-    p_like.add_argument('--relay', default=_default_relay(),
-                         help='default: $WEED_RELAY if set, else http://127.0.0.1:9101')
+    p_like.add_argument('--relay', action='append', default=[_default_relay()],
+                         help='relay URL to post to (repeatable — the event goes to every one; '
+                              'default: $WEED_RELAY if set, else http://127.0.0.1:9101)')
 
     p_subscribe = sub.add_parser('subscribe', help='sign and post a real subscribe event')
     p_subscribe.add_argument('target_pubkey')
-    p_subscribe.add_argument('--relay', default=_default_relay(),
-                              help='default: $WEED_RELAY if set, else http://127.0.0.1:9101')
+    p_subscribe.add_argument('--relay', action='append', default=[_default_relay()],
+                              help='relay URL to post to (repeatable — the event goes to every one; '
+                                   'default: $WEED_RELAY if set, else http://127.0.0.1:9101)')
+
+    p_sync = sub.add_parser('sync-relays', help='mirror events between relays so none lives on just one')
+    p_sync.add_argument('--relay', action='append', default=_default_relay_list(),
+                         help='relay URL (repeat once per relay; needs at least two)')
+    p_sync.add_argument('--all', action='store_true',
+                         help="mirror everyone's events, not just the ones you signed (the default "
+                              "scope — see node.sync_relays for why)")
 
     p_web = sub.add_parser('web', help='local web UI — discover/host/download/like/subscribe '
                                         'from a browser instead of the CLI')
@@ -213,14 +233,15 @@ def cmd_host(args):
             result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
                                    tunnel=args.tunnel, ott_status=ott_status)
             print(f"announced {entry['name']} on {relay_url}: {result}")
-    if args.tunnel:
-        # REGISTER's token is the file's own content hash (see
-        # run_host_tunnel/connect_via_tunnel), so a whole tree just means
-        # one control connection per file, each registered under its own
-        # hash — no protocol change needed, CONNECT already looks a
-        # downloader's requested hash up the same way.
-        relay_host, relay_port, use_tls = node._parse_tunnel(args.tunnel)
-        archive_dir = os.path.expanduser(args.archive_dir)
+    # REGISTER's token is the file's own content hash (see
+    # run_host_tunnel/connect_via_tunnel), so a whole tree just means one
+    # control connection per file per relay, each registered under its
+    # own hash — no protocol change needed, CONNECT already looks a
+    # downloader's requested hash up the same way. Several relays means
+    # several registrations per file: whichever one a downloader reaches
+    # first serves it (see open_connection's failover).
+    archive_dir = os.path.expanduser(args.archive_dir)
+    for relay_host, relay_port, use_tls in node._parse_tunnels(args.tunnel):
         for entry in entries:
             file_path = node.resolve_file_path(entry, archive_dir)
             threading.Thread(target=node.run_host_tunnel,
@@ -261,18 +282,38 @@ def cmd_download(args):
                                 lightning_node=args.lightning_node)
 
 
+def _print_broadcast(result):
+    for relay_url, r in result['results'].items():
+        print(f"  {'✓' if r.get('ok') else '✗'} {relay_url}: {r}")
+    if not result['ok']:
+        sys.exit('no relay accepted the event')
+
+
 def cmd_like(args):
     import node
     identity = node.load_or_create_identity()
-    event = identity.sign_event('like', content_hash=args.content_hash)
-    print(node.post_event(args.relay, event))
+    _print_broadcast(node.like(identity, args.relay, args.content_hash))
 
 
 def cmd_subscribe(args):
     import node
     identity = node.load_or_create_identity()
-    event = identity.sign_event('subscribe', target_pubkey=args.target_pubkey)
-    print(node.post_event(args.relay, event))
+    _print_broadcast(node.subscribe(identity, args.relay, args.target_pubkey))
+
+
+def cmd_sync_relays(args):
+    import node
+    if len(args.relay) < 2:
+        sys.exit('sync-relays mirrors *between* relays — name at least two with --relay')
+    identity = node.load_or_create_identity()
+    report = node.sync_relays(args.relay, identity=identity, all_signers=args.all)
+    for relay_url, r in report['relays'].items():
+        failed = f", {r['failed']} failed" if r['failed'] else ''
+        print(f"  {relay_url}: had {r['had']}, added {r['added']}{failed}")
+    for relay_url in report['unreachable']:
+        print(f"  {relay_url}: unreachable, skipped")
+    scope = '' if args.all else " (yours only — --all mirrors everyone's)"
+    print(f"  {report['events']} event(s) mirrored across {len(report['relays'])} relay(s){scope}")
 
 
 def cmd_web(args):
@@ -286,7 +327,7 @@ def cmd_web(args):
 NATIVE_COMMANDS = {
     'whoami': cmd_whoami, 'host': cmd_host, 'discover': cmd_discover,
     'download': cmd_download, 'get': cmd_download, 'like': cmd_like, 'subscribe': cmd_subscribe,
-    'web': cmd_web, 'serve': cmd_web,
+    'sync-relays': cmd_sync_relays, 'web': cmd_web, 'serve': cmd_web,
 }
 
 
