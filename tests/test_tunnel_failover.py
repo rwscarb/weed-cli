@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 import pytest
 
@@ -59,6 +60,19 @@ def hosted_file(tmp_path):
             threading.Thread(target=node.run_host_tunnel,
                              args=('127.0.0.1', port, entry['sha256'], entry, leaves, file_path, 0),
                              kwargs={'quiet': True}, daemon=True).start()
+        # REGISTER is asynchronous from this thread's point of view -- a
+        # CONNECT that races ahead of it gets an honest 'ERR no such
+        # host' from the relay. Wait until each relay really has it.
+        for port in ports:
+            deadline = time.time() + 5
+            while True:
+                try:
+                    node.open_connection('unused:0', tunnel=('127.0.0.1', port, False),
+                                         content_hash=entry['sha256']).close()
+                    break
+                except OSError:
+                    assert time.time() < deadline, f'host never registered on relay {port}'
+                    time.sleep(0.05)
 
     return {'entry': entry, 'file_path': file_path, 'register_on': register_on}
 
