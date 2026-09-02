@@ -410,12 +410,12 @@
       <button type="button" class="icon-btn like-icon" :class="{active: player.contentHash && library.likes.has(player.contentHash)}"
               :disabled="!player.contentHash || library.likes.has(player.contentHash)"
               :title="!player.contentHash ? 'content hash unknown' : (library.likes.has(player.contentHash) ? 'Liked' : 'Like')"
-              @click.stop="like(player.contentHash)">+1</button>
+              @click.stop="like(player.contentHash)">{{ player.contentHash && library.likes.has(player.contentHash) ? '♥' : '♡' }}</button>
       <button type="button" class="icon-btn sub-icon" :class="{active: player.signerPubkey && library.subscriptions.has(player.signerPubkey)}"
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
-      <button type="button" class="icon-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
+      <button type="button" class="icon-btn copy-stream-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
       <select v-if="!orbitStreaming" v-model="orbitRes" @click.stop class="orbit-res-select" title="Stream resolution">
         <option value="720">720p</option>
         <option value="480">480p</option>
@@ -430,12 +430,13 @@
       <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
               :title="orbitStreaming ? 'Stop stream (keeps running while the visualizer is closed)' : 'Stream Orbit to network'"
               @click.stop="toggleOrbitStream">📡</button>
-      <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
-            :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"
-            @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? 'copied ✓' : orbitViewUrl }}</span>
-      <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay audio to sync with VLC">
-        <span>delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
+      <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
+              :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
+              @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
+      <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
+        <span class="orbit-delay-icon">⏱</span>
         <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+        <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
       </label>
       <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
       <button type="button" class="icon-btn" title="Orbit Visualizer"
@@ -567,12 +568,13 @@
         <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
                 :title="orbitStreaming ? 'Stop stream' : 'Stream to network'"
                 @click.stop="toggleOrbitStream">📡</button>
-        <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
-              :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"
-              @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? 'copied ✓' : orbitViewUrl }}</span>
-        <label v-if="orbitStreaming" class="orbit-delay-label" title="Delay frames before sending — use to sync VLC with the audio">
-          <span>audio delay {{ (orbitDelay/1000).toFixed(1) }}s</span>
+        <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
+                :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
+                @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
+        <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
+          <span class="orbit-delay-icon">⏱</span>
           <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+          <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
         </label>
         <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
       </div>
