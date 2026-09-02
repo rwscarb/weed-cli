@@ -389,46 +389,56 @@ class WeedShell(cmd.Cmd):
                   f'host={r["host"]}  by={r["signer_pubkey"][:12]}...{hosts_note}')
 
     def do_download(self, arg):
-        """download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] [--lightning]
-        [--lightning-node NODE]
+        """download <content_hash_or_prefix> [--out FILE] [--relay URL ...] [--rounds N]
+        [--timing-rounds N] [--max-timing-ratio X] [--lightning] [--lightning-node NODE]
         — resolve every host publishing this content, possession-challenge
-        each one (N chunks sampled, default 3), auction survivors by
-        reputation then price, optionally pay the winning host's own real
-        Lightning invoice as --lightning-node (see lightning_settle.NODES),
-        download, and record the outcome to local reputation. Tab-completes
-        against the last `discover`."""
+        each one (N chunks sampled, default 3, then --timing-rounds timed
+        nonce challenges, default 5 -- see node.nonce_challenge), auction
+        survivors by reputation then price then timing, optionally pay the
+        winning host's own real Lightning invoice as --lightning-node (see
+        lightning_settle.NODES), download, and record the outcome to local
+        reputation. --max-timing-ratio X rejects a host whose challenge
+        timing is more than X times its own baseline round trip (off by
+        default: measured and shown, not enforced). Tab-completes against
+        the last `discover`."""
         parts = shlex.split(arg)
         if not parts:
-            print('  usage: download <content_hash_or_prefix> [--out FILE] [--relay URL] [--rounds N] '
-                  '[--lightning] [--lightning-node NODE]')
+            print('  usage: download <content_hash_or_prefix> [--out FILE] [--relay URL ...] [--rounds N] '
+                  '[--timing-rounds N] [--max-timing-ratio X] [--lightning] [--lightning-node NODE]')
             return
-        prefix = parts[0]
+        relays, rest = self._relay_args(parts)
+        prefix = rest[0]
         out = None
-        relay = self.default_relay
         rounds = 3
-        use_lightning = '--lightning' in parts
+        timing_rounds = 5
+        max_ratio = None
+        use_lightning = '--lightning' in rest
         ln_node = None
         i = 1
-        while i < len(parts):
-            if parts[i] == '--out' and i + 1 < len(parts):
+        while i < len(rest):
+            if rest[i] == '--out' and i + 1 < len(rest):
                 i += 1
-                out = parts[i]
-            elif parts[i] == '--relay' and i + 1 < len(parts):
+                out = rest[i]
+            elif rest[i] == '--rounds' and i + 1 < len(rest):
                 i += 1
-                relay = parts[i]
-            elif parts[i] == '--rounds' and i + 1 < len(parts):
+                rounds = int(rest[i])
+            elif rest[i] == '--timing-rounds' and i + 1 < len(rest):
                 i += 1
-                rounds = int(parts[i])
-            elif parts[i] == '--lightning-node' and i + 1 < len(parts):
+                timing_rounds = int(rest[i])
+            elif rest[i] == '--max-timing-ratio' and i + 1 < len(rest):
                 i += 1
-                ln_node = parts[i]
+                max_ratio = float(rest[i])
+            elif rest[i] == '--lightning-node' and i + 1 < len(rest):
+                i += 1
+                ln_node = rest[i]
             i += 1
 
         if use_lightning and not ln_node:
             print("  --lightning needs --lightning-node <alice|bob> to say who's paying")
             return
-        node.download_with_auction(prefix, [relay], out_path=out, k=rounds,
-                                    use_lightning=use_lightning, lightning_node=ln_node)
+        node.download_with_auction(prefix, relays, out_path=out, k=rounds,
+                                    use_lightning=use_lightning, lightning_node=ln_node,
+                                    timing_rounds=timing_rounds, max_timing_ratio=max_ratio)
 
     def _relay_args(self, parts):
         """Every `--relay URL` in parts (repeatable), else the session

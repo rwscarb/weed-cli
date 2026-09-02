@@ -141,6 +141,16 @@ def build_parser():
     p_download.add_argument('--out', help='output path (default: the advertised filename)')
     p_download.add_argument('--challenge-rounds', type=int, default=3,
                              help='chunks to sample-verify per candidate host before trusting it (default: 3)')
+    p_download.add_argument('--timing-rounds', type=int, default=5,
+                             help='nonce-salted, timed CHALLENGE rounds per candidate after the sample '
+                                  'check, reported as the median ratio of CHALLENGE time to a plain PRICE '
+                                  'round trip on the same socket -- a holder answers from disk, a relay '
+                                  'has to fetch upstream first (default: 5; 0 disables)')
+    p_download.add_argument('--max-timing-ratio', type=float, default=None,
+                             help='reject a candidate whose median timing ratio exceeds this. Off by '
+                                  'default: the ratio is always measured and printed, and breaks ties '
+                                  'in the auction, but the honest-vs-relay crossover depends on how far '
+                                  'apart they are -- measure it live before picking a number')
     p_download.add_argument('--lightning', action='store_true',
                              help='pay the winning host over a real Lightning HTLC if it has a price '
                                   '(needs the lightning/ stack up — see lightning/README.md)')
@@ -279,7 +289,8 @@ def cmd_download(args):
         sys.exit("--lightning needs --lightning-node <alice|bob> to say who's paying")
     node.download_with_auction(args.content_hash, args.relay, out_path=args.out,
                                 k=args.challenge_rounds, use_lightning=args.lightning,
-                                lightning_node=args.lightning_node)
+                                lightning_node=args.lightning_node,
+                                timing_rounds=args.timing_rounds, max_timing_ratio=args.max_timing_ratio)
 
 
 def _print_broadcast(result):

@@ -205,6 +205,13 @@ hardcode a threshold):
 Over real WAN distance (tunneled to a remote box over SSH), the gap is
 ~1700x and separates cleanly at a single sample — the hard case this
 PoC stress-tests is two peers that are genuinely close together.
+`node.py`'s real download path runs this after its FETCH-and-verify
+gate: `--timing-rounds` (default 5) nonce challenges per candidate,
+each on a chunk the host hasn't been asked to forward yet (so a relay's
+cache is cold), each timed next to a plain `PRICE` round trip on the
+same socket so the number is a ratio rather than milliseconds. Medians
+break ties in the auction; `--max-timing-ratio` turns it into a hard
+gate.
 
 **`poc_reputation.py`** — persistent local reputation plus signed,
 portable attestations (Ed25519, real signing/verification): a client's
@@ -357,8 +364,14 @@ just designed:
 Honest edges that are still real constraints even though the core
 mechanisms hold up:
 
-- Loopback timing separation isn't airtight on a single sample —
-  averaging repeated challenges is required.
+- The timing challenge is now on the real download path (`node.
+  nonce_challenge`: five nonce-salted `CHALLENGE` rounds per candidate,
+  each timed against a bytes-free `PRICE` round trip on the same socket,
+  medians, reported as a ratio) — but the verdict is still yours. The
+  ratio breaks ties in the auction and `--max-timing-ratio` can reject
+  on it; there's no default cutoff because the honest-vs-relay
+  crossover depends on how close the two are (loopback vs LAN vs WAN).
+  Measure it live, then pick a number.
 - Relays still never talk to each other. Every event a node signs now
   goes to every relay it names, the web UI mirrors its own events across
   its relays every few minutes, and `weed sync-relays` does the same on

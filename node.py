@@ -987,7 +987,9 @@ def sample_challenge(conn, leaves, k=3):
     """Fetch k random chunks over the given (already-open) connection and
     verify each against the (already Merkle-verified) leaves list —
     proves *this specific host* truly holds real chunks, not just that
-    someone somewhere does."""
+    someone somewhere does. Returns (passed, latencies_ms, indices) --
+    the indices so nonce_challenge below can stay off chunks a relaying
+    host has just seen go past."""
     n = len(leaves)
     indices = random.sample(range(n), min(k, n))
     latencies = []
@@ -996,14 +998,102 @@ def sample_challenge(conn, leaves, k=3):
         try:
             resp = conn.request(f'FETCH {idx}')
         except OSError:
-            return False, latencies
+            return False, latencies, indices
         latencies.append((time.perf_counter() - t0) * 1000)
         if not resp.startswith('DATA '):
-            return False, latencies
+            return False, latencies, indices
         data = base64.b64decode(resp[5:])
         if hashlib.sha256(data).hexdigest() != leaves[idx]:
-            return False, latencies
-    return True, latencies
+            return False, latencies, indices
+    return True, latencies, indices
+
+
+def _median(xs):
+    s = sorted(xs)
+    n = len(s)
+    return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+
+def nonce_challenge(conn, leaves, rounds=5, avoid=()):
+    """The nonce-salted timing challenge from poc_challenge_auction.py Part
+    2 / poc_network_challenge.py, on the real download path.
+
+    What it catches that sample_challenge can't: a host that has none of
+    the bytes but fetches them from a real holder on demand. Such a relay
+    passes FETCH-and-verify perfectly (the bytes it forwards are real).
+    But CHALLENGE <idx> <nonce> asks for sha256(chunk || nonce): the
+    nonce stops it answering from anything precomputed, and asking about
+    a chunk it hasn't forwarded yet stops it answering from a cache -- so
+    it has to fetch upstream first, and that shows up as time.
+
+    The PoC's finding, and the README's caveat, was that a single timed
+    sample doesn't separate a holder from a relay when the two are close
+    (loopback, same LAN); averaging repeated rounds does. So this runs
+    `rounds` rounds and reports medians, and it never compares against a
+    fixed number of milliseconds: each CHALLENGE is measured next to a
+    PRICE round trip on the same socket (no bytes involved, so it costs
+    the relay and the holder exactly the same), and the verdict is the
+    *ratio* of the two medians. A holder's ratio is 'one disk read plus
+    one hash'; a relay's is 'plus a whole upstream fetch'. The caller
+    decides what ratio is too much (max_timing_ratio in select_host) --
+    the PoC's own advice was 'measure it live, don't hardcode', which is
+    why the default is to report, not to reject.
+
+    Every round is still a correctness check too: the chunk is FETCHed
+    *after* the timed CHALLENGE (never before -- that's what keeps a
+    relay's cache cold) and the claimed hash is verified against the real
+    bytes and the Merkle leaf. A wrong hash fails the whole thing
+    regardless of timing.
+
+    Returns {'supported': bool, 'passed': bool, 'rounds': n,
+    'challenge_ms': [...], 'baseline_ms': [...], 'median_challenge_ms',
+    'median_baseline_ms', 'ratio'}. supported=False means the host
+    answered CHALLENGE with something other than HASH (or not at all)
+    -- an older host, not a caught cheat."""
+    n = len(leaves)
+    pool = [i for i in range(n) if i not in set(avoid)] or list(range(n))
+    indices = random.sample(pool, min(rounds, len(pool)))
+    challenge_ms, baseline_ms = [], []
+    result = {'supported': True, 'passed': False, 'rounds': 0,
+              'challenge_ms': challenge_ms, 'baseline_ms': baseline_ms,
+              'median_challenge_ms': None, 'median_baseline_ms': None, 'ratio': None}
+    try:
+        for idx in indices:
+            t0 = time.perf_counter()
+            conn.request('PRICE')
+            baseline_ms.append((time.perf_counter() - t0) * 1000)
+
+            nonce = os.urandom(16)
+            t0 = time.perf_counter()
+            resp = conn.request(f'CHALLENGE {idx} {nonce.hex()}')
+            elapsed = (time.perf_counter() - t0) * 1000
+            if not resp.startswith('HASH '):
+                result['supported'] = False
+                return result
+            challenge_ms.append(elapsed)
+            claimed = resp[5:].strip()
+
+            fetched = conn.request(f'FETCH {idx}')
+            if not fetched.startswith('DATA '):
+                return result
+            data = base64.b64decode(fetched[5:])
+            if hashlib.sha256(data).hexdigest() != leaves[idx]:
+                return result
+            if hashlib.sha256(data + nonce).hexdigest() != claimed:
+                return result   # fabricated hash: fails regardless of how fast it came back
+            result['rounds'] += 1
+    except OSError:
+        result['supported'] = result['rounds'] > 0
+        return result
+    if not result['rounds']:
+        return result
+    result['passed'] = True
+    result['median_challenge_ms'] = _median(challenge_ms)
+    result['median_baseline_ms'] = _median(baseline_ms)
+    # a loopback PRICE round trip can measure as a few microseconds;
+    # flooring the denominator keeps the ratio from exploding on noise
+    result['ratio'] = result['median_challenge_ms'] / max(result['median_baseline_ms'], 0.05)
+    return result
 
 
 def get_price(conn):
@@ -1063,13 +1153,22 @@ def build_trust_graph(subscribe_events, root_pubkey, max_hops=3, decay=0.5):
     return trust
 
 
-def select_host(candidates, k=3, reputation=None, trust_in_signers=None):
+def select_host(candidates, k=3, reputation=None, trust_in_signers=None,
+                timing_rounds=5, max_timing_ratio=None):
     """Gate on real possession, then rank survivors by reputation then
     price — same 'challenge gates the auction' shape as
     poc_challenge_auction.py's naive-vs-gated comparison. trust_in_signers
     (from build_trust_graph) lets a candidate with zero *direct* history
     still score above 0 if someone in the caller's transitive trust graph
-    has attested to it."""
+    has attested to it.
+
+    timing_rounds nonce-salted, timed CHALLENGE rounds run after the
+    FETCH-and-verify gate (see nonce_challenge). A wrong hash there is a
+    fail like any other. The timing *ratio* is always measured and
+    reported; it only rejects a candidate when max_timing_ratio is set
+    and exceeded -- and among candidates that pass everything, a lower
+    ratio wins ties, so a suspected relay loses to a holder of equal
+    reputation and price without anyone having picked a threshold."""
     from ott import merkle_root
 
     scored = []
@@ -1087,9 +1186,20 @@ def select_host(candidates, k=3, reputation=None, trust_in_signers=None):
                 if merkle_root(leaves) != info['sha256'] or info['sha256'] != c['content_hash']:
                     print(f"  x {c['host']}: advertised content doesn't match its own LEAVES/INFO — skipping")
                     continue
-                passed, latencies = sample_challenge(conn, leaves, k=k)
+                passed, latencies, sampled = sample_challenge(conn, leaves, k=k)
                 if not passed:
                     print(f"  x {c['host']}: failed possession challenge ({k} chunks sampled) — skipping")
+                    continue
+                timing = (nonce_challenge(conn, leaves, rounds=timing_rounds, avoid=sampled)
+                          if timing_rounds > 0 else {'supported': False})
+                if timing['supported'] and not timing['passed']:
+                    print(f"  x {c['host']}: failed nonce challenge (wrong hash for a chunk it "
+                          f"claims to hold) — skipping")
+                    continue
+                if timing['supported'] and max_timing_ratio and timing['ratio'] > max_timing_ratio:
+                    print(f"  x {c['host']}: nonce challenge {timing['ratio']:.1f}x slower than its own "
+                          f"baseline round trip (limit {max_timing_ratio:.1f}x, {timing['rounds']} rounds) "
+                          f"— looks like a relay, not a holder — skipping")
                     continue
                 price = get_price(conn)
         except (OSError, ValueError, KeyError) as e:
@@ -1104,14 +1214,24 @@ def select_host(candidates, k=3, reputation=None, trust_in_signers=None):
         rep_score, rep_why = (reputation.trust_score(c['signer_pubkey'], trust_in_signers)
                                if reputation else (0.5, 'no reputation store'))
         avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+        if timing['supported']:
+            timing_note = (f", timing {timing['ratio']:.1f}x (challenge {timing['median_challenge_ms']:.2f}ms "
+                           f"vs baseline {timing['median_baseline_ms']:.2f}ms, median of {timing['rounds']})")
+        else:
+            timing_note = ', timing n/a (host has no CHALLENGE)' if timing_rounds > 0 else ''
         print(f"  + {c['host']}: possession verified ({k}/{k} chunks), price={price} sat, "
-              f"reputation={rep_score:.2f} ({rep_why}), avg_latency={avg_latency:.1f}ms")
+              f"reputation={rep_score:.2f} ({rep_why}), avg_latency={avg_latency:.1f}ms{timing_note}")
         scored.append({'candidate': c, 'info': info, 'price': price,
-                        'reputation': rep_score, 'avg_latency_ms': avg_latency})
+                        'reputation': rep_score, 'avg_latency_ms': avg_latency,
+                        'timing_ratio': timing['ratio'] if timing['supported'] else None,
+                        'timing_rounds': timing['rounds'] if timing['supported'] else 0})
 
     if not scored:
         return None
-    scored.sort(key=lambda s: (-s['reputation'], s['price']))  # highest trust first, then cheapest
+    # highest trust first, then cheapest, then the one whose CHALLENGE
+    # timing looks most like a real holder (unknown timing sorts last)
+    scored.sort(key=lambda s: (-s['reputation'], s['price'],
+                               s['timing_ratio'] if s['timing_ratio'] is not None else float('inf')))
     return scored[0]
 
 
@@ -1132,7 +1252,8 @@ def fetch_verified(relay_urls, event_type):
 
 
 def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_lightning=False,
-                           lightning_node=None, trust_hops=3, trust_decay=0.5, on_progress=None):
+                           lightning_node=None, trust_hops=3, trust_decay=0.5, on_progress=None,
+                           timing_rounds=5, max_timing_ratio=None):
     """The real end-to-end path: resolve every host claiming to have this
     content, challenge-gate them, auction among survivors — weighted by
     reputation built from real transitive trust (your own subscribes, plus
@@ -1164,14 +1285,16 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
         print(f"pulled {added}/{len(attestation_events)} real attestation(s) from relays "
               f"(others' vouches, weighted by your trust in whoever signed them)")
 
-    winner = select_host(candidates, k=k, reputation=reputation, trust_in_signers=trust_graph)
+    winner = select_host(candidates, k=k, reputation=reputation, trust_in_signers=trust_graph,
+                         timing_rounds=timing_rounds, max_timing_ratio=max_timing_ratio)
     if winner is None:
         sys.exit("no candidate host passed the possession challenge — "
                  "refusing to download from an unverified source")
 
     c = winner['candidate']
+    timing_note = f", timing {winner['timing_ratio']:.1f}x" if winner.get('timing_ratio') is not None else ''
     print(f"selected {c['host']} — price {winner['price']} sat, "
-          f"reputation {winner['reputation']:.2f}, {winner['avg_latency_ms']:.1f}ms avg")
+          f"reputation {winner['reputation']:.2f}, {winner['avg_latency_ms']:.1f}ms avg{timing_note}")
 
     if winner['price'] > 0 and not use_lightning:
         print(f"  price is {winner['price']} sat but --lightning not given "
@@ -1191,8 +1314,13 @@ def download_with_auction(content_hash, relay_urls, out_path=None, k=3, use_ligh
     print(f"recorded this download in local reputation store "
           f"(~/.weed_reputation.json) for {c['signer_pubkey'][:12]}...")
 
+    # timing_ratio/timing_rounds are additive fields: an older reader
+    # (poc_reputation's trust_score) only looks at passes/fails
     attestation = identity.sign_event('attestation', peer_pubkey=c['signer_pubkey'],
-                                       passes=1, fails=0, avg_latency_ms=winner['avg_latency_ms'], k=k)
+                                       passes=1, fails=0, avg_latency_ms=winner['avg_latency_ms'], k=k,
+                                       timing_ratio=(round(winner['timing_ratio'], 2)
+                                                     if winner.get('timing_ratio') is not None else None),
+                                       timing_rounds=winner.get('timing_rounds', 0))
     for relay_url in relay_urls:
         post_event(relay_url, attestation)
     print(f"published this outcome as a real attestation — anyone who trusts you "

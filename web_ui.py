@@ -654,7 +654,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
 
 
 def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightning, title=None,
-                       signer_pubkey=None, lightning_node=None):
+                       signer_pubkey=None, lightning_node=None, timing_rounds=5, max_timing_ratio=None):
     def on_progress(idx, n_chunks):
         with _lock:
             _jobs[job_id].update(idx=idx, n_chunks=n_chunks)
@@ -670,7 +670,8 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _job_logs[job_id] = captured
             path = node.download_with_auction(content_hash, relay_urls, out_path=out_path, k=k,
                                                use_lightning=use_lightning, lightning_node=lightning_node,
-                                               on_progress=on_progress)
+                                               on_progress=on_progress, timing_rounds=timing_rounds,
+                                               max_timing_ratio=max_timing_ratio)
         elapsed = time.time() - t0
         size = os.path.getsize(path)
         bps = size / elapsed if elapsed > 0 else None
@@ -1073,6 +1074,8 @@ class Handler(BaseHTTPRequestHandler):
         relay_urls = _as_list(body.get('relay'), [DEFAULT_RELAY])
         out_path = body.get('out_path') or os.path.join(DOWNLOADS_DIR, f'download_{content_hash[:16]}')
         k = int(body.get('k') or 3)
+        timing_rounds = int(body.get('timing_rounds') if body.get('timing_rounds') is not None else 5)
+        max_timing_ratio = float(body['max_timing_ratio']) if body.get('max_timing_ratio') else None
         use_lightning = bool(body.get('lightning'))
         lightning_node = body.get('lightning_node') or None
         if use_lightning and not lightning_node:
@@ -1088,7 +1091,8 @@ class Handler(BaseHTTPRequestHandler):
         threading.Thread(target=_run_download_job,
                           args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title,
                                 signer_pubkey),
-                          kwargs={'lightning_node': lightning_node},
+                          kwargs={'lightning_node': lightning_node, 'timing_rounds': timing_rounds,
+                                  'max_timing_ratio': max_timing_ratio},
                           daemon=True).start()
         self._json({'job_id': job_id})
 
