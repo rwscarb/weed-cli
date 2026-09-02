@@ -539,7 +539,7 @@ const app = createApp({
     ottStatusText(status) {
       if (!status) return '—';
       if (!status.committed) return '⚠️ uncommitted';
-      return status.tx_hash ? '✅ block ' + status.block_height : '⏱ block ' + status.block_height;
+      return status.tx_hash ? '✅ ' + status.block_height : '⏱ ' + status.block_height;
     },
     ottStatusTitle(status) {
       if (!status) return 'no .ott/ archive found, or btcvm not installed server-side';

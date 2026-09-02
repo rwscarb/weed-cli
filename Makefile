@@ -78,7 +78,7 @@ trust:
 	@echo "Trusted. Run chrome://restart to pick it up."
 
 node:
-	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null) docker compose -f docker-compose.node.yml up
+	GIT_COMMIT=$$(git rev-parse --short HEAD 2>/dev/null) docker compose -f docker-compose.node.yml up --build
 	$(MAKE) trust
 
 node-down:
