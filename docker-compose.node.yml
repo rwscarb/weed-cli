@@ -95,6 +95,10 @@ services:
       # DNS doesn't exist there, but the relay's published port does.
       WEED_RELAY: ${WEED_RELAY:-http://127.0.0.1:9101}
       WEED_TUNNEL: ${WEED_TUNNEL:-}
+      # optional: set in .env to put the web UI behind a token (see
+      # web_ui.py's AUTH_TOKEN) -- worth doing, since this container
+      # binds the UI on every interface of the host's network namespace
+      WEED_UI_TOKEN: ${WEED_UI_TOKEN:-}
     restart: unless-stopped
 
 volumes:

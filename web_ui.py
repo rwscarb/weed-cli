@@ -8,13 +8,15 @@ endpoint is a thin wrapper over the real node.py functions the CLI
 already calls — no reimplementation of any protocol logic.
 
 Binds 127.0.0.1 by default on purpose — this is a *local* control
-surface, not something meant to face the internet, and there's no auth
-built (same "reachability is on you" honesty --advertise-host's docs
-already apply elsewhere in this repo). Pass --bind to expose it on a LAN
-at your own risk.
+surface, not something meant to face the internet. Auth is optional and
+off by default (see AUTH_TOKEN): --auth-token / $WEED_UI_TOKEN gates
+every API call behind a bearer token, with the startup QR carrying it
+so a phone logs in by scanning. Pass --bind to expose it on a LAN; do
+that without a token at your own risk.
 """
 import contextlib
 import hashlib
+import hmac
 import io
 import json
 import mimetypes
@@ -22,6 +24,7 @@ import os
 import signal
 import socket
 import queue
+import secrets
 import ssl
 import struct
 import subprocess
@@ -30,6 +33,7 @@ import tempfile
 import threading
 import time
 import uuid
+from http import cookies as _http_cookies
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
@@ -50,6 +54,17 @@ WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
 # configured for every other way of running this tool
 DEFAULT_RELAY = os.environ.get('WEED_RELAY', 'http://127.0.0.1:9101')
 DEFAULT_TUNNEL = os.environ.get('WEED_TUNNEL')
+# Optional auth. None (the default) is the original no-auth local-only
+# surface. Set it -- $WEED_UI_TOKEN, or --auth-token (a value, or bare
+# for a generated one) -- and every /api/* request must present it: as
+# `Authorization: Bearer <token>`, as the cookie the /?token=<token>
+# onboarding link (what the startup QR encodes) sets, or, for the two
+# endpoints a player like VLC opens with no way to send either, as a
+# ?token= query param. Static files (the page itself) stay open: they
+# hold no secrets, and the page needs to load to show the unlock prompt.
+AUTH_TOKEN = os.environ.get('WEED_UI_TOKEN') or None
+AUTH_COOKIE = 'weed_ui_token'
+AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
 # play history is a log, not a set -- it grows forever otherwise (every
 # playlist "next" and every re-watch appends). This caps ~/.weed_library.json
@@ -726,15 +741,77 @@ class Handler(BaseHTTPRequestHandler):
             raise ValueError(f'body too large ({length} bytes, max {MAX_BODY_SIZE})')
         return json.loads(self.rfile.read(length)) if length else {}
 
+    # ── optional auth (see AUTH_TOKEN) ────────────────────────────────
+    def _presented_token(self, qs=None):
+        hdr = self.headers.get('Authorization', '')
+        if hdr.startswith('Bearer '):
+            return hdr[7:].strip()
+        raw = self.headers.get('Cookie')
+        if raw:
+            jar = _http_cookies.SimpleCookie()
+            try:
+                jar.load(raw)
+            except _http_cookies.CookieError:
+                jar = {}
+            if AUTH_COOKIE in jar:
+                return jar[AUTH_COOKIE].value
+        if qs and qs.get('token'):
+            return qs['token'][0]
+        return None
+
+    def _authorized(self, qs=None):
+        """qs is only passed for the endpoints that may take ?token= (a
+        player opening a stream URL can't send a header or a cookie);
+        everywhere else a token in the URL is ignored, so it never ends
+        up in logs/history for ordinary API calls."""
+        if not AUTH_TOKEN:
+            return True
+        token = self._presented_token(qs)
+        return bool(token) and hmac.compare_digest(token, AUTH_TOKEN)
+
+    def _deny(self):
+        return self._json({'error': 'auth token required: open this UI from its ?token= link '
+                                     '(the startup QR), paste the token into the unlock prompt, '
+                                     'or send Authorization: Bearer <token>', 'auth': True}, status=401)
+
+    def _set_auth_cookie(self):
+        secure = '; Secure' if getattr(self.server, '_tls', False) else ''
+        self.send_header('Set-Cookie', f'{AUTH_COOKIE}={AUTH_TOKEN}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; '
+                                       f'HttpOnly; SameSite=Lax{secure}')
+
     def do_GET(self):
         parsed = urlparse(self.path)
         path, qs = parsed.path, parse_qs(parsed.query)
 
+        if path.startswith('/api/'):
+            takes_query_token = path == '/api/orbit-view' or path.startswith('/api/stream/')
+            if not self._authorized(qs if takes_query_token else None):
+                return self._deny()
+        elif AUTH_TOKEN and path == '/' and qs.get('token'):
+            # the onboarding link: token in the URL exactly once, traded
+            # for the cookie, then a redirect to the clean URL so the
+            # token isn't sitting in the address bar (or a screenshot)
+            if not hmac.compare_digest(qs['token'][0], AUTH_TOKEN):
+                return self._deny()
+            self.send_response(302)
+            self._set_auth_cookie()
+            self.send_header('Location', '/')
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+            return
+
         if path == '/api/whoami':
             return self._json({'pubkey': _identity().pubkey_hex()})
         if path == '/api/config':
-            return self._json({'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
-                                'default_tunnel': DEFAULT_TUNNEL})
+            cfg = {'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
+                   'default_tunnel': DEFAULT_TUNNEL, 'auth': bool(AUTH_TOKEN)}
+            if AUTH_TOKEN:
+                # this caller already proved it holds the token (see the
+                # /api/ gate above); handing it back lets the page build
+                # stream URLs a player can open (?token=), since the
+                # cookie is HttpOnly and JS can't read it
+                cfg['token'] = AUTH_TOKEN
+            return self._json(cfg)
         if path == '/api/discover':
             results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
             return self._json({'results': results})
@@ -820,6 +897,10 @@ class Handler(BaseHTTPRequestHandler):
         if not self._check_origin():
             return self._json({'error': 'rejected: request Origin does not match this server — '
                                          'looks like a cross-site request, not this UI'}, status=403)
+        # /api/login is how a browser *gets* the cookie (the unlock
+        # prompt); everything else needs it already
+        if path != '/api/login' and not self._authorized():
+            return self._deny()
 
         # Not a JSON-body endpoint like everything else here -- the body
         # *is* the raw file being uploaded (see _handle_upload's own
@@ -839,6 +920,20 @@ class Handler(BaseHTTPRequestHandler):
             body = self._read_json_body()
         except Exception as e:
             return self._json({'error': f'bad JSON body: {e}'}, status=400)
+
+        if path == '/api/login':
+            if not AUTH_TOKEN:
+                return self._json({'ok': True, 'auth': False})
+            if not hmac.compare_digest(str(body.get('token') or ''), AUTH_TOKEN):
+                return self._deny()
+            payload = json.dumps({'ok': True, 'auth': True}).encode()
+            self.send_response(200)
+            self._set_auth_cookie()
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+            return
 
         handlers = {
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
@@ -1276,14 +1371,17 @@ class Handler(BaseHTTPRequestHandler):
         with _orbit_subs_lock:
             viewers = len(_orbit_subscribers)
         host = self.headers.get('Host', '192.168.1.137:8080')
-        scheme = 'https' if hasattr(self.connection, 'read') and hasattr(self.server, '_tls') else 'http'
+        scheme = 'https' if getattr(self.server, '_tls', False) else 'http'
+        # a player has no cookie/header to offer, so with auth on the
+        # only URL that works for it carries the token itself
+        view_url = f'{scheme}://{host}/api/orbit-view' + (f'?token={AUTH_TOKEN}' if AUTH_TOKEN else '')
         return self._json({
             'active': active,
             'res': res,
             'viewers': viewers,
             'rx': dict(_orbit_rx),
-            'url': f'{scheme}://{host}/api/orbit-view',
-            'vlc': f'{scheme}://{host}/api/orbit-view',
+            'url': view_url,
+            'vlc': view_url,
         })
 
     def _handle_orbit_view(self):
@@ -1616,8 +1714,13 @@ def _relay_sync_loop(interval=600, initial_delay=60, quiet=False):
 
 
 def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None,
-               tls=False, certfile=None, keyfile=None):
-    global _lan_url
+               tls=False, certfile=None, keyfile=None, auth_token=None):
+    """auth_token: None keeps the original open, local-only surface;
+    'generate' mints a random one; anything else is used as given (see
+    AUTH_TOKEN). $WEED_UI_TOKEN is the same thing from the environment."""
+    global _lan_url, AUTH_TOKEN
+    if auth_token:
+        AUTH_TOKEN = secrets.token_urlsafe(24) if auth_token == 'generate' else str(auth_token)
     _load_library()
     _rehydrate_jobs_from_library()
     _load_persisted_hosts()
@@ -1636,6 +1739,7 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(certfile, keyfile)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
+    srv._tls = tls   # read by the handlers for scheme/Secure-cookie decisions
 
     scheme = 'https' if tls else 'http'
 
@@ -1661,10 +1765,17 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
     # shape as "the QR/lan-url doesn't point at a reachable address",
     # just fixed by telling this explicitly instead of guessing
     reachable_host = advertise_host or (_detect_lan_ip() if bind_host == '0.0.0.0' else bind_host)
+    # the QR / lan URL is the onboarding link: with auth on it carries
+    # the token, so scanning it is the whole login (see do_GET's handoff)
+    token_qs = f'?token={AUTH_TOKEN}' if AUTH_TOKEN else ''
     if bind_host != '127.0.0.1' and reachable_host:
-        _lan_url = f'{scheme}://{reachable_host}:{port}/'
+        _lan_url = f'{scheme}://{reachable_host}:{port}/{token_qs}'
 
     if not quiet:
+        if AUTH_TOKEN:
+            print(f"[web:{port}] auth on — token: {AUTH_TOKEN}", flush=True)
+            print(f"  open {scheme}://{bind_host}:{port}/{token_qs} (or scan the QR below) to log in; "
+                  f"API calls need Authorization: Bearer {AUTH_TOKEN}", flush=True)
         # answers "is this container actually running the code I think it
         # is" directly in `docker compose logs`/`make node`'s own output —
         # see node.weed_banner()'s own docstring for exactly the debugging
@@ -1708,8 +1819,14 @@ def main():
     parser.add_argument('--port', dest='port_flag', type=int,
                          help='same as the positional port arg, --port form')
     parser.add_argument('--bind', default='127.0.0.1',
-                         help='bind address (default: 127.0.0.1, local only -- no auth is '
-                              'built, so only widen this on a network you trust)')
+                         help='bind address (default: 127.0.0.1, local only). Widening it '
+                              'without --auth-token exposes an unauthenticated control surface '
+                              'to everyone on that network.')
+    parser.add_argument('--auth-token', nargs='?', const='generate', metavar='TOKEN',
+                         default=os.environ.get('WEED_UI_TOKEN') or None,
+                         help='require a token for every API call: given a value, that token; '
+                              'bare, a generated one (printed at startup and encoded in the QR). '
+                              'Default: $WEED_UI_TOKEN if set, else no auth.')
     parser.add_argument('--advertise-host',
                          help="IP/hostname to put in the phone QR and lan-url instead of "
                               "auto-detecting it -- use this if the QR at startup was missing "
@@ -1730,7 +1847,7 @@ def main():
     keyfile  = args.key  or os.environ.get('WEED_TLS_KEY')
     tls = args.tls or bool(certfile)
     run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host,
-               tls=tls, certfile=certfile, keyfile=keyfile)
+               tls=tls, certfile=certfile, keyfile=keyfile, auth_token=args.auth_token)
 
 
 if __name__ == '__main__':

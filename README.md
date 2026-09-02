@@ -132,13 +132,19 @@ weed> download 7f2477c7ea675004ad5dbab6dc7c44327c724b880cc389807df1965b77966acc
 `web_ui.py` wraps the same `node.py` functions behind a small stdlib
 JSON API plus a static, no-build-step frontend — host/discover/download/
 like/subscribe without memorizing CLI flags. Binds `127.0.0.1` by
-default (no auth built — this is a local control surface, not something
-meant to face the internet); `--bind 0.0.0.0` widens it at your own
-risk and auto-detects your real LAN IP for the printed/scanned QR code.
+default (a local control surface, not something meant to face the
+internet); `--bind 0.0.0.0` widens it and auto-detects your real LAN IP
+for the printed/scanned QR code. Auth is optional: `--auth-token` (bare
+for a generated token, or give one; `$WEED_UI_TOKEN` in Docker) gates
+every API call behind a bearer token. The startup QR and printed URL
+then carry it, so scanning is the login; the page shows an unlock
+prompt if opened any other way; the stream URLs it hands to VLC carry
+it as `?token=`, since a player can't send a cookie.
 
 ```bash
 weed serve                          # alias for `web`, positional: serve [bind] [port]
 weed serve 0.0.0.0 8080             # reachable from your phone; prints a scan-to-open QR
+weed web --bind 0.0.0.0 --auth-token # same, behind a generated token (printed + in the QR)
 ```
 
 Includes real HTTP range support (`/api/stream/<job_id>`) so a
@@ -390,4 +396,8 @@ mechanisms hold up:
   can't avoid — every tunneled byte crosses it — and an active download
   doesn't migrate if its relay dies mid-transfer; it restarts on the
   next one.
-- The web UI has no authentication; it's local-only by design.
+- The web UI's auth is a single shared bearer token (`--auth-token` /
+  `$WEED_UI_TOKEN`), off by default and local-only when off. One token,
+  no accounts, no rotation without a restart, and anyone who has it can
+  do everything — enough to put a LAN-bound UI behind something, not a
+  reason to face it at the internet.

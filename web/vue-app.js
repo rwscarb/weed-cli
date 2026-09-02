@@ -42,6 +42,13 @@ const app = createApp({
     return {
       pubkey: '',
       lanUrlBase: null,
+      // optional auth (web_ui.py AUTH_TOKEN): set when any API call 401s;
+      // streamToken is what /api/config hands an already-authorized page
+      // so URLs meant for a player (VLC has no cookie) can carry it
+      authRequired: false,
+      authTokenInput: '',
+      authError: '',
+      streamToken: '',
 
       tabs,
       activeTab: tabs.some(t => t.id === hashTab) ? hashTab : 'discover',
@@ -234,6 +241,12 @@ const app = createApp({
   computed: {
     discoverRelaysList() {
       return this.splitRelays(this.discoverRelays);
+    },
+    // appended to URLs handed to an external player (VLC): with auth on,
+    // the stream endpoints accept the token as a query param since a
+    // player can't send the cookie
+    authQuery() {
+      return this.streamToken ? '?token=' + encodeURIComponent(this.streamToken) : '';
     },
     // search + the four tri-state toggles all narrow the same list
     // together (AND, not OR) -- each one set away from 'any' must hold
@@ -461,6 +474,7 @@ const app = createApp({
     // entirely even though weed.py's CLI/shell already honored them
     const config = await this.apiGet('/api/config');
     this.lanUrlBase = config.lan_url;
+    this.streamToken = config.token || '';
     if (config.default_relay) {
       this.discoverRelays = config.default_relay;
       this.hostForm.relays = config.default_relay;
@@ -494,6 +508,7 @@ const app = createApp({
     // ── small fetch helpers ──────────────────────────────────────────
     async apiGet(path) {
       const res = await fetch(path);
+      if (res.status === 401) this.authRequired = true;
       return res.json();
     },
     async apiPost(path, body) {
@@ -502,7 +517,16 @@ const app = createApp({
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       });
+      if (res.status === 401 && path !== '/api/login') this.authRequired = true;
       return res.json();
+    },
+    // the unlock prompt (#auth-gate): trades a pasted token for the
+    // HttpOnly cookie every later request rides on, then reloads so
+    // every startup fetch that 401'd runs again
+    async unlock() {
+      const r = await this.apiPost('/api/login', { token: this.authTokenInput.trim() });
+      if (r.ok) { this.authRequired = false; location.reload(); return; }
+      this.authError = 'that token was not accepted';
     },
     splitRelays(str) {
       return str.split(',').map(s => s.trim()).filter(Boolean);
@@ -806,7 +830,7 @@ const app = createApp({
     // ── stream url (vlc / open network stream) ────────────────────────
     copyStreamUrl() {
       if (!this.player.jobId) return;
-      const url = location.origin + '/api/stream/' + this.player.jobId;
+      const url = location.origin + '/api/stream/' + this.player.jobId + this.authQuery;
       navigator.clipboard.writeText(url).catch(() => {
         prompt('Copy this URL and open it in VLC (Media → Open Network Stream):', url);
       });
@@ -944,7 +968,7 @@ const app = createApp({
                 // until the user clicked it away. The clipboard write
                 // may be refused outside a user gesture (Firefox); the
                 // inline click-to-copy covers that case.
-                this.orbitViewUrl = `${location.protocol}//${location.host}/api/orbit-view`;
+                this.orbitViewUrl = `${location.protocol}//${location.host}/api/orbit-view${this.authQuery}`;
                 navigator.clipboard.writeText(this.orbitViewUrl).catch(() => {});
                 _running = true;
                 document.addEventListener('visibilitychange', _onVisibility);

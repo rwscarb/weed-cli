@@ -181,8 +181,13 @@ def build_parser():
                                         'from a browser instead of the CLI')
     p_web.add_argument('--port', type=int, default=8080)
     p_web.add_argument('--bind', default='127.0.0.1',
-                        help='bind address (default 127.0.0.1 — local only; no auth is built, '
-                             'so only widen this on a network you trust)')
+                        help='bind address (default 127.0.0.1 — local only; widen it with '
+                             '--auth-token unless you trust everyone on that network)')
+    p_web.add_argument('--auth-token', nargs='?', const='generate', metavar='TOKEN',
+                        default=os.environ.get('WEED_UI_TOKEN') or None,
+                        help='require a token for every API call: given a value, that token; '
+                             'bare, a generated one (printed at startup, encoded in the QR). '
+                             'Default: $WEED_UI_TOKEN if set, else no auth.')
     p_web.add_argument('--advertise-host',
                         help='IP/hostname for the phone QR and lan-url instead of '
                              'auto-detecting it — use this if the startup QR was missing or '
@@ -332,7 +337,8 @@ def cmd_web(args):
     web_ui.run_web_ui(port=args.port, bind_host=args.bind, advertise_host=args.advertise_host,
                       tls=getattr(args, 'tls', False),
                       certfile=getattr(args, 'cert', None),
-                      keyfile=getattr(args, 'key', None))
+                      keyfile=getattr(args, 'key', None),
+                      auth_token=getattr(args, 'auth_token', None))
 
 
 NATIVE_COMMANDS = {

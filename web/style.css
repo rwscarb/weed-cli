@@ -1991,3 +1991,12 @@ code {
     cursor: pointer;
   }
 }
+
+/* optional auth (web_ui.py AUTH_TOKEN): the unlock prompt, shown the
+   moment any API call answers 401 -- above every dialog (300s) */
+#auth-gate { position: fixed; inset: 0; z-index: 400; background: rgba(0, 0, 0, 0.78); display: flex; align-items: center; justify-content: center; }
+#auth-gate .auth-card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1.25rem 1.5rem; max-width: 26rem; display: flex; flex-direction: column; gap: 0.75rem; }
+#auth-gate h2 { margin: 0; font-size: 1.05rem; }
+#auth-gate p { margin: 0; color: var(--muted); font-size: 0.85rem; }
+#auth-gate input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#auth-gate .auth-error { color: #e06c75; font-size: 0.85rem; }

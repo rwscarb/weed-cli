@@ -22,6 +22,18 @@
   <button type="button" class="qr-toggle" title="Keyboard shortcuts (?)" @click="shortcutsVisible = !shortcutsVisible">⌨ Shortcuts</button>
 </header>
 
+<!-- optional auth (web_ui.py AUTH_TOKEN): appears the moment any API
+     call answers 401, i.e. this page was opened without the ?token= link -->
+<div id="auth-gate" v-if="authRequired" role="dialog" aria-label="Unlock">
+  <form class="auth-card" @submit.prevent="unlock">
+    <h2>🔒 This UI needs its token</h2>
+    <p>Open it from the link the server printed at startup (or scan its QR code), or paste the token here.</p>
+    <input type="password" v-model="authTokenInput" placeholder="token" autocomplete="off" autofocus>
+    <button type="submit">Unlock</button>
+    <div class="auth-error" v-if="authError">{{ authError }}</div>
+  </form>
+</div>
+
 <nav id="tabs">
   <button v-for="t in tabs" :key="t.id" class="tab-btn" :class="{active: activeTab === t.id}"
           @click="activeTab = t.id">{{ t.label }}</button>

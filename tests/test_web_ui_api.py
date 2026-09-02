@@ -423,6 +423,112 @@ def test_host_accepts_a_comma_separated_tunnel_list(web_server, tmp_path):
     assert hosts[0]['tunnel'] == ['127.0.0.1:1', '127.0.0.1:2']
 
 
+# ── optional auth (web_ui.AUTH_TOKEN) ──────────────────────────────────
+def _raw_get(url, headers=None):
+    """GET returning (status, headers-dict, body) -- testutil's http_get
+    hides the status and headers, which are the whole point here."""
+    import http.client
+    from testutil import _split_url
+    host, port, path = _split_url(url)
+    conn = http.client.HTTPConnection(host, port, timeout=5)
+    try:
+        conn.request('GET', path, headers=headers or {})
+        resp = conn.getresponse()
+        return resp.status, {k.lower(): v for k, v in resp.getheaders()}, resp.read()
+    finally:
+        conn.close()
+
+
+def _raw_post(url, body, headers=None):
+    import http.client
+    from testutil import _split_url
+    host, port, path = _split_url(url)
+    conn = http.client.HTTPConnection(host, port, timeout=5)
+    try:
+        h = {'Content-Type': 'application/json'}
+        h.update(headers or {})
+        conn.request('POST', path, body=json.dumps(body), headers=h)
+        resp = conn.getresponse()
+        return resp.status, {k.lower(): v for k, v in resp.getheaders()}, json.loads(resp.read().decode())
+    finally:
+        conn.close()
+
+
+def test_api_requires_the_token_once_auth_is_on(web_server, monkeypatch):
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    status, _, body = _raw_get(f'{web_server}/api/whoami')
+    assert status == 401 and json.loads(body)['auth'] is True
+    status, _, _ = _raw_get(f'{web_server}/api/whoami', {'Authorization': 'Bearer sekrit'})
+    assert status == 200
+    status, _, _ = _raw_get(f'{web_server}/api/whoami', {'Authorization': 'Bearer nope'})
+    assert status == 401
+    # a token in the URL is only honored on the stream endpoints
+    status, _, _ = _raw_get(f'{web_server}/api/whoami?token=sekrit')
+    assert status == 401
+    # POSTs are gated too, Origin check or not
+    status, _, _ = _raw_post(f'{web_server}/api/like', {'content_hash': 'c' * 64})
+    assert status == 401
+
+
+def test_the_onboarding_link_trades_the_token_for_a_cookie(web_server, monkeypatch):
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    status, headers, _ = _raw_get(f'{web_server}/?token=sekrit')
+    assert status == 302 and headers['location'] == '/'
+    cookie = headers['set-cookie']
+    assert cookie.startswith('weed_ui_token=sekrit;') and 'HttpOnly' in cookie and 'SameSite=Lax' in cookie
+    status, _, _ = _raw_get(f'{web_server}/api/whoami', {'Cookie': 'weed_ui_token=sekrit'})
+    assert status == 200
+    status, _, _ = _raw_get(f'{web_server}/?token=wrong')
+    assert status == 401
+    # the page itself stays open -- it holds no secrets and has to load
+    # to show the unlock prompt
+    status, _, body = _raw_get(f'{web_server}/')
+    assert status == 200 and b'auth-gate' in body
+
+
+def test_login_endpoint_sets_the_cookie(web_server, monkeypatch):
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    status, headers, body = _raw_post(f'{web_server}/api/login', {'token': 'sekrit'})
+    assert status == 200 and body == {'ok': True, 'auth': True}
+    assert headers['set-cookie'].startswith('weed_ui_token=sekrit;')
+    status, _, _ = _raw_post(f'{web_server}/api/login', {'token': 'wrong'})
+    assert status == 401
+
+
+def test_stream_endpoints_take_the_token_as_a_query_param(web_server, monkeypatch):
+    """VLC can't send a header or a cookie: the only URL it can open is
+    one that carries the token itself, so that's what the status
+    endpoint hands out and what the view endpoint accepts."""
+    import web_ui, http.client
+    from testutil import _split_url
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    status, _, _ = _raw_get(f'{web_server}/api/orbit-view')
+    assert status == 401
+    host, port, _ = _split_url(web_server)
+    conn = http.client.HTTPConnection(host, port, timeout=5)
+    conn.request('GET', '/api/orbit-view?token=sekrit')
+    resp = conn.getresponse()            # headers arrive immediately; the body is the live stream
+    assert resp.status == 200 and 'multipart/x-mixed-replace' in resp.getheader('Content-Type')
+    conn.close()
+    _, _, body = _raw_get(f'{web_server}/api/orbit-stream', {'Authorization': 'Bearer sekrit'})
+    assert json.loads(body)['vlc'].endswith('/api/orbit-view?token=sekrit')
+    _, _, body = _raw_get(f'{web_server}/api/config', {'Authorization': 'Bearer sekrit'})
+    cfg = json.loads(body)
+    assert cfg['auth'] is True and cfg['token'] == 'sekrit'
+
+
+def test_no_token_configured_keeps_everything_open(web_server):
+    status, _, body = _raw_get(f'{web_server}/api/config')
+    assert status == 200
+    cfg = json.loads(body)
+    assert cfg['auth'] is False and 'token' not in cfg
+    status, _, body = _raw_post(f'{web_server}/api/login', {'token': 'anything'})
+    assert status == 200 and body == {'ok': True, 'auth': False}
+
+
 def test_cross_origin_post_rejected(web_server):
     """No auth at all by design (see web_ui.py's module docstring) --
     Origin-checking is the only thing standing between this and any other
