@@ -393,8 +393,12 @@ const app = createApp({
       } else {
         this.stopOrbitVizFeed();
         window.orbitViz.teardown();
-        // intentionally NOT stopping the stream when orbit closes —
-        // stream is independent of the visualizer panel
+        // intentionally NOT stopping the stream when orbit closes -- the
+        // socket and worker stay up, so reopening resumes instantly with
+        // no VLC reconnect. But nothing is *captured* while the dialog
+        // is closed (no #vizCanvas), so the 📡 button shows a paused
+        // state meanwhile (index.html), and openPlayer() reopens the
+        // dialog when the next track starts.
         if (this._wasFullscreenBeforeOrbit) {
           this._wasFullscreenBeforeOrbit = false;
           // $nextTick: the player has to actually be visible again
@@ -609,6 +613,16 @@ const app = createApp({
       // already chose to watch in.
       if (!this.player.visible) this.player.mode = 'pip';
       this.player.visible = true;
+      // The network stream captures #vizCanvas, which only exists while
+      // the visualizer dialog is open (index.html v-if). Picking the next
+      // track means closing that dialog to reach the list, and from that
+      // moment the capture loop found no canvas and sent nothing -- with
+      // the stream still flagged active (real report: "shows the stream
+      // as active, but nothing gets streamed until I turn it off and
+      // back on"; toggling it on only helped because that reopens the
+      // dialog). So starting a track while streaming brings the
+      // visualizer back, the same way starting the stream opens it.
+      if (this.orbitStreaming && !this.easterEggVisible) this.easterEggVisible = true;
       this.player.queue = queue || {
         items: [{ content_hash: contentHash, title: title || null, signer_pubkey: signerPubkey || null }],
         index: 0, playlistId: null,

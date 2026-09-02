@@ -427,8 +427,8 @@
         <option value="0.7">q·high</option>
         <option value="0.85">q·max</option>
       </select>
-      <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
-              :title="orbitStreaming ? 'Stop stream' : 'Stream Orbit to network'"
+      <button type="button" class="icon-btn" :class="{active: orbitStreaming && easterEggVisible, paused: orbitStreaming && !easterEggVisible}"
+              :title="orbitStreaming ? (easterEggVisible ? 'Stop stream' : 'Stream paused — nothing is captured while the visualizer is closed. Open it (🌀) to resume, or click to stop.') : 'Stream Orbit to network'"
               @click.stop="toggleOrbitStream">📡</button>
       <span v-if="orbitStreaming && orbitViewUrl" class="orbit-url" :class="{copied: orbitUrlCopied}"
             :title="orbitUrlCopied ? 'Copied' : 'Click to copy — paste into VLC (Media → Open Network Stream)'"

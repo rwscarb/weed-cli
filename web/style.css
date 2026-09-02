@@ -459,6 +459,8 @@ td button {
 
 .icon-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text); }
 .icon-btn.active { border-color: var(--accent); color: var(--accent); }
+/* stream is up but has no canvas to capture (visualizer closed) */
+.icon-btn.paused { border-color: #e0a526; color: #e0a526; }
 .icon-btn:disabled { cursor: default; }
 
 /* Any / <label> / Not <label> segmented toggle -- three buttons sharing
