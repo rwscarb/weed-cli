@@ -586,7 +586,7 @@
            a horizontally scroll-snapping spin wheel instead of wrapping
            buttons -- see style.css max-width: 460px rules. -->
       <div class="viz-controls">
-        <div class="preset-row" id="vizModes">
+        <div class="preset-row" id="vizModes" title="Click the lit mode again to turn the effects off and watch the plain video">
           <button class="viz-mode-btn" data-viz="tunnel">Tunnel</button>
           <button class="viz-mode-btn" data-viz="bars">Bars</button>
           <button class="viz-mode-btn" data-viz="mirror">Mirror</button>
@@ -611,6 +611,7 @@
             <option value="kaleido">Kaleido</option>
             <option value="particles">Particles</option>
             <option value="freefall">Freefall</option>
+            <option value="__video">Video only</option>
           </select>
         </div>
         <!-- global, not ascii-specific -- Speed/Reactivity retune every
@@ -672,7 +673,7 @@
         </div>
       </div>
       <canvas id="vizCanvas"></canvas>
-      <div class="hint">scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; shift+1-9,0 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
+      <div class="hint">click lit mode·video only &nbsp;·&nbsp; scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; shift+1-9,0 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
     </div>
   </div>
 </template>

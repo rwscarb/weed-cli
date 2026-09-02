@@ -205,6 +205,10 @@ window.orbitViz = (function () {
       // energetic*, not the same constant rate every other mode uses.
       pixelsRingRot: 0, pixelsPulse: 0,
       vizMode: 'ascii',
+      // true = effects off; the canvas shows the plain video instead
+      // (drawPlainVideo). Toggled by clicking the lit mode button again.
+      // vizMode itself is kept, so the next click brings that mode back.
+      vizOff: false,
       // ASCII's own controls -- resolution (STRIDE, coarser = fewer/
       // bigger characters) and color mode (the video's real per-cell
       // color vs. the rotating neon palette added for "often quite
@@ -405,6 +409,7 @@ window.orbitViz = (function () {
     function setVizMode(mode) {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       s.vizMode = mode;
+      s.vizOff = false;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       if (vizModeSelect && vizModeSelect.value !== mode) vizModeSelect.value = mode;
       resetVizNav();
@@ -428,11 +433,28 @@ window.orbitViz = (function () {
       const activeBtn = vizModesEl.querySelector(`[data-viz="${CSS.escape(mode)}"]`);
       if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     }
+    // Effects off: the canvas shows the plain video instead (see
+    // drawPlainVideo). No mode button stays lit and the mode-specific
+    // control rows hide, but s.vizMode is kept -- clicking any mode, the
+    // select, arrow cycling or Shift+digit all go through setVizMode,
+    // which switches the effects straight back on.
+    function setVizOff() {
+      s.vizOff = true;
+      document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
+      if (vizModeSelect) vizModeSelect.value = '__video';
+      asciiControls.classList.add('mode-controls-hidden');
+      freefallControls.classList.add('mode-controls-hidden');
+    }
     on(vizModesEl, 'click', function (e) {
       const btn = e.target.closest('[data-viz]'); if (!btn) return;
-      setVizMode(btn.dataset.viz);
+      // the mode that's already lit: clicking it again turns the effects off
+      if (btn.dataset.viz === s.vizMode && !s.vizOff) setVizOff();
+      else setVizMode(btn.dataset.viz);
     });
-    if (vizModeSelect) on(vizModeSelect, 'change', () => setVizMode(vizModeSelect.value));
+    if (vizModeSelect) on(vizModeSelect, 'change', () => {
+      if (vizModeSelect.value === '__video') setVizOff();
+      else setVizMode(vizModeSelect.value);
+    });
 
     // ASCII resolution slider -- STRIDE 1-4, i.e. every source pixel
     // down to every 4th one, labeled with the actual resulting
@@ -566,6 +588,21 @@ window.orbitViz = (function () {
         : { w: s.VH * frameAspect, h: s.VH };
     }
 
+    // Effects off (s.vizOff): the plain video, object-fit: contain, at
+    // the canvas's own resolution -- drawn straight from the player's
+    // <video> element, not the tiny sampled videoFrame PIXELS/ASCII
+    // use. Going through this canvas (rather than un-hiding the player
+    // behind the dialog) is what keeps the network stream, which
+    // captures this canvas, showing the same plain video.
+    const playerVideo = document.querySelector('#global-player video');
+    function drawPlainVideo(hueBase) {
+      vctx.fillStyle = '#000'; vctx.fillRect(0, 0, s.VW, s.VH);
+      const v = playerVideo;
+      if (!v || v.readyState < 2 || !v.videoWidth) { drawNoVideoMessage(hueBase); return; }
+      const fit = fitFrameToCanvas(v.videoWidth, v.videoHeight);
+      vctx.drawImage(v, (s.VW - fit.w) / 2, (s.VH - fit.h) / 2, fit.w, fit.h);
+    }
+
     // FREEFALL's recursive flower -- a ring of petals radiating from
     // (x,y), each petal's own tip blooming a smaller ring of petals in
     // turn, depth-limited so the recursion actually terminates. Defined
@@ -635,6 +672,8 @@ window.orbitViz = (function () {
       const cx = s.VW / 2 + s.vizPanX, cy = s.VH / 2 + s.vizPanY;
       const maxBin = Math.floor(s.freqData.length * 0.70);
       const hueBase = s.c60Hue * 360;
+
+      if (s.vizOff) { drawPlainVideo(hueBase); return; }
 
       if (s.vizMode === 'tunnel') {
         voffCtx.clearRect(0, 0, s.VW, s.VH);
