@@ -2029,3 +2029,15 @@ code {
 .party-form textarea { width: 100%; box-sizing: border-box; }
 .party-form button[type=submit] { align-self: flex-start; }
 .party-invite { margin: 0.5rem 0; }
+
+/* ── MIDI controller panel (orbit_midi.js) ───────────────────────── */
+#orbit-egg-dialog .midi-panel { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+.midi-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); flex-wrap: wrap; }
+.midi-last { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); margin-left: auto; }
+#midiBindings { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 0.25rem 0.75rem; max-height: 11rem; overflow-y: auto; }
+.midi-row { display: grid; grid-template-columns: 5.5rem 1fr 4.5rem auto; align-items: center; gap: 0.4rem; font-size: 0.75rem; padding: 0.1rem 0; }
+.midi-row.learning { color: var(--accent); }
+.midi-label { color: var(--muted); }
+.midi-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.midi-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+.midi-row .icon-btn { padding: 0.05rem 0.4rem; font-size: 0.7rem; }

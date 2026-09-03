@@ -485,6 +485,9 @@ const app = createApp({
       if (this.tabs.some(t => t.id === id)) this.activeTab = id;
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
+    // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
+    // is this component's state, not the visualizer's
+    window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = Math.min(10000, Math.max(0, e.detail | 0)); });
     try {
       const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
       if (saved && typeof saved === 'object') {

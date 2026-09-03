@@ -1405,6 +1405,58 @@ window.orbitViz = (function () {
         if (plugin && !plugin.broken) callPlugin(plugin, 'draw', makeFrameContext());
       }
     }
+    // ── external controllers (orbit_midi.js) ────────────────────────
+    // Everything a knob or pad can do goes through the same setters the
+    // on-screen controls use, so the slider thumbs and labels follow,
+    // and it persists like any other change. control() takes 0..1 (a
+    // knob's 0..127 divided by 127) and maps it onto the parameter's
+    // own range; trigger() fires a discrete action.
+    const CONTROL_RANGES = {
+      speed: [0.2, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
+      asciiBrightness: [0.3, 3], asciiStride: [1, 4], asciiBgAlpha: [0, 1],
+      buildingWidth: [0.3, 3], buildingHeight: [0.3, 3], buildingCount: [5, 120],
+    };
+    s.control = function (param, v01) {
+      const range = CONTROL_RANGES[param];
+      if (!range) return;
+      const [lo, hi, scale] = range;
+      const v = Math.min(1, Math.max(0, v01));
+      const x = scale === 'log' ? lo * Math.pow(hi / lo, v) : lo + (hi - lo) * v;
+      switch (param) {
+        case 'speed': setSpeed(x); break;
+        case 'reactivity': setReactivity(x); break;
+        case 'zoom': setZoom(x); break;
+        case 'transitionMs': setTransitionMs(x); break;
+        case 'asciiBrightness': setAsciiBrightness(x); break;
+        case 'asciiStride': setAsciiRes(Math.round(x)); break;
+        case 'asciiBgAlpha': setAsciiBgAlpha(x); break;
+        case 'buildingWidth': setBuildingWidth(x); break;
+        case 'buildingHeight': setBuildingHeight(x); break;
+        case 'buildingCount': setBuildingCount(x); break;
+      }
+    };
+    s.trigger = function (action) {
+      if (action.startsWith('mode:')) {
+        const mode = action.slice(5);
+        if (mode === s.vizMode && !s.vizOff) return;   // a pad hit on the current mode is a no-op, not "off"
+        setVizMode(mode);
+      } else if (action === 'video') {
+        if (s.vizOff) setVizMode(s.vizMode); else setVizOff();
+      } else if (action === 'flash') {
+        snapshotForTransition();                       // re-fire the transition on whatever's showing: a hit
+      } else if (action === 'next' || action === 'prev') {
+        const idx = VIZ_MODES.indexOf(s.vizMode);
+        setVizMode(VIZ_MODES[(idx + (action === 'next' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
+      } else if (action === 'transition:next') {
+        const order = ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'];
+        setTransition(order[(order.indexOf(s.transition) + 1) % order.length]);
+        persistSettings();
+      } else if (action === 'resetNav') {
+        resetVizNav();
+      }
+    };
+    if (window.orbitMidi) window.orbitMidi.mount();
+
     s.drawViz = drawViz;
     s.scheduleDraw = scheduleDraw;
     // apply what restoreSettings() read back (the numeric sliders were
@@ -1583,6 +1635,10 @@ window.orbitViz = (function () {
     // run the configured transition from whatever's on the canvas now
     transition: () => { if (state) state.snapshotForTransition(); },
     debugState: () => (state ? state.transitionDebug() : null),
+    // external controllers (orbit_midi.js) -- see s.control/s.trigger
+    control: (param, v01) => { if (state) state.control(param, v01); },
+    trigger: (action) => { if (state) state.trigger(action); },
+    modes: () => VIZ_MODES.slice(),
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,
