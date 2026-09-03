@@ -714,17 +714,21 @@ window.orbitViz = (function () {
         }
         a = b;
       }
-      let lo = 1, hi = 0;
-      for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; }
-      for (let i = 0; i < a.length; i++) a[i] = (a[i] - lo) / (hi - lo || 1);
-      return a;
+      // rank-normalize rather than min/max stretch: blurring piles the
+      // values up in the middle, so a front that sweeps 0..1 linearly
+      // would eat most of the picture in the first third and idle for
+      // the rest. Mapping each pixel to its rank makes "fraction burned"
+      // track t exactly, so the slider means what it says.
+      const order = Array.from(a.keys()).sort((i, j) => a[i] - a[j]);
+      const ranked = new Float32Array(a.length);
+      for (let r = 0; r < order.length; r++) ranked[order[r]] = r / (order.length - 1);
+      return ranked;
     })();
 
     function snapshotForTransition() {
       if (s.transition === 'none' || !s.transitionMs || !s.VW || !s.VH) return;
       if (transOld.width !== s.VW || transOld.height !== s.VH) {
         transOld.width = s.VW; transOld.height = s.VH;
-        transTmp.width = s.VW; transTmp.height = s.VH;
       }
       transOldCtx.clearRect(0, 0, s.VW, s.VH);
       transOldCtx.drawImage(vizCanvas, 0, 0);
@@ -748,6 +752,7 @@ window.orbitViz = (function () {
       const EDGE = 0.14;                         // width of the glowing front, in noise units
       const front = t * (1 + 2 * EDGE) - EDGE;   // sweeps from below 0 to above 1: every pixel burns
       const m = maskImg.data, g = glowImg.data;
+      ensureTransTmp(W, H);
       for (let i = 0; i < noise.length; i++) {
         const d = noise[i] - front;              // > EDGE untouched; 0..EDGE burning; < 0 gone
         let keep = 0, glow = 0;
@@ -764,7 +769,7 @@ window.orbitViz = (function () {
       transMaskCtx.putImageData(maskImg, 0, 0);
       transGlowCtx.putImageData(glowImg, 0, 0);
       transTmpCtx.clearRect(0, 0, W, H);
-      transTmpCtx.drawImage(transOld, 0, 0);
+      transTmpCtx.drawImage(transOld, 0, 0, W, H);
       transTmpCtx.globalCompositeOperation = 'destination-in';
       transTmpCtx.drawImage(transMask, 0, 0, W, H);
       transTmpCtx.globalCompositeOperation = 'source-over';
@@ -774,19 +779,29 @@ window.orbitViz = (function () {
       vctx.globalCompositeOperation = 'source-over';
     }
 
+    function ensureTransTmp(W, H) {
+      if (transTmp.width !== W || transTmp.height !== H) { transTmp.width = W; transTmp.height = H; }
+    }
+
     function drawTransition() {
       const tr = s.trans;
       const t = (performance.now() - tr.t0) / s.transitionMs;
-      if (t >= 1 || transOld.width !== s.VW || transOld.height !== s.VH) {
-        s.trans = null;   // done -- or the canvas was resized mid-way; just drop it
+      if (t >= 1) {
+        s.trans = null;
         return;
       }
+      // The canvas can change size between the snapshot and the very
+      // next frame -- switching *away from* ASCII/Freefall hides their
+      // control row, so the canvas gets taller -- which is why every
+      // draw below scales the snapshot to the current W x H rather than
+      // assuming they still match (an earlier version dropped the whole
+      // transition on any mismatch, and lost exactly those switches).
       const W = s.VW, H = s.VH;
       vctx.save();
       switch (tr.type) {
         case 'crossfade':
           vctx.globalAlpha = 1 - t;
-          vctx.drawImage(transOld, 0, 0);
+          vctx.drawImage(transOld, 0, 0, W, H);
           break;
         case 'burn':
           drawBurn(t);
@@ -795,6 +810,7 @@ window.orbitViz = (function () {
           // the old picture falls apart into ever-bigger blocks while fading
           const size = 1 + 40 * t;
           const w = Math.max(1, Math.round(W / size)), h = Math.max(1, Math.round(H / size));
+          ensureTransTmp(W, H);
           transTmpCtx.clearRect(0, 0, W, H);
           transTmpCtx.drawImage(transOld, 0, 0, w, h);
           vctx.imageSmoothingEnabled = false;
@@ -813,7 +829,7 @@ window.orbitViz = (function () {
             vctx.scale(1 + 2.5 * tg, 1 + 2.5 * tg);
             vctx.rotate(tg * 1.3);
             vctx.filter = `hue-rotate(${(tg * 360 + g * 40) | 0}deg) saturate(${(1 + 2 * tg).toFixed(2)})`;
-            vctx.drawImage(transOld, -W / 2, -H / 2);
+            vctx.drawImage(transOld, -W / 2, -H / 2, W, H);
             vctx.restore();
           }
           break;
@@ -822,27 +838,28 @@ window.orbitViz = (function () {
           // horizontal bands of the old picture jitter sideways (less as
           // it fades), with two hue-shifted copies pushed opposite ways
           // for a channel-split look; the jitter re-rolls ~30x a second
-          const bands = 16, bh = H / bands, amp = W * 0.25 * (1 - t);
+          const bands = 16, bh = H / bands, sbh = transOld.height / bands, amp = W * 0.25 * (1 - t);
           const frame = Math.floor(t * s.transitionMs / 33);
           for (let i = 0; i < bands; i++) {
             const r = Math.sin(tr.seed + i * 12.9898 + frame * 78.233) * 43758.5453;
             const dx = ((r - Math.floor(r)) - 0.5) * amp;
             vctx.globalAlpha = 1 - t;
-            vctx.drawImage(transOld, 0, i * bh, W, bh, dx, i * bh, W, bh);
+            vctx.drawImage(transOld, 0, i * sbh, transOld.width, sbh, dx, i * bh, W, bh);
           }
           vctx.globalCompositeOperation = 'lighter';
           vctx.globalAlpha = 0.35 * (1 - t);
           vctx.filter = 'hue-rotate(120deg)';
-          vctx.drawImage(transOld, amp * 0.3, 0);
+          vctx.drawImage(transOld, amp * 0.3, 0, W, H);
           vctx.filter = 'hue-rotate(240deg)';
-          vctx.drawImage(transOld, -amp * 0.3, 0);
+          vctx.drawImage(transOld, -amp * 0.3, 0, W, H);
           break;
         }
         case 'wipe': {
           // a soft edge sweeps left to right, the old picture only on its right
           const edge = W * 0.12, x = W * t * (1 + 0.12) - edge * 0.5;
+          ensureTransTmp(W, H);
           transTmpCtx.clearRect(0, 0, W, H);
-          transTmpCtx.drawImage(transOld, 0, 0);
+          transTmpCtx.drawImage(transOld, 0, 0, W, H);
           transTmpCtx.globalCompositeOperation = 'destination-in';
           const grad = transTmpCtx.createLinearGradient(x - edge, 0, x + edge, 0);
           grad.addColorStop(0, 'rgba(0,0,0,0)');
