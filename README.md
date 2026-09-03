@@ -148,6 +148,15 @@ weed web --bind 0.0.0.0 --auth-token # same, behind a generated token (printed +
 weed web --bind 0.0.0.0 --tls --auth-token --stream-plain-port 8081
 ```
 
+`--stream-token` (with `--auth-token`) adds a second, guest tier: a
+browser opened with that token gets the **party view** and nothing
+else — the live Orbit stream, what's playing, a vote on which
+downloaded track plays next (one vote per person per track, toggleable),
+and whatever links you set. The admin's **Party** tab holds the guest
+link and its QR code, the title and links, the live tally with a ▶ per
+track, and an "auto-play the top vote when a track ends" switch.
+Guests can't host, download, like, subscribe, or read the library.
+
 `--stream-plain-port` adds a plain-HTTP listener that serves *only* the
 stream endpoints (the Orbit MJPEG stream and downloaded files), for
 players that can't do TLS with a self-signed cert — a Roku IP-camera
@@ -405,8 +414,9 @@ mechanisms hold up:
   can't avoid — every tunneled byte crosses it — and an active download
   doesn't migrate if its relay dies mid-transfer; it restarts on the
   next one.
-- The web UI's auth is a single shared bearer token (`--auth-token` /
-  `$WEED_UI_TOKEN`), off by default and local-only when off. One token,
-  no accounts, no rotation without a restart, and anyone who has it can
-  do everything — enough to put a LAN-bound UI behind something, not a
+- The web UI's auth is two shared bearer tokens (`--auth-token` for
+  everything, `--stream-token` for the guest party view), off by default
+  and local-only when off. No accounts, no rotation without a restart,
+  and votes are anonymous per browser cookie — enough to put a
+  LAN-bound UI behind something and hand guests a safe subset, not a
   reason to face it at the internet.

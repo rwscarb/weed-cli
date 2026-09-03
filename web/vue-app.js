@@ -30,6 +30,7 @@ const app = createApp({
       { id: 'host', label: 'Host' },
       { id: 'downloads', label: 'Downloads' },
       { id: 'playlists', label: 'Playlists' },
+      { id: 'party', label: 'Party' },
       { id: 'identity-tab', label: 'Identity' },
     ];
     // URL hash is the tab, e.g. weed:8080/#playlists -- read straight
@@ -49,6 +50,17 @@ const app = createApp({
       authTokenInput: '',
       authError: '',
       streamToken: '',
+      // two-tier auth (web_ui.py AUTH_TOKEN / STREAM_TOKEN): 'admin' is
+      // the whole UI; 'guest' (the stream token) gets only the party
+      // view below and this page renders nothing else for them
+      role: 'admin',
+      partyMode: false,
+      party: { title: '', links: [], tracks: [], now_playing: null, autoplay: false,
+               stream: { active: false, since: 0, url: '/api/orbit-view', player_url: null } },
+      partyUrl: '',          // admin: the guest link (lan url + stream token)
+      partyStreamToken: '',
+      partyForm: { title: '', links: '', autoplay: false },
+      partySaved: '',
       // 'http://host:port' of the plain-HTTP stream listener when the
       // server has one (web_ui.py STREAM_PLAIN_PORT) -- the URL a TV or
       // Roku app can actually open when the UI itself is on self-signed
@@ -468,9 +480,6 @@ const app = createApp({
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
 
-    const { pubkey } = await this.apiGet('/api/whoami');
-    this.pubkey = pubkey;
-
     // must be awaited (not fire-and-forget) *before* refreshDiscover()
     // below -- otherwise the very first auto-discover on load races this
     // and fires against the hardcoded loopback default regardless of
@@ -481,6 +490,23 @@ const app = createApp({
     this.lanUrlBase = config.lan_url;
     this.streamToken = config.token || '';
     this.streamPlainBase = config.stream_plain_url || '';
+    this.role = config.role || 'admin';
+    this.partyStreamToken = config.stream_token || '';
+    this.partyUrl = config.party_url || (this.partyStreamToken
+      ? location.origin + '/?token=' + encodeURIComponent(this.partyStreamToken) : '');
+    if (this.role === 'guest') {
+      // a guest: the party view and nothing else -- every other fetch
+      // below is admin-only and would just 401 into the unlock prompt
+      this.partyMode = true;
+      await this.refreshParty();
+      setInterval(this.refreshParty, 5000);
+      return;
+    }
+    // config is fetched first so a guest never hits this (admin-only)
+    const { pubkey } = await this.apiGet('/api/whoami');
+    this.pubkey = pubkey;
+    this.refreshParty();
+    setInterval(this.refreshParty, 5000);
     if (config.default_relay) {
       this.discoverRelays = config.default_relay;
       this.hostForm.relays = config.default_relay;
@@ -1273,6 +1299,45 @@ const app = createApp({
       this.library.subscriptions.add(signerPubkey);
     },
 
+    // ── party view (guests) / Party tab (admin) ─────────────────────
+    async refreshParty() {
+      const p = await this.apiGet('/api/party');
+      if (p.error) return;
+      this.party = p;
+      if (!this.partyForm._touched) {
+        this.partyForm.title = p.title || '';
+        this.partyForm.links = (p.links || []).map(l => (l.label ? l.label + ' | ' : '') + l.url).join('\n');
+        this.partyForm.autoplay = !!p.autoplay;
+      }
+    },
+    async vote(track) {
+      const r = await this.apiPost('/api/party/vote', { content_hash: track.content_hash });
+      if (r.tracks) this.party.tracks = r.tracks;
+    },
+    async savePartyConfig() {
+      const links = this.partyForm.links.split('\n').map(line => line.trim()).filter(Boolean).map(line => {
+        const bar = line.indexOf('|');
+        return bar >= 0 ? { label: line.slice(0, bar).trim(), url: line.slice(bar + 1).trim() }
+                        : { label: '', url: line };
+      });
+      const r = await this.apiPost('/api/party/config',
+        { title: this.partyForm.title, links, autoplay: this.partyForm.autoplay });
+      this.partySaved = r.ok ? 'saved' : ('error: ' + (r.error || 'unknown'));
+      this.partyForm._touched = false;
+      setTimeout(() => { this.partySaved = ''; }, 2000);
+      this.refreshParty();
+    },
+    playVoted(track) {
+      const rec = this.library.downloads[track.content_hash];
+      if (!rec) return;
+      this.apiPost('/api/party/played', { content_hash: track.content_hash }).then(() => this.refreshParty());
+      this.openPlayer(rec.job_id, track.title || rec.title || this.shortHash(track.content_hash),
+        track.content_hash, rec.signer_pubkey || null);
+    },
+    clearVotes(track) {
+      this.apiPost('/api/party/played', { content_hash: track.content_hash }).then(() => this.refreshParty());
+    },
+
     // one on-demand pass of the server's relay mirroring (it also runs
     // one on its own every few minutes for the relays its hosts use)
     async syncRelays() {
@@ -1627,6 +1692,20 @@ const app = createApp({
     },
     onPlayerEnded() {
       this.player.isPlaying = false;
+      // party autoplay: the top-voted track (if anyone voted) jumps the
+      // queue when a track ends, and its tally is cleared so the next
+      // vote starts fresh. Voters can only vote on downloaded tracks
+      // (see /api/party), so the record is always here.
+      if (this.party.autoplay && this.party.tracks.length && this.party.tracks[0].votes > 0) {
+        const top = this.party.tracks[0];
+        const rec = this.library.downloads[top.content_hash];
+        if (rec) {
+          this.apiPost('/api/party/played', { content_hash: top.content_hash }).catch(() => {});
+          this.openPlayer(rec.job_id, top.title || rec.title || this.shortHash(top.content_hash),
+            top.content_hash, rec.signer_pubkey || null);
+          return;
+        }
+      }
       const q = this.player.queue;
       if (!q) return;
       const next = q.items[q.index + 1];

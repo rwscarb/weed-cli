@@ -14,13 +14,41 @@
 <header>
   <h1>weed</h1>
   <p class="tagline">censorship-resistant video PoC — local control UI</p>
-  <div class="identity">
+  <div class="identity" v-if="!partyMode">
     <template v-if="pubkey">you are <code>{{ shortHash(pubkey, 20) }}</code></template>
     <template v-else>loading identity…</template>
   </div>
-  <button type="button" class="qr-toggle" @click="toggleQr($event, qrBaseUrl)">📱 Open on phone</button>
-  <button type="button" class="qr-toggle" title="Keyboard shortcuts (?)" @click="shortcutsVisible = !shortcutsVisible">⌨ Shortcuts</button>
+  <button type="button" class="qr-toggle" v-if="!partyMode" @click="toggleQr($event, qrBaseUrl)">📱 Open on phone</button>
+  <button type="button" class="qr-toggle" v-if="!partyMode" title="Keyboard shortcuts (?)" @click="shortcutsVisible = !shortcutsVisible">⌨ Shortcuts</button>
 </header>
+
+<!-- the guest view (stream token, web_ui.py STREAM_TOKEN): this and the
+     unlock prompt are all a guest ever gets; the nav/main below don't
+     render for them at all -->
+<section id="party-view" v-if="partyMode">
+  <h2>{{ party.title || 'party' }}</h2>
+  <div class="party-now" v-if="party.now_playing">
+    now playing: <strong>{{ party.now_playing.title || shortHash(party.now_playing.content_hash) }}</strong>
+  </div>
+  <div class="party-stream" v-if="party.stream.active">
+    <img :key="party.stream.since" :src="party.stream.url + '?_=' + party.stream.since" alt="live visualizer">
+    <a v-if="party.stream.player_url" class="party-player-link" :href="party.stream.player_url" target="_blank" rel="noopener">open in a player</a>
+  </div>
+  <div class="party-stream-off" v-else>the live visualizer isn't streaming right now</div>
+  <h3>vote for what plays next</h3>
+  <ul class="party-tracks" v-if="party.tracks.length">
+    <li v-for="t in party.tracks" :key="t.content_hash">
+      <button type="button" class="icon-btn" :class="{active: t.voted}" @click="vote(t)"
+              :title="t.voted ? 'take your vote back' : 'vote for this'">{{ t.voted ? '✓' : '+1' }}</button>
+      <span class="party-track-title">{{ t.title || shortHash(t.content_hash) }}</span>
+      <span class="party-votes" :title="t.votes + ' vote(s)'">{{ t.votes }}</span>
+    </li>
+  </ul>
+  <div class="party-empty" v-else>nothing downloaded to vote on yet</div>
+  <ul class="party-links" v-if="party.links.length">
+    <li v-for="l in party.links" :key="l.url"><a :href="l.url" target="_blank" rel="noopener">{{ l.label || l.url }}</a></li>
+  </ul>
+</section>
 
 <!-- optional auth (web_ui.py AUTH_TOKEN): appears the moment any API
      call answers 401, i.e. this page was opened without the ?token= link -->
@@ -34,12 +62,12 @@
   </form>
 </div>
 
-<nav id="tabs">
+<nav id="tabs" v-if="!partyMode">
   <button v-for="t in tabs" :key="t.id" class="tab-btn" :class="{active: activeTab === t.id}"
           @click="activeTab = t.id">{{ t.label }}</button>
 </nav>
 
-<main>
+<main v-if="!partyMode">
   <section class="tab-panel" v-show="activeTab === 'discover'">
     <h2>Discover</h2>
     <button type="button" class="filters-toggle" @click="discoverFiltersOpen = !discoverFiltersOpen"
@@ -392,6 +420,53 @@
     </div>
   </section>
 
+  <section class="tab-panel" v-show="activeTab === 'party'">
+    <h2>Party</h2>
+    <p class="party-intro">Guests with the stream token get a page of their own: the live visualizer, what's
+      playing, a vote on what plays next, and the links below. Nothing else.</p>
+    <div class="party-invite" v-if="partyStreamToken">
+      <label>Guest link
+        <div class="party-invite-row">
+          <input type="text" readonly :value="partyUrl" @focus="$event.target.select()">
+          <button type="button" class="qr-toggle qr-btn" @click="toggleQr($event, partyUrl)">📱 QR</button>
+        </div>
+      </label>
+    </div>
+    <div class="party-invite party-invite-off" v-else>
+      No stream token configured — start the server with <code>--stream-token</code> (alongside
+      <code>--auth-token</code>) to get a guest link here.
+    </div>
+    <form class="party-form" @submit.prevent="savePartyConfig">
+      <label>Party title
+        <input type="text" v-model="partyForm.title" @input="partyForm._touched = true" placeholder="party">
+      </label>
+      <label><span>Links (one per line: <code>label | url</code>)</span>
+        <textarea v-model="partyForm.links" @input="partyForm._touched = true" rows="3"
+                  placeholder="request a song | https://…"></textarea>
+      </label>
+      <label class="checkbox">
+        <input type="checkbox" v-model="partyForm.autoplay" @change="partyForm._touched = true">
+        When a track ends, play the top-voted one next
+      </label>
+      <button type="submit">Save</button>
+      <span class="party-saved">{{ partySaved }}</span>
+    </form>
+    <h3>Votes</h3>
+    <div class="table-wrap"><table id="party-votes-table">
+      <thead><tr><th>Track</th><th>Votes</th><th></th></tr></thead>
+      <tbody>
+        <tr v-for="t in party.tracks" :key="t.content_hash">
+          <td>{{ t.title || shortHash(t.content_hash) }}</td>
+          <td>{{ t.votes }}</td>
+          <td>
+            <button type="button" class="icon-btn" title="play this now (clears its votes)" @click="playVoted(t)">▶</button>
+            <button type="button" class="icon-btn" v-if="t.votes" title="clear its votes" @click="clearVotes(t)">✕</button>
+          </td>
+        </tr>
+        <tr v-if="!party.tracks.length"><td colspan="3" class="muted">nothing downloaded yet — guests vote on downloaded tracks</td></tr>
+      </tbody>
+    </table></div>
+  </section>
   <section class="tab-panel" v-show="activeTab === 'identity-tab'">
     <h2>Identity &amp; reputation</h2>
     <p>Your pubkey: <code>{{ pubkey }}</code></p>

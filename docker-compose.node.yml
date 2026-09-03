@@ -99,6 +99,8 @@ services:
       # web_ui.py's AUTH_TOKEN) -- worth doing, since this container
       # binds the UI on every interface of the host's network namespace
       WEED_UI_TOKEN: ${WEED_UI_TOKEN:-}
+      # optional guest tier (needs WEED_UI_TOKEN): the party view only
+      WEED_STREAM_TOKEN: ${WEED_STREAM_TOKEN:-}
       # optional: a plain-HTTP port serving only the stream endpoints,
       # for players that can't do self-signed TLS (Roku IP-camera
       # viewers, smart TVs) -- see web_ui.py's STREAM_PLAIN_PORT

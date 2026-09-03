@@ -188,6 +188,11 @@ def build_parser():
                         help='require a token for every API call: given a value, that token; '
                              'bare, a generated one (printed at startup, encoded in the QR). '
                              'Default: $WEED_UI_TOKEN if set, else no auth.')
+    p_web.add_argument('--stream-token', nargs='?', const='generate', metavar='TOKEN',
+                        default=os.environ.get('WEED_STREAM_TOKEN') or None,
+                        help='guest-tier token (needs --auth-token): the party view only -- live '
+                             'stream, now playing, vote on what is next, your links. Bare for a '
+                             'generated one. Default: $WEED_STREAM_TOKEN if set.')
     p_web.add_argument('--stream-plain-port', type=int, metavar='PORT',
                         default=int(os.environ.get('WEED_STREAM_PLAIN_PORT') or 0) or None,
                         help='also serve just the stream endpoints over plain HTTP on this port, '
@@ -344,7 +349,8 @@ def cmd_web(args):
                       certfile=getattr(args, 'cert', None),
                       keyfile=getattr(args, 'key', None),
                       auth_token=getattr(args, 'auth_token', None),
-                      stream_plain_port=getattr(args, 'stream_plain_port', None))
+                      stream_plain_port=getattr(args, 'stream_plain_port', None),
+                      stream_token=getattr(args, 'stream_token', None))
 
 
 NATIVE_COMMANDS = {

@@ -492,7 +492,7 @@ def test_login_endpoint_sets_the_cookie(web_server, monkeypatch):
     import web_ui
     monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
     status, headers, body = _raw_post(f'{web_server}/api/login', {'token': 'sekrit'})
-    assert status == 200 and body == {'ok': True, 'auth': True}
+    assert status == 200 and body == {'ok': True, 'auth': True, 'role': 'admin'}
     assert headers['set-cookie'].startswith('weed_ui_token=sekrit;')
     status, _, _ = _raw_post(f'{web_server}/api/login', {'token': 'wrong'})
     assert status == 401
@@ -553,13 +553,95 @@ def test_plain_stream_port_serves_only_the_stream_endpoints(web_server, monkeypa
         plain.server_close()
 
 
+def test_stream_token_is_a_guest_tier(web_server, monkeypatch):
+    """The stream token opens the party view and the stream, and nothing
+    else -- and never leaks the admin token back to a guest."""
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-secret')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-secret')
+    guest = {'Authorization': 'Bearer guest-secret'}
+    admin = {'Authorization': 'Bearer admin-secret'}
+    assert _raw_get(f'{web_server}/api/whoami', guest)[0] == 401
+    assert _raw_get(f'{web_server}/api/library', guest)[0] == 401
+    assert _raw_post(f'{web_server}/api/like', {'content_hash': 'c' * 64}, guest)[0] == 401
+    assert _raw_post(f'{web_server}/api/party/config', {'title': 'x'}, guest)[0] == 401
+
+    status, _, body = _raw_get(f'{web_server}/api/party', guest)
+    assert status == 200 and json.loads(body)['role'] == 'guest'
+    status, _, body = _raw_get(f'{web_server}/api/config', guest)
+    cfg = json.loads(body)
+    assert status == 200 and cfg['role'] == 'guest' and cfg['token'] == 'guest-secret'
+    assert 'stream_token' not in cfg and 'admin-secret' not in body.decode()
+    _, _, body = _raw_get(f'{web_server}/api/orbit-stream', guest)
+    assert json.loads(body)['vlc'].endswith('?token=guest-secret')
+    status, headers, _ = _raw_get(f'{web_server}/?token=guest-secret')
+    assert status == 302 and headers['set-cookie'].startswith('weed_ui_token=guest-secret;')
+    status, _, body = _raw_post(f'{web_server}/api/login', {'token': 'guest-secret'})
+    assert status == 200 and body['role'] == 'guest'
+
+    # the admin sees both tokens (to hand the guest link out) and the
+    # admin's own stream URL carries the admin token, not the guest one
+    _, _, body = _raw_get(f'{web_server}/api/config', admin)
+    cfg = json.loads(body)
+    assert cfg['role'] == 'admin' and cfg['token'] == 'admin-secret' and cfg['stream_token'] == 'guest-secret'
+    _, _, body = _raw_get(f'{web_server}/api/orbit-stream', admin)
+    assert json.loads(body)['vlc'].endswith('?token=admin-secret')
+
+
+def test_party_voting_and_admin_settings(web_server, monkeypatch):
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-secret')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-secret')
+    web_ui._party_votes.clear()
+    web_ui._library['downloads']['a' * 64] = {'content_hash': 'a' * 64, 'title': 'Song A', 'job_id': 'j1'}
+    web_ui._library['downloads']['b' * 64] = {'content_hash': 'b' * 64, 'title': 'Song B', 'job_id': 'j2'}
+    guest = {'Authorization': 'Bearer guest-secret'}
+    admin = {'Authorization': 'Bearer admin-secret'}
+
+    # first sight of a guest mints their anonymous voter id
+    status, headers, body = _raw_get(f'{web_server}/api/party', guest)
+    assert status == 200 and headers['set-cookie'].startswith('weed_guest=')
+    gid_cookie = headers['set-cookie'].split(';')[0]
+    party = json.loads(body)
+    assert [t['title'] for t in party['tracks']] == ['Song A', 'Song B'] and all(t['votes'] == 0 for t in party['tracks'])
+
+    voter = {**guest, 'Cookie': gid_cookie}
+    status, _, r = _raw_post(f'{web_server}/api/party/vote', {'content_hash': 'b' * 64}, voter)
+    assert status == 200 and r['votes'] == 1 and r['voted'] is True
+    assert r['tracks'][0]['title'] == 'Song B'                       # top vote sorts first
+    # same person again: it's a toggle, not a second vote
+    _, _, r = _raw_post(f'{web_server}/api/party/vote', {'content_hash': 'b' * 64}, voter)
+    assert r['votes'] == 0 and r['voted'] is False
+    _raw_post(f'{web_server}/api/party/vote', {'content_hash': 'b' * 64}, voter)
+    # a different browser is a different voter
+    _, _, r = _raw_post(f'{web_server}/api/party/vote', {'content_hash': 'b' * 64}, guest)
+    assert r['votes'] == 2
+    assert _raw_post(f'{web_server}/api/party/vote', {'content_hash': 'f' * 64}, voter)[0] == 400
+
+    # admin: settings persist and guests see them; playing a track clears its tally
+    status, _, r = _raw_post(f'{web_server}/api/party/config',
+                             {'title': 'Friday', 'autoplay': True,
+                              'links': [{'label': 'requests', 'url': 'https://example.org/req'},
+                                        {'label': 'nope', 'url': 'javascript:alert(1)'}]}, admin)
+    assert status == 200 and r['party']['links'] == [{'label': 'requests', 'url': 'https://example.org/req'}]
+    _, _, body = _raw_get(f'{web_server}/api/party', guest)
+    party = json.loads(body)
+    assert party['title'] == 'Friday' and party['autoplay'] is True and party['links'][0]['label'] == 'requests'
+    _, _, r = _raw_post(f'{web_server}/api/party/played', {'content_hash': 'b' * 64}, admin)
+    assert r['cleared'] == 2
+    _, _, body = _raw_get(f'{web_server}/api/party', guest)
+    assert all(t['votes'] == 0 for t in json.loads(body)['tracks'])
+
+
 def test_no_token_configured_keeps_everything_open(web_server):
     status, _, body = _raw_get(f'{web_server}/api/config')
     assert status == 200
     cfg = json.loads(body)
     assert cfg['auth'] is False and 'token' not in cfg
     status, _, body = _raw_post(f'{web_server}/api/login', {'token': 'anything'})
-    assert status == 200 and body == {'ok': True, 'auth': False}
+    assert status == 200 and body == {'ok': True, 'auth': False, 'role': 'admin'}
+    _, _, body = _raw_get(f'{web_server}/api/party')
+    assert json.loads(body)['role'] == 'admin'
 
 
 def test_cross_origin_post_rejected(web_server):

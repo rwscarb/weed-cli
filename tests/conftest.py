@@ -39,7 +39,8 @@ def isolated_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(web_ui, 'HOSTS_PATH', str(tmp_path / 'hosts.json'))
     monkeypatch.setattr(web_ui, 'DOWNLOADS_DIR', str(tmp_path / 'downloads'))
     os.makedirs(web_ui.DOWNLOADS_DIR, exist_ok=True)
-    web_ui._library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': [], 'history': []}
+    web_ui._library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': [], 'history': [],
+                       'party': {'title': '', 'links': [], 'autoplay': False}}
     web_ui._jobs = {}
     web_ui._hosts = {}
     web_ui._persisted_hosts = {}

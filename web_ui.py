@@ -63,8 +63,28 @@ DEFAULT_TUNNEL = os.environ.get('WEED_TUNNEL')
 # ?token= query param. Static files (the page itself) stay open: they
 # hold no secrets, and the page needs to load to show the unlock prompt.
 AUTH_TOKEN = os.environ.get('WEED_UI_TOKEN') or None
+# Second tier: the *stream* token ($WEED_STREAM_TOKEN / --stream-token).
+# Whoever holds it is a guest: they can watch the live stream and see
+# the party view (what's playing, vote on what's next, the links you
+# chose to show) and nothing else -- no hosting, downloading, liking,
+# or reading the library. Only meaningful alongside AUTH_TOKEN: with no
+# admin token configured, everyone is admin, same as before either
+# token existed.
+STREAM_TOKEN = os.environ.get('WEED_STREAM_TOKEN') or None
 AUTH_COOKIE = 'weed_ui_token'
 AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
+# anonymous per-browser id for guests, so a vote is one per person per
+# track rather than one per click; nothing else is keyed on it
+GUEST_COOKIE = 'weed_guest'
+_party_votes = {}      # content_hash -> set of guest ids (in memory; a restart clears the tally)
+
+
+def _party_settings():
+    """Caller must hold _lock. The library's 'party' dict, created on
+    demand -- a library written (or a test fixture built) before this
+    key existed simply doesn't have it."""
+    return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False})
+_orbit_ws_since = 0.0  # when the current stream started -- the party page keys its <img> on it
 # Optional second listener, plain HTTP, serving *only* the stream
 # endpoints (/api/orbit-view, /api/orbit-stream, /api/stream/<job>).
 # For players that can't do TLS with a self-signed cert -- a Roku
@@ -296,7 +316,8 @@ _lock = threading.Lock()
 # from downloads' own play_count/last_played (see _handle_play) since
 # those two are aggregates per content_hash, while this is the actual
 # per-play timeline. All access goes through _lock, same as _hosts/_jobs.
-_library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': [], 'history': []}
+_library = {'downloads': {}, 'likes': [], 'subscriptions': [], 'playlists': [], 'history': [],
+            'party': {'title': '', 'links': [], 'autoplay': False}}
 
 # what to (re-)host on startup -- _hosts above is pure in-memory runtime
 # state, so a restart (a fresh `make node`, a Docker container recreated
@@ -500,6 +521,8 @@ def _load_library():
             'subscriptions': data.get('subscriptions') or [],
             'playlists': data.get('playlists') or [],
             'history': data.get('history') or [],
+            # the guest/party view's admin-set bits (see _handle_party_config)
+            'party': {'title': '', 'links': [], 'autoplay': False, **(data.get('party') or {})},
         }
     except (FileNotFoundError, json.JSONDecodeError):
         pass
@@ -733,11 +756,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass  # quiet — this is a local UI, not a service worth logging every hit for
 
-    def _json(self, obj, status=200):
+    def _json(self, obj, status=200, headers=()):
         body = json.dumps(obj).encode()
         self.send_response(status)
         self.send_header('Content-Type', 'application/json')
         self.send_header('Content-Length', str(len(body)))
+        for name, value in headers:
+            self.send_header(name, value)
         self.end_headers()
         self.wfile.write(body)
 
@@ -765,20 +790,59 @@ class Handler(BaseHTTPRequestHandler):
             return qs['token'][0]
         return None
 
-    def _authorized(self, qs=None):
+    @staticmethod
+    def _role_for(token):
+        """'admin' | 'guest' | None for a presented token. No admin token
+        configured means no gate at all: everyone is admin (the original
+        behaviour), and a stream token alone changes nothing."""
+        if not AUTH_TOKEN:
+            return 'admin'
+        if not token:
+            return None
+        if hmac.compare_digest(token, AUTH_TOKEN):
+            return 'admin'
+        if STREAM_TOKEN and hmac.compare_digest(token, STREAM_TOKEN):
+            return 'guest'
+        return None
+
+    def _role(self, qs=None):
         """qs is only passed for the endpoints that may take ?token= (a
         player opening a stream URL can't send a header or a cookie);
         everywhere else a token in the URL is ignored, so it never ends
         up in logs/history for ordinary API calls."""
-        if not AUTH_TOKEN:
-            return True
-        token = self._presented_token(qs)
-        return bool(token) and hmac.compare_digest(token, AUTH_TOKEN)
+        return self._role_for(self._presented_token(qs))
+
+    def _authorized(self, qs=None):
+        return self._role(qs) == 'admin'
+
+    def _guest_ok(self, qs=None):
+        return self._role(qs) in ('admin', 'guest')
 
     def _deny(self):
         return self._json({'error': 'auth token required: open this UI from its ?token= link '
                                      '(the startup QR), paste the token into the unlock prompt, '
                                      'or send Authorization: Bearer <token>', 'auth': True}, status=401)
+
+    def _guest_id(self):
+        """The anonymous voter id cookie, or None if this browser doesn't
+        have one yet (see _ensure_guest_id)."""
+        raw = self.headers.get('Cookie')
+        if not raw:
+            return None
+        jar = _http_cookies.SimpleCookie()
+        try:
+            jar.load(raw)
+        except _http_cookies.CookieError:
+            return None
+        return jar[GUEST_COOKIE].value if GUEST_COOKIE in jar else None
+
+    def _ensure_guest_id(self):
+        """(guest_id, extra response headers) -- mints one on first sight."""
+        gid = self._guest_id()
+        if gid and len(gid) == 32 and all(c in '0123456789abcdef' for c in gid):
+            return gid, []
+        gid = secrets.token_hex(16)
+        return gid, [('Set-Cookie', f'{GUEST_COOKIE}={gid}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; SameSite=Lax')]
 
     def _stream_plain_base(self):
         """'http://<this host>:<STREAM_PLAIN_PORT>' when the plain stream
@@ -790,10 +854,16 @@ class Handler(BaseHTTPRequestHandler):
         host = self.headers.get('Host', '127.0.0.1').rsplit(':', 1)[0]
         return f'http://{host}:{STREAM_PLAIN_PORT}'
 
-    def _set_auth_cookie(self):
+    def _auth_cookie(self, token):
+        """Set-Cookie value holding whichever token (admin or stream) this
+        browser presented -- the role is re-derived from it per request."""
         secure = '; Secure' if getattr(self.server, '_tls', False) else ''
-        self.send_header('Set-Cookie', f'{AUTH_COOKIE}={AUTH_TOKEN}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; '
-                                       f'HttpOnly; SameSite=Lax{secure}')
+        return (f'{AUTH_COOKIE}={token}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; '
+                f'HttpOnly; SameSite=Lax{secure}')
+
+    # GET endpoints a guest (stream token) may use; everything else under
+    # /api/ is admin-only. The stream endpoints also take ?token=.
+    _GUEST_GET = ('/api/orbit-view', '/api/orbit-stream', '/api/config', '/api/party')
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -801,16 +871,18 @@ class Handler(BaseHTTPRequestHandler):
 
         if path.startswith('/api/'):
             takes_query_token = path == '/api/orbit-view' or path.startswith('/api/stream/')
-            if not self._authorized(qs if takes_query_token else None):
+            q = qs if takes_query_token else None
+            guest_ok = takes_query_token or path in self._GUEST_GET
+            if not (self._guest_ok(q) if guest_ok else self._authorized(q)):
                 return self._deny()
         elif AUTH_TOKEN and path == '/' and qs.get('token'):
-            # the onboarding link: token in the URL exactly once, traded
-            # for the cookie, then a redirect to the clean URL so the
-            # token isn't sitting in the address bar (or a screenshot)
-            if not hmac.compare_digest(qs['token'][0], AUTH_TOKEN):
+            # the onboarding link (either token): token in the URL exactly
+            # once, traded for the cookie, then a redirect to the clean
+            # URL so it isn't sitting in the address bar (or a screenshot)
+            if self._role(qs) is None:
                 return self._deny()
             self.send_response(302)
-            self._set_auth_cookie()
+            self.send_header('Set-Cookie', self._auth_cookie(qs['token'][0]))
             self.send_header('Location', '/')
             self.send_header('Content-Length', '0')
             self.end_headers()
@@ -819,16 +891,25 @@ class Handler(BaseHTTPRequestHandler):
         if path == '/api/whoami':
             return self._json({'pubkey': _identity().pubkey_hex()})
         if path == '/api/config':
+            role = self._role()
             cfg = {'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
-                   'default_tunnel': DEFAULT_TUNNEL, 'auth': bool(AUTH_TOKEN),
+                   'default_tunnel': DEFAULT_TUNNEL, 'auth': bool(AUTH_TOKEN), 'role': role,
                    'stream_plain_url': self._stream_plain_base()}
             if AUTH_TOKEN:
-                # this caller already proved it holds the token (see the
-                # /api/ gate above); handing it back lets the page build
-                # stream URLs a player can open (?token=), since the
-                # cookie is HttpOnly and JS can't read it
-                cfg['token'] = AUTH_TOKEN
+                # this caller already proved it holds *a* token (see the
+                # /api/ gate above); handing that same one back lets the
+                # page build stream URLs a player can open (?token=),
+                # since the cookie is HttpOnly and JS can't read it. A
+                # guest only ever sees the stream token this way.
+                cfg['token'] = self._presented_token()
+            if role == 'admin' and STREAM_TOKEN:
+                # what the admin hands to guests: the party link (and QR)
+                cfg['stream_token'] = STREAM_TOKEN
+                base = _lan_url.split('?')[0] if _lan_url else None
+                cfg['party_url'] = f'{base}?token={STREAM_TOKEN}' if base else None
             return self._json(cfg)
+        if path == '/api/party':
+            return self._handle_party()
         if path == '/api/discover':
             results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
             return self._json({'results': results})
@@ -915,8 +996,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error': 'rejected: request Origin does not match this server — '
                                          'looks like a cross-site request, not this UI'}, status=403)
         # /api/login is how a browser *gets* the cookie (the unlock
-        # prompt); everything else needs it already
-        if path != '/api/login' and not self._authorized():
+        # prompt); voting is the one thing a guest may POST; everything
+        # else needs the admin token already
+        if path == '/api/party/vote':
+            if not self._guest_ok():
+                return self._deny()
+        elif path != '/api/login' and not self._authorized():
             return self._deny()
 
         # Not a JSON-body endpoint like everything else here -- the body
@@ -940,19 +1025,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == '/api/login':
             if not AUTH_TOKEN:
-                return self._json({'ok': True, 'auth': False})
-            if not hmac.compare_digest(str(body.get('token') or ''), AUTH_TOKEN):
+                return self._json({'ok': True, 'auth': False, 'role': 'admin'})
+            token = str(body.get('token') or '')
+            role = self._role_for(token)
+            if role is None:
                 return self._deny()
-            payload = json.dumps({'ok': True, 'auth': True}).encode()
-            self.send_response(200)
-            self._set_auth_cookie()
-            self.send_header('Content-Type', 'application/json')
-            self.send_header('Content-Length', str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-            return
+            return self._json({'ok': True, 'auth': True, 'role': role},
+                              headers=[('Set-Cookie', self._auth_cookie(token))])
 
         handlers = {
+            '/api/party/vote': self._handle_party_vote, '/api/party/config': self._handle_party_config,
+            '/api/party/played': self._handle_party_played,
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
             '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
@@ -1232,6 +1315,87 @@ class Handler(BaseHTTPRequestHandler):
                 _save_library()
         self._json({'result': result})
 
+    # ── party view (guests: stream + vote + links; admin: the same, plus settings) ──
+    def _party_tracks(self, gid):
+        with _lock:
+            downloads = list(_library['downloads'].values())
+        tracks = []
+        for d in downloads:
+            voters = _party_votes.get(d['content_hash'], set())
+            tracks.append({'content_hash': d['content_hash'], 'title': d.get('title') or '',
+                           'votes': len(voters), 'voted': gid in voters})
+        tracks.sort(key=lambda t: (-t['votes'], (t['title'] or t['content_hash']).lower()))
+        return tracks
+
+    def _handle_party(self):
+        """GET /api/party: everything the guest page shows, in one poll."""
+        gid, extra = self._ensure_guest_id()
+        token_qs = f'?token={self._presented_token()}' if AUTH_TOKEN else ''
+        with _lock:
+            party = dict(_party_settings())
+            now_playing = _library['history'][-1] if _library['history'] else None
+        with _orbit_ws_lock:
+            active = _orbit_ws_connected
+        plain = self._stream_plain_base()
+        self._json({
+            'role': self._role(), 'title': party.get('title') or '', 'links': party.get('links') or [],
+            'autoplay': bool(party.get('autoplay')),
+            'now_playing': now_playing,
+            'stream': {
+                'active': active, 'since': _orbit_ws_since,
+                # for the page's own <img> (same origin, cookie does the auth)
+                'url': '/api/orbit-view',
+                # for an external player on the guest's phone/TV
+                'player_url': f'{plain or ""}/api/orbit-view{token_qs}' if plain else None,
+            },
+            'tracks': self._party_tracks(gid),
+        }, headers=extra)
+
+    def _handle_party_vote(self, body):
+        """Toggle this guest's vote for a track. One vote per guest per
+        track; the tally is in memory only."""
+        content_hash = body.get('content_hash')
+        with _lock:
+            known = content_hash in _library['downloads']
+        if not known:
+            return self._json({'error': 'unknown track'}, status=400)
+        gid, extra = self._ensure_guest_id()
+        voters = _party_votes.setdefault(content_hash, set())
+        if gid in voters:
+            voters.discard(gid)
+        else:
+            voters.add(gid)
+        self._json({'ok': True, 'content_hash': content_hash, 'votes': len(voters),
+                    'voted': gid in voters, 'tracks': self._party_tracks(gid)}, headers=extra)
+
+    def _handle_party_config(self, body):
+        """Admin: the party page's title, its links ([{label, url}]), and
+        whether the player should auto-pick the top vote when a track
+        ends (the browser does the picking -- see onPlayerEnded)."""
+        with _lock:
+            party = _party_settings()
+            if 'title' in body:
+                party['title'] = str(body.get('title') or '')[:80]
+            if 'links' in body:
+                links = []
+                for l in body.get('links') or []:
+                    url = str((l or {}).get('url') or '').strip()
+                    if not url.startswith(('http://', 'https://')):
+                        continue
+                    links.append({'label': str((l or {}).get('label') or '').strip()[:80], 'url': url[:500]})
+                party['links'] = links[:20]
+            if 'autoplay' in body:
+                party['autoplay'] = bool(body.get('autoplay'))
+            _save_library()
+            self._json({'ok': True, 'party': dict(party)})
+
+    def _handle_party_played(self, body):
+        """Admin: a voted track got played -- clear its tally so the next
+        vote starts fresh."""
+        content_hash = body.get('content_hash')
+        cleared = len(_party_votes.pop(content_hash, set()))
+        self._json({'ok': True, 'cleared': cleared})
+
     def _handle_sync_relays(self, body):
         """POST /api/sync-relays {relay: [...], all: bool} -- one on-demand
         pass of node.sync_relays; the periodic version is
@@ -1391,7 +1555,9 @@ class Handler(BaseHTTPRequestHandler):
         scheme = 'https' if getattr(self.server, '_tls', False) else 'http'
         # a player has no cookie/header to offer, so with auth on the
         # only URL that works for it carries the token itself
-        token_qs = f'?token={AUTH_TOKEN}' if AUTH_TOKEN else ''
+        # the token the *caller* presented -- an admin gets a URL with the
+        # admin token, a guest one with the stream token, never the other
+        token_qs = f'?token={self._presented_token()}' if AUTH_TOKEN else ''
         view_url = f'{scheme}://{host}/api/orbit-view{token_qs}'
         plain_base = self._stream_plain_base()
         return self._json({
@@ -1463,7 +1629,7 @@ class Handler(BaseHTTPRequestHandler):
         and the fanout policy in _orbit_fanout -- this method is just
         the handshake, the loop, and the 5-second rx counters."""
         import base64, hashlib
-        global _orbit_ws_connected, _orbit_res
+        global _orbit_ws_connected, _orbit_res, _orbit_ws_since
 
         # WebSocket handshake — write directly to the raw socket to avoid
         # BaseHTTPRequestHandler's headers buffer interfering with the upgrade.
@@ -1489,6 +1655,7 @@ class Handler(BaseHTTPRequestHandler):
         with _orbit_ws_lock:
             _orbit_ws_connected = True
             _orbit_res = res
+            _orbit_ws_since = time.time()
         print(f'[orbit] WebSocket open ({res or "?"}p) — streaming MJPEG to /api/orbit-view', flush=True)
 
         try:
@@ -1754,14 +1921,18 @@ def _relay_sync_loop(interval=600, initial_delay=60, quiet=False):
 
 
 def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None,
-               tls=False, certfile=None, keyfile=None, auth_token=None, stream_plain_port=None):
+               tls=False, certfile=None, keyfile=None, auth_token=None, stream_plain_port=None,
+               stream_token=None):
     """auth_token: None keeps the original open, local-only surface;
     'generate' mints a random one; anything else is used as given (see
     AUTH_TOKEN). $WEED_UI_TOKEN is the same thing from the environment.
+    stream_token: the guest tier, same conventions (see STREAM_TOKEN).
     stream_plain_port: see STREAM_PLAIN_PORT ($WEED_STREAM_PLAIN_PORT)."""
-    global _lan_url, AUTH_TOKEN, STREAM_PLAIN_PORT
+    global _lan_url, AUTH_TOKEN, STREAM_TOKEN, STREAM_PLAIN_PORT
     if auth_token:
         AUTH_TOKEN = secrets.token_urlsafe(24) if auth_token == 'generate' else str(auth_token)
+    if stream_token:
+        STREAM_TOKEN = secrets.token_urlsafe(24) if stream_token == 'generate' else str(stream_token)
     if stream_plain_port:
         STREAM_PLAIN_PORT = int(stream_plain_port)
     _load_library()
@@ -1821,9 +1992,16 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
 
     if not quiet:
         if AUTH_TOKEN:
-            print(f"[web:{port}] auth on — token: {AUTH_TOKEN}", flush=True)
+            print(f"[web:{port}] auth on — admin token: {AUTH_TOKEN}", flush=True)
             print(f"  open {scheme}://{bind_host}:{port}/{token_qs} (or scan the QR below) to log in; "
                   f"API calls need Authorization: Bearer {AUTH_TOKEN}", flush=True)
+            if STREAM_TOKEN:
+                guest_host = reachable_host if (bind_host != '127.0.0.1' and reachable_host) else bind_host
+                print(f"  guest (party) token: {STREAM_TOKEN} — share "
+                      f"{scheme}://{guest_host}:{port}/?token={STREAM_TOKEN}", flush=True)
+        elif STREAM_TOKEN:
+            print(f"[web:{port}] --stream-token given without --auth-token: with no admin token "
+                  f"there's no gate, so everyone is admin and the stream token does nothing", flush=True)
         if STREAM_PLAIN_PORT:
             print(f"[web:{port}] plain-HTTP stream port {STREAM_PLAIN_PORT}: "
                   f"http://{reachable_host or bind_host}:{STREAM_PLAIN_PORT}/api/orbit-view{token_qs} "
@@ -1879,6 +2057,12 @@ def main():
                          help='require a token for every API call: given a value, that token; '
                               'bare, a generated one (printed at startup and encoded in the QR). '
                               'Default: $WEED_UI_TOKEN if set, else no auth.')
+    parser.add_argument('--stream-token', nargs='?', const='generate', metavar='TOKEN',
+                         default=os.environ.get('WEED_STREAM_TOKEN') or None,
+                         help='a second, guest-tier token (needs --auth-token): whoever has it '
+                              'gets the party view -- the live stream, what is playing, a vote on '
+                              'what plays next, and your links -- and nothing else. Bare for a '
+                              'generated one. Default: $WEED_STREAM_TOKEN if set.')
     parser.add_argument('--stream-plain-port', type=int, metavar='PORT',
                          default=STREAM_PLAIN_PORT,
                          help='also serve the stream endpoints (orbit MJPEG, video files) over '
@@ -1906,7 +2090,7 @@ def main():
     tls = args.tls or bool(certfile)
     run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host,
                tls=tls, certfile=certfile, keyfile=keyfile, auth_token=args.auth_token,
-               stream_plain_port=args.stream_plain_port)
+               stream_plain_port=args.stream_plain_port, stream_token=args.stream_token)
 
 
 if __name__ == '__main__':
