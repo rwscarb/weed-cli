@@ -1411,6 +1411,7 @@ window.orbitViz = (function () {
     // and it persists like any other change. control() takes 0..1 (a
     // knob's 0..127 divided by 127) and maps it onto the parameter's
     // own range; trigger() fires a discrete action.
+    const TRANSITIONS = ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'];
     const CONTROL_RANGES = {
       speed: [0.2, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
       asciiBrightness: [0.3, 3], asciiStride: [1, 4], asciiBgAlpha: [0, 1],
@@ -1447,10 +1448,14 @@ window.orbitViz = (function () {
       } else if (action === 'next' || action === 'prev') {
         const idx = VIZ_MODES.indexOf(s.vizMode);
         setVizMode(VIZ_MODES[(idx + (action === 'next' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
-      } else if (action === 'transition:next') {
-        const order = ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'];
-        setTransition(order[(order.indexOf(s.transition) + 1) % order.length]);
+      } else if (action === 'transition:next' || action === 'transition:prev') {
+        const order = TRANSITIONS;
+        const step = action === 'transition:next' ? 1 : -1;
+        setTransition(order[(order.indexOf(s.transition) + step + order.length) % order.length]);
         persistSettings();
+      } else if (action.startsWith('transition:set:')) {
+        const name = action.slice('transition:set:'.length);
+        if (TRANSITIONS.includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav();
       }
@@ -1639,6 +1644,7 @@ window.orbitViz = (function () {
     control: (param, v01) => { if (state) state.control(param, v01); },
     trigger: (action) => { if (state) state.trigger(action); },
     modes: () => VIZ_MODES.slice(),
+    transitions: () => ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'],
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,

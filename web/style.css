@@ -2041,3 +2041,8 @@ code {
 .midi-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .midi-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .midi-row .icon-btn { padding: 0.05rem 0.4rem; font-size: 0.7rem; }
+.midi-row { grid-template-columns: 6rem 1fr 7rem auto; }
+.midi-row.unbound .midi-key { color: var(--muted); }
+.midi-ctl { display: flex; align-items: center; gap: 0.3rem; }
+.midi-rel { display: inline-flex; flex-direction: row; align-items: center; gap: 0.2rem; font-size: 0.7rem; color: var(--muted); margin: 0; }
+.midi-rel input { width: auto; margin: 0; }
