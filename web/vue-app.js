@@ -698,6 +698,9 @@ const app = createApp({
       // already chose to watch in.
       if (!this.player.visible) this.player.mode = 'pip';
       this.player.visible = true;
+      // a new track while the visualizer is up: let it transition from
+      // the outgoing picture instead of cutting (see orbit_visualizer.js)
+      if (window.orbitViz && window.orbitViz.isActive() && this.player.jobId !== jobId) window.orbitViz.transition();
       this.player.queue = queue || {
         items: [{ content_hash: contentHash, title: title || null, signer_pubkey: signerPubkey || null }],
         index: 0, playlistId: null,

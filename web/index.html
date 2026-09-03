@@ -722,6 +722,20 @@
           <span class="ascii-controls-label">Zoom</span>
           <input type="range" id="zoomSlider" min="0.15" max="8" step="any" value="1">
           <span class="ascii-controls-val" id="zoomVal">1.00x</span>
+          <!-- transition between modes (and between tracks): style + length --
+               see orbit_visualizer.js's snapshotForTransition/drawTransition -->
+          <span class="ascii-controls-label">Fade</span>
+          <select id="transitionSelect" class="orbit-res-select" title="How the previous picture gives way to the next mode or track">
+            <option value="burn" selected>Burn</option>
+            <option value="warp">Warp</option>
+            <option value="glitch">Glitch</option>
+            <option value="pixelate">Pixelate</option>
+            <option value="crossfade">Crossfade</option>
+            <option value="wipe">Wipe</option>
+            <option value="none">None</option>
+          </select>
+          <input type="range" id="transitionSlider" min="0" max="5000" step="100" value="1200" title="Transition length">
+          <span class="ascii-controls-val" id="transitionVal">1.2s</span>
         </div>
         <div class="preset-row ascii-controls" id="asciiControls">
           <span class="ascii-controls-label">Res</span>

@@ -179,6 +179,9 @@ window.orbitViz = (function () {
     const vizModeSelect = document.getElementById('vizModeSelect');
     const vizSection = document.getElementById('vizSection');
     const vizFsBtn = document.getElementById('vizFsBtn');
+    const transitionSelect = document.getElementById('transitionSelect');
+    const transitionSlider = document.getElementById('transitionSlider');
+    const transitionVal = document.getElementById('transitionVal');
 
     // Every value that changes over the life of one open/close cycle
     // lives on this one object -- drawViz and every handler below close
@@ -270,6 +273,12 @@ window.orbitViz = (function () {
       // controls.
       speed: 1.0,
       reactivity: 1.0,
+      // how the last frame of the previous mode/track gives way to the
+      // next one (see snapshotForTransition/drawTransition), and over
+      // how long. `trans` is the in-flight one, or null.
+      transition: 'burn',
+      transitionMs: 1200,
+      trans: null,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
       // plugin mode id -> its dynamically-created <button>, so
@@ -408,6 +417,9 @@ window.orbitViz = (function () {
     // drifting out of sync with each other.
     function setVizMode(mode) {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
+      // grab the outgoing picture *before* the switch -- the transition
+      // draws it over the new mode until it's gone
+      if (mode !== s.vizMode || s.vizOff) snapshotForTransition();
       s.vizMode = mode;
       s.vizOff = false;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
@@ -439,6 +451,7 @@ window.orbitViz = (function () {
     // select, arrow cycling or Shift+digit all go through setVizMode,
     // which switches the effects straight back on.
     function setVizOff() {
+      snapshotForTransition();
       s.vizOff = true;
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
       if (vizModeSelect) vizModeSelect.value = '__video';
@@ -526,6 +539,19 @@ window.orbitViz = (function () {
     }
     on(speedSlider, 'input', () => setSpeed(parseFloat(speedSlider.value)));
     setSpeed(s.speed);
+
+    function setTransition(type) {
+      s.transition = type;
+      if (transitionSelect && transitionSelect.value !== type) transitionSelect.value = type;
+    }
+    function setTransitionMs(ms) {
+      s.transitionMs = Math.min(5000, Math.max(0, Math.round(ms / 100) * 100));
+      if (transitionSlider) transitionSlider.value = s.transitionMs;
+      if (transitionVal) transitionVal.textContent = (s.transitionMs / 1000).toFixed(1) + 's';
+    }
+    if (transitionSelect) on(transitionSelect, 'change', () => setTransition(transitionSelect.value));
+    if (transitionSlider) on(transitionSlider, 'input', () => setTransitionMs(parseFloat(transitionSlider.value)));
+    setTransitionMs(s.transitionMs);
 
     function setReactivity(value) {
       s.reactivity = Math.min(3, Math.max(0.2, Math.round(value * 10) / 10));
@@ -642,6 +668,195 @@ window.orbitViz = (function () {
       }
     }
 
+    // ── transitions between modes / tracks ──────────────────────────
+    // A transition is "the last frame of whatever was on screen, drawn
+    // over the new picture for transitionMs, leaving in some style".
+    // snapshotForTransition() grabs that last frame (setVizMode/setVizOff
+    // call it just before switching; vue-app.js's openPlayer calls
+    // orbitViz.transition() when a new track starts), and drawViz keeps
+    // compositing it over every frame drawScene() paints until it's
+    // done. Feedback modes (tunnel, kaleido) read the canvas back the
+    // next frame, so the outgoing picture smears into their trails --
+    // that's a feature.
+    const transOld = document.createElement('canvas');
+    const transTmp = document.createElement('canvas');
+    const transOldCtx = transOld.getContext('2d');
+    const transTmpCtx = transTmp.getContext('2d');
+    // low-res working canvases for the per-pixel effect (burn): 160x90
+    // is ~14k pixels a frame, nothing, and upscaling them with smoothing
+    // on is exactly what gives the burn front its soft edge
+    const NOISE_W = 160, NOISE_H = 90;
+    const transMask = document.createElement('canvas'); transMask.width = NOISE_W; transMask.height = NOISE_H;
+    const transGlow = document.createElement('canvas'); transGlow.width = NOISE_W; transGlow.height = NOISE_H;
+    const transMaskCtx = transMask.getContext('2d'), transGlowCtx = transGlow.getContext('2d');
+    const maskImg = transMaskCtx.createImageData(NOISE_W, NOISE_H);
+    const glowImg = transGlowCtx.createImageData(NOISE_W, NOISE_H);
+    // blotchy value noise for the burn front: random per pixel, box-
+    // blurred a few times so it burns in islands and fingers, not TV
+    // static, then stretched back to 0..1 (blurring squeezes the range)
+    const noise = (() => {
+      let a = new Float32Array(NOISE_W * NOISE_H);
+      for (let i = 0; i < a.length; i++) a[i] = Math.random();
+      for (let pass = 0; pass < 3; pass++) {
+        const b = new Float32Array(a.length);
+        for (let y = 0; y < NOISE_H; y++) {
+          for (let x = 0; x < NOISE_W; x++) {
+            let sum = 0, n = 0;
+            for (let dy = -2; dy <= 2; dy++) {
+              for (let dx = -2; dx <= 2; dx++) {
+                const yy = y + dy, xx = x + dx;
+                if (yy < 0 || yy >= NOISE_H || xx < 0 || xx >= NOISE_W) continue;
+                sum += a[yy * NOISE_W + xx]; n++;
+              }
+            }
+            b[y * NOISE_W + x] = sum / n;
+          }
+        }
+        a = b;
+      }
+      let lo = 1, hi = 0;
+      for (const v of a) { if (v < lo) lo = v; if (v > hi) hi = v; }
+      for (let i = 0; i < a.length; i++) a[i] = (a[i] - lo) / (hi - lo || 1);
+      return a;
+    })();
+
+    function snapshotForTransition() {
+      if (s.transition === 'none' || !s.transitionMs || !s.VW || !s.VH) return;
+      if (transOld.width !== s.VW || transOld.height !== s.VH) {
+        transOld.width = s.VW; transOld.height = s.VH;
+        transTmp.width = s.VW; transTmp.height = s.VH;
+      }
+      transOldCtx.clearRect(0, 0, s.VW, s.VH);
+      transOldCtx.drawImage(vizCanvas, 0, 0);
+      s.trans = { t0: performance.now(), type: s.transition, seed: Math.random() * 1000 };
+    }
+    s.snapshotForTransition = snapshotForTransition;
+    // for orbitViz.debugState() -- the transition machinery is closure-
+    // private, and "why didn't that transition show" is unanswerable
+    // from the outside otherwise
+    s.transitionDebug = () => ({
+      transition: s.transition, transitionMs: s.transitionMs, trans: s.trans,
+      VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
+    });
+
+    // Film burn: the old picture is eaten away along a blotchy front (the
+    // noise, thresholded by t), with a white-hot-to-orange ember edge and
+    // a dim red afterglow just behind it, the new picture showing through
+    // wherever it has burned.
+    function drawBurn(t) {
+      const W = s.VW, H = s.VH;
+      const EDGE = 0.14;                         // width of the glowing front, in noise units
+      const front = t * (1 + 2 * EDGE) - EDGE;   // sweeps from below 0 to above 1: every pixel burns
+      const m = maskImg.data, g = glowImg.data;
+      for (let i = 0; i < noise.length; i++) {
+        const d = noise[i] - front;              // > EDGE untouched; 0..EDGE burning; < 0 gone
+        let keep = 0, glow = 0;
+        if (d > EDGE) keep = 255;
+        else if (d > 0) { keep = 255 * (d / EDGE); glow = 1 - d / EDGE; }
+        else if (d > -EDGE * 0.6) glow = 0.35 * (1 + d / (EDGE * 0.6));
+        const o = i * 4;
+        m[o] = m[o + 1] = m[o + 2] = 255; m[o + 3] = keep;
+        g[o] = 255;
+        g[o + 1] = 90 + 165 * glow * glow;
+        g[o + 2] = 20 + 200 * glow * glow * glow;
+        g[o + 3] = 255 * Math.min(1, glow * 1.4);
+      }
+      transMaskCtx.putImageData(maskImg, 0, 0);
+      transGlowCtx.putImageData(glowImg, 0, 0);
+      transTmpCtx.clearRect(0, 0, W, H);
+      transTmpCtx.drawImage(transOld, 0, 0);
+      transTmpCtx.globalCompositeOperation = 'destination-in';
+      transTmpCtx.drawImage(transMask, 0, 0, W, H);
+      transTmpCtx.globalCompositeOperation = 'source-over';
+      vctx.drawImage(transTmp, 0, 0);
+      vctx.globalCompositeOperation = 'lighter';
+      vctx.drawImage(transGlow, 0, 0, W, H);
+      vctx.globalCompositeOperation = 'source-over';
+    }
+
+    function drawTransition() {
+      const tr = s.trans;
+      const t = (performance.now() - tr.t0) / s.transitionMs;
+      if (t >= 1 || transOld.width !== s.VW || transOld.height !== s.VH) {
+        s.trans = null;   // done -- or the canvas was resized mid-way; just drop it
+        return;
+      }
+      const W = s.VW, H = s.VH;
+      vctx.save();
+      switch (tr.type) {
+        case 'crossfade':
+          vctx.globalAlpha = 1 - t;
+          vctx.drawImage(transOld, 0, 0);
+          break;
+        case 'burn':
+          drawBurn(t);
+          break;
+        case 'pixelate': {
+          // the old picture falls apart into ever-bigger blocks while fading
+          const size = 1 + 40 * t;
+          const w = Math.max(1, Math.round(W / size)), h = Math.max(1, Math.round(H / size));
+          transTmpCtx.clearRect(0, 0, W, H);
+          transTmpCtx.drawImage(transOld, 0, 0, w, h);
+          vctx.imageSmoothingEnabled = false;
+          vctx.globalAlpha = Math.pow(1 - t, 0.6);
+          vctx.drawImage(transTmp, 0, 0, w, h, 0, 0, W, H);
+          break;
+        }
+        case 'warp': {
+          // the old picture flies into the camera, spinning and hue-
+          // cycling, with two ghost copies trailing behind it
+          for (let g = 2; g >= 0; g--) {
+            const tg = Math.max(0, t - g * 0.08);
+            vctx.save();
+            vctx.globalAlpha = (1 - t) * (g === 0 ? 0.9 : 0.35);
+            vctx.translate(W / 2, H / 2);
+            vctx.scale(1 + 2.5 * tg, 1 + 2.5 * tg);
+            vctx.rotate(tg * 1.3);
+            vctx.filter = `hue-rotate(${(tg * 360 + g * 40) | 0}deg) saturate(${(1 + 2 * tg).toFixed(2)})`;
+            vctx.drawImage(transOld, -W / 2, -H / 2);
+            vctx.restore();
+          }
+          break;
+        }
+        case 'glitch': {
+          // horizontal bands of the old picture jitter sideways (less as
+          // it fades), with two hue-shifted copies pushed opposite ways
+          // for a channel-split look; the jitter re-rolls ~30x a second
+          const bands = 16, bh = H / bands, amp = W * 0.25 * (1 - t);
+          const frame = Math.floor(t * s.transitionMs / 33);
+          for (let i = 0; i < bands; i++) {
+            const r = Math.sin(tr.seed + i * 12.9898 + frame * 78.233) * 43758.5453;
+            const dx = ((r - Math.floor(r)) - 0.5) * amp;
+            vctx.globalAlpha = 1 - t;
+            vctx.drawImage(transOld, 0, i * bh, W, bh, dx, i * bh, W, bh);
+          }
+          vctx.globalCompositeOperation = 'lighter';
+          vctx.globalAlpha = 0.35 * (1 - t);
+          vctx.filter = 'hue-rotate(120deg)';
+          vctx.drawImage(transOld, amp * 0.3, 0);
+          vctx.filter = 'hue-rotate(240deg)';
+          vctx.drawImage(transOld, -amp * 0.3, 0);
+          break;
+        }
+        case 'wipe': {
+          // a soft edge sweeps left to right, the old picture only on its right
+          const edge = W * 0.12, x = W * t * (1 + 0.12) - edge * 0.5;
+          transTmpCtx.clearRect(0, 0, W, H);
+          transTmpCtx.drawImage(transOld, 0, 0);
+          transTmpCtx.globalCompositeOperation = 'destination-in';
+          const grad = transTmpCtx.createLinearGradient(x - edge, 0, x + edge, 0);
+          grad.addColorStop(0, 'rgba(0,0,0,0)');
+          grad.addColorStop(1, 'rgba(0,0,0,1)');
+          transTmpCtx.fillStyle = grad;
+          transTmpCtx.fillRect(0, 0, W, H);
+          transTmpCtx.globalCompositeOperation = 'source-over';
+          vctx.drawImage(transTmp, 0, 0);
+          break;
+        }
+      }
+      vctx.restore();
+    }
+
     // Draw loop -- same seven modes, same math, as the standalone page
     // this was ported from, just reading state pushed directly via
     // pushAudio/pushVideoFrame below instead of a postMessage listener.
@@ -658,7 +873,11 @@ window.orbitViz = (function () {
       if (!s.running) return;
       if (!externalClock) scheduleDraw();
       if (!s.VW || !s.VH) return;
+      drawScene();
+      if (s.trans) drawTransition();
+    }
 
+    function drawScene() {
       // slow independent color drift -- a steady drift gives the same
       // "the whole thing slowly shifts hue" feel without needing a
       // sequencer to derive it from
@@ -1273,6 +1492,10 @@ window.orbitViz = (function () {
       if (state && !externalClock && state.running) state.scheduleDraw();
     },
     step: () => { if (state && externalClock && state.running) state.drawViz(); },
+    // "something else is about to replace the picture" (a new track):
+    // run the configured transition from whatever's on the canvas now
+    transition: () => { if (state) state.snapshotForTransition(); },
+    debugState: () => (state ? state.transitionDebug() : null),
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,
