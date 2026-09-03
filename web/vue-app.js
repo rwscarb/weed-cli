@@ -1777,7 +1777,7 @@ const app = createApp({
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.82;
-      const delay = ctx.createDelay(31); // max 31s (spec requires integer ceiling)
+      const delay = ctx.createDelay(11); // ceiling for the slider's 10s max (spec wants an integer)
       delay.delayTime.value = this.orbitDelay / 1000;
       source.connect(analyser);       // undelayed → visualizer data
       source.connect(delay);          // delayed → speakers

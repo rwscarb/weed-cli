@@ -525,7 +525,10 @@
               @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
       <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
         <span class="orbit-delay-icon">⏱</span>
-        <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+        <!-- pointerdown.stop: this header's own pointerdown is what starts a
+             window drag (onPlayerHeaderPointerDown), so dragging the slider
+             thumb used to drag the whole PIP along with it -->
+        <input type="range" min="0" max="10000" step="100" v-model.number="orbitDelay" @click.stop @pointerdown.stop>
         <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
       </label>
       <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
@@ -663,7 +666,7 @@
                 @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
         <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
           <span class="orbit-delay-icon">⏱</span>
-          <input type="range" min="0" max="30000" step="100" v-model.number="orbitDelay" @click.stop>
+          <input type="range" min="0" max="10000" step="100" v-model.number="orbitDelay" @click.stop @pointerdown.stop>
           <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
         </label>
         <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
