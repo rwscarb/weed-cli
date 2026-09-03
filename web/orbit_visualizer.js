@@ -289,6 +289,45 @@ window.orbitViz = (function () {
     };
     state = s;
 
+    // ── settings persistence ─────────────────────────────────────────
+    // `s` is rebuilt on every init() (each open of the dialog), so
+    // without this every slider/mode/zoom went back to its default on
+    // reopen, let alone reload. Everything a user can set is written to
+    // localStorage (debounced) whenever it changes, and read back here
+    // -- before any setter below runs its initial set*(s.*) call, which
+    // is what applies the restored value. Pan is deliberately not saved:
+    // it's a per-view gesture, not a preference.
+    const SETTINGS_KEY = 'weed.orbit.settings';
+    const SAVED_KEYS = ['vizMode', 'vizOff', 'vizUserScale', 'speed', 'reactivity', 'transition',
+                        'transitionMs', 'asciiStride', 'asciiBrightness', 'asciiBgAlpha', 'asciiRampKey',
+                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount'];
+    let restoredVizOff = false;
+    (function restoreSettings() {
+      let saved;
+      try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || 'null'); } catch (e) { saved = null; }
+      if (!saved || typeof saved !== 'object') return;
+      for (const k of SAVED_KEYS) {
+        if (!(k in saved) || saved[k] === null || saved[k] === undefined) continue;
+        // same type as the default, or it's ignored -- the setters
+        // clamp ranges, this just keeps a stale/odd value from landing
+        if (typeof saved[k] !== typeof s[k]) continue;
+        if (k === 'vizMode') { if (!VIZ_MODES.includes(saved[k])) continue; }
+        else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
+        s[k] = saved[k];
+      }
+    })();
+    let persistTimer = null;
+    function persistSettings() {
+      if (persistTimer) return;
+      persistTimer = setTimeout(() => {
+        persistTimer = null;
+        const out = {};
+        for (const k of SAVED_KEYS) out[k] = s[k];
+        try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(out)); } catch (e) { /* private mode / quota: not worth a warning */ }
+      }, 150);
+    }
+    s.persistSettings = persistSettings;
+
     // tracked so teardown() can remove exactly what init() added --
     // matters most for document/window listeners, which outlive this
     // dialog's own DOM and would otherwise pile up across every
@@ -374,6 +413,7 @@ window.orbitViz = (function () {
       s.vizUserScale = Math.min(8.0, Math.max(0.15, v));
       zoomSlider.value = s.vizUserScale;
       zoomVal.textContent = s.vizUserScale.toFixed(2) + 'x';
+      persistSettings();
     }
     on(zoomSlider, 'input', () => setZoom(parseFloat(zoomSlider.value)));
     setZoom(s.vizUserScale);
@@ -419,12 +459,16 @@ window.orbitViz = (function () {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       // grab the outgoing picture *before* the switch -- the transition
       // draws it over the new mode until it's gone
-      if (mode !== s.vizMode || s.vizOff) snapshotForTransition();
+      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) snapshotForTransition();
       s.vizMode = mode;
       s.vizOff = false;
+      persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       if (vizModeSelect && vizModeSelect.value !== mode) vizModeSelect.value = mode;
-      resetVizNav();
+      // pan is a per-view gesture and resets with the mode; zoom is a
+      // preference now (persisted, see restoreSettings) and stays put --
+      // dbl-click (resetVizNav) is still the way to get 1.0x back
+      s.vizPanX = 0; s.vizPanY = 0;
       // a class, not inline style.display -- .viz-controls > .preset-row
       // is display:contents on large viewports (see style.css) so these
       // pack together with the mode buttons/global sliders instead of
@@ -451,8 +495,9 @@ window.orbitViz = (function () {
     // select, arrow cycling or Shift+digit all go through setVizMode,
     // which switches the effects straight back on.
     function setVizOff() {
-      snapshotForTransition();
+      if (!s.restoring) snapshotForTransition();
       s.vizOff = true;
+      persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
       if (vizModeSelect) vizModeSelect.value = '__video';
       asciiControls.classList.add('mode-controls-hidden');
@@ -1362,6 +1407,24 @@ window.orbitViz = (function () {
     }
     s.drawViz = drawViz;
     s.scheduleDraw = scheduleDraw;
+    // apply what restoreSettings() read back (the numeric sliders were
+    // applied by their own set*(s.*) calls above; these are the rest).
+    // s.restoring keeps the mode switch from snapshotting a blank canvas
+    // into a transition.
+    setAsciiRes(s.asciiStride);
+    setAsciiBrightness(s.asciiBrightness);
+    setAsciiBgAlpha(s.asciiBgAlpha);
+    setTransition(s.transition);
+    if (asciiRampSelect) asciiRampSelect.value = s.asciiRampKey;
+    document.querySelectorAll('#asciiControls [data-color]').forEach(b => b.classList.toggle('active', b.dataset.color === s.asciiColorMode));
+    if (s.vizMode !== 'ascii' || restoredVizOff) {
+      s.restoring = true;
+      const mode = s.vizMode;
+      s.vizMode = 'ascii';        // so setVizMode sees a real change and does its bookkeeping
+      setVizMode(mode);
+      if (restoredVizOff) setVizOff();
+      s.restoring = false;
+    }
     drawViz();
 
     // Fullscreen
@@ -1436,7 +1499,14 @@ window.orbitViz = (function () {
         e.preventDefault();
         setAsciiRes(s.asciiStride + (e.code === 'BracketRight' ? 1 : -1));
       }
+      persistSettings();
     });
+    // every slider/select/button in the controls area persists after
+    // its own handler has run (bubbling order) -- one hook instead of
+    // one per setter; keyboard paths are covered just above
+    on(vizSection, 'input', persistSettings);
+    on(vizSection, 'change', persistSettings);
+    on(vizSection, 'click', persistSettings);
 
     // entry points vue-app.js's own feed loop calls directly every
     // frame -- see startOrbitVizFeed's own comment for why this used to

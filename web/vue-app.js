@@ -366,6 +366,12 @@ const app = createApp({
   },
 
   watch: {
+    // the stream's own knobs persist like the visualizer's (see
+    // orbit_visualizer.js's settings persistence): one record, rewritten
+    // whenever any of the three changes, read back in mounted()
+    orbitDelay() { this.saveStreamSettings(); },
+    orbitRes() { this.saveStreamSettings(); },
+    orbitQuality() { this.saveStreamSettings(); },
     pageTitle: {
       immediate: true,
       handler(title) { document.title = title; },
@@ -479,6 +485,14 @@ const app = createApp({
       if (this.tabs.some(t => t.id === id)) this.activeTab = id;
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
+    try {
+      const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
+      if (saved && typeof saved === 'object') {
+        if (typeof saved.orbitDelay === 'number') this.orbitDelay = Math.min(10000, Math.max(0, saved.orbitDelay));
+        if (['360', '480', '720'].includes(saved.orbitRes)) this.orbitRes = saved.orbitRes;
+        if (['0.4', '0.55', '0.7', '0.85'].includes(saved.orbitQuality)) this.orbitQuality = saved.orbitQuality;
+      }
+    } catch (e) { /* unreadable saved settings: defaults it is */ }
 
     // must be awaited (not fire-and-forget) *before* refreshDiscover()
     // below -- otherwise the very first auto-discover on load races this
@@ -1043,6 +1057,12 @@ const app = createApp({
                                quality: parseFloat(this.orbitQuality) || 0.7 });
         });
       }
+    },
+    saveStreamSettings() {
+      try {
+        localStorage.setItem('weed.stream.settings', JSON.stringify(
+          { orbitDelay: this.orbitDelay, orbitRes: this.orbitRes, orbitQuality: this.orbitQuality }));
+      } catch (e) { /* private mode / quota */ }
     },
     copyOrbitViewUrl() {
       if (!this.orbitViewUrl) return;
