@@ -259,7 +259,20 @@ window.orbitMidi = (function () {
     if (els.connect) els.connect.onclick = connect;
     if (els.reset) els.reset.onclick = () => { bindings = DEFAULTS.map(d => ({ ...d })); learning = null; save(); render(); };
     if (access) { els.btn && els.btn.classList.add('active'); panel.classList.remove('mode-controls-hidden'); }
+    else autoConnect();
     render();
+  }
+
+  // Permission already granted on an earlier visit (the browser remembers
+  // it per site): connect without waiting for the 🎹 click, so the pads
+  // work the moment the visualizer opens. Anything else (never asked,
+  // denied, no Permissions API) waits for the click, which is also the
+  // user gesture Chrome wants before it will show the prompt.
+  function autoConnect() {
+    if (!navigator.permissions || !navigator.permissions.query || !navigator.requestMIDIAccess) return;
+    navigator.permissions.query({ name: 'midi', sysex: false })
+      .then(p => { if (p.state === 'granted') connect(); })
+      .catch(() => {});
   }
 
   function render() {
