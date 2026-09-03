@@ -65,6 +65,12 @@ DEFAULT_TUNNEL = os.environ.get('WEED_TUNNEL')
 AUTH_TOKEN = os.environ.get('WEED_UI_TOKEN') or None
 AUTH_COOKIE = 'weed_ui_token'
 AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
+# Optional second listener, plain HTTP, serving *only* the stream
+# endpoints (/api/orbit-view, /api/orbit-stream, /api/stream/<job>).
+# For players that can't do TLS with a self-signed cert -- a Roku
+# IP-camera viewer, a smart TV, an old set-top box -- while the UI
+# itself stays on --tls. Same token rules as the main port (?token=).
+STREAM_PLAIN_PORT = int(os.environ.get('WEED_STREAM_PLAIN_PORT') or 0) or None
 LIBRARY_PATH = os.path.expanduser('~/.weed_library.json')
 # play history is a log, not a set -- it grows forever otherwise (every
 # playlist "next" and every re-watch appends). This caps ~/.weed_library.json
@@ -774,6 +780,16 @@ class Handler(BaseHTTPRequestHandler):
                                      '(the startup QR), paste the token into the unlock prompt, '
                                      'or send Authorization: Bearer <token>', 'auth': True}, status=401)
 
+    def _stream_plain_base(self):
+        """'http://<this host>:<STREAM_PLAIN_PORT>' when the plain stream
+        listener is configured, else None -- the host part is whatever
+        this request came in on, so a phone on the LAN gets the LAN
+        address and localhost gets localhost."""
+        if not STREAM_PLAIN_PORT:
+            return None
+        host = self.headers.get('Host', '127.0.0.1').rsplit(':', 1)[0]
+        return f'http://{host}:{STREAM_PLAIN_PORT}'
+
     def _set_auth_cookie(self):
         secure = '; Secure' if getattr(self.server, '_tls', False) else ''
         self.send_header('Set-Cookie', f'{AUTH_COOKIE}={AUTH_TOKEN}; Path=/; Max-Age={AUTH_COOKIE_MAX_AGE}; '
@@ -804,7 +820,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'pubkey': _identity().pubkey_hex()})
         if path == '/api/config':
             cfg = {'lan_url': _lan_url, 'default_relay': DEFAULT_RELAY,
-                   'default_tunnel': DEFAULT_TUNNEL, 'auth': bool(AUTH_TOKEN)}
+                   'default_tunnel': DEFAULT_TUNNEL, 'auth': bool(AUTH_TOKEN),
+                   'stream_plain_url': self._stream_plain_base()}
             if AUTH_TOKEN:
                 # this caller already proved it holds the token (see the
                 # /api/ gate above); handing it back lets the page build
@@ -1374,7 +1391,9 @@ class Handler(BaseHTTPRequestHandler):
         scheme = 'https' if getattr(self.server, '_tls', False) else 'http'
         # a player has no cookie/header to offer, so with auth on the
         # only URL that works for it carries the token itself
-        view_url = f'{scheme}://{host}/api/orbit-view' + (f'?token={AUTH_TOKEN}' if AUTH_TOKEN else '')
+        token_qs = f'?token={AUTH_TOKEN}' if AUTH_TOKEN else ''
+        view_url = f'{scheme}://{host}/api/orbit-view{token_qs}'
+        plain_base = self._stream_plain_base()
         return self._json({
             'active': active,
             'res': res,
@@ -1382,6 +1401,9 @@ class Handler(BaseHTTPRequestHandler):
             'rx': dict(_orbit_rx),
             'url': view_url,
             'vlc': view_url,
+            # for players that can't do (self-signed) TLS at all -- see
+            # STREAM_PLAIN_PORT; None when that listener isn't configured
+            'plain_url': f'{plain_base}/api/orbit-view{token_qs}' if plain_base else None,
         })
 
     def _handle_orbit_view(self):
@@ -1629,6 +1651,24 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
 
+class StreamOnlyHandler(Handler):
+    """The plain-HTTP side listener (STREAM_PLAIN_PORT): the three stream
+    endpoints and nothing else -- no UI, no control API -- so exposing
+    it next to a --tls UI doesn't quietly reopen the whole control
+    surface over plain HTTP. Auth, if on, applies exactly as on the main
+    port (a player uses ?token=)."""
+    _ALLOWED = ('/api/orbit-view', '/api/orbit-stream')
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in self._ALLOWED or path.startswith('/api/stream/'):
+            return super().do_GET()
+        self._json({'error': 'not found (this port serves the stream endpoints only)'}, status=404)
+
+    def do_POST(self):
+        self._json({'error': 'not found (this port serves the stream endpoints only)'}, status=404)
+
+
 def _generate_self_signed_cert(host):
     """Return (cert_path, key_path) for a self-signed cert written to a temp dir.
 
@@ -1714,13 +1754,16 @@ def _relay_sync_loop(interval=600, initial_delay=60, quiet=False):
 
 
 def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=None,
-               tls=False, certfile=None, keyfile=None, auth_token=None):
+               tls=False, certfile=None, keyfile=None, auth_token=None, stream_plain_port=None):
     """auth_token: None keeps the original open, local-only surface;
     'generate' mints a random one; anything else is used as given (see
-    AUTH_TOKEN). $WEED_UI_TOKEN is the same thing from the environment."""
-    global _lan_url, AUTH_TOKEN
+    AUTH_TOKEN). $WEED_UI_TOKEN is the same thing from the environment.
+    stream_plain_port: see STREAM_PLAIN_PORT ($WEED_STREAM_PLAIN_PORT)."""
+    global _lan_url, AUTH_TOKEN, STREAM_PLAIN_PORT
     if auth_token:
         AUTH_TOKEN = secrets.token_urlsafe(24) if auth_token == 'generate' else str(auth_token)
+    if stream_plain_port:
+        STREAM_PLAIN_PORT = int(stream_plain_port)
     _load_library()
     _rehydrate_jobs_from_library()
     _load_persisted_hosts()
@@ -1740,6 +1783,11 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
         ctx.load_cert_chain(certfile, keyfile)
         srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     srv._tls = tls   # read by the handlers for scheme/Secure-cookie decisions
+
+    if STREAM_PLAIN_PORT:
+        plain = WebUIServer((bind_host, STREAM_PLAIN_PORT), StreamOnlyHandler)
+        plain._tls = False
+        threading.Thread(target=plain.serve_forever, daemon=True).start()
 
     scheme = 'https' if tls else 'http'
 
@@ -1776,6 +1824,10 @@ def run_web_ui(port=8080, bind_host='127.0.0.1', quiet=False, advertise_host=Non
             print(f"[web:{port}] auth on — token: {AUTH_TOKEN}", flush=True)
             print(f"  open {scheme}://{bind_host}:{port}/{token_qs} (or scan the QR below) to log in; "
                   f"API calls need Authorization: Bearer {AUTH_TOKEN}", flush=True)
+        if STREAM_PLAIN_PORT:
+            print(f"[web:{port}] plain-HTTP stream port {STREAM_PLAIN_PORT}: "
+                  f"http://{reachable_host or bind_host}:{STREAM_PLAIN_PORT}/api/orbit-view{token_qs} "
+                  f"(stream endpoints only — for players that can't do self-signed TLS)", flush=True)
         # answers "is this container actually running the code I think it
         # is" directly in `docker compose logs`/`make node`'s own output —
         # see node.weed_banner()'s own docstring for exactly the debugging
@@ -1827,6 +1879,12 @@ def main():
                          help='require a token for every API call: given a value, that token; '
                               'bare, a generated one (printed at startup and encoded in the QR). '
                               'Default: $WEED_UI_TOKEN if set, else no auth.')
+    parser.add_argument('--stream-plain-port', type=int, metavar='PORT',
+                         default=STREAM_PLAIN_PORT,
+                         help='also serve the stream endpoints (orbit MJPEG, video files) over '
+                              'plain HTTP on this port, for players that cannot do TLS with a '
+                              'self-signed cert (Roku IP-camera viewers, smart TVs). Nothing else '
+                              'is served there. Default: $WEED_STREAM_PLAIN_PORT if set.')
     parser.add_argument('--advertise-host',
                          help="IP/hostname to put in the phone QR and lan-url instead of "
                               "auto-detecting it -- use this if the QR at startup was missing "
@@ -1847,7 +1905,8 @@ def main():
     keyfile  = args.key  or os.environ.get('WEED_TLS_KEY')
     tls = args.tls or bool(certfile)
     run_web_ui(port, bind_host=args.bind, advertise_host=args.advertise_host,
-               tls=tls, certfile=certfile, keyfile=keyfile, auth_token=args.auth_token)
+               tls=tls, certfile=certfile, keyfile=keyfile, auth_token=args.auth_token,
+               stream_plain_port=args.stream_plain_port)
 
 
 if __name__ == '__main__':

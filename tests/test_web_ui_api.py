@@ -520,6 +520,39 @@ def test_stream_endpoints_take_the_token_as_a_query_param(web_server, monkeypatc
     assert cfg['auth'] is True and cfg['token'] == 'sekrit'
 
 
+def test_plain_stream_port_serves_only_the_stream_endpoints(web_server, monkeypatch):
+    """The plain-HTTP side listener for players that can't do self-signed
+    TLS: the stream endpoints work there (token rules unchanged), and
+    nothing else does -- it must not reopen the control API over HTTP."""
+    import web_ui, http.client
+    port = free_port()
+    monkeypatch.setattr(web_ui, 'STREAM_PLAIN_PORT', port)
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    plain = web_ui.WebUIServer(('127.0.0.1', port), web_ui.StreamOnlyHandler)
+    plain._tls = False
+    threading.Thread(target=plain.serve_forever, daemon=True).start()
+    try:
+        base = f'http://127.0.0.1:{port}'
+        conn = http.client.HTTPConnection('127.0.0.1', port, timeout=5)
+        conn.request('GET', '/api/orbit-view?token=sekrit')
+        resp = conn.getresponse()
+        assert resp.status == 200 and 'multipart/x-mixed-replace' in resp.getheader('Content-Type')
+        conn.close()
+        assert _raw_get(f'{base}/api/orbit-view')[0] == 401                 # still gated
+        assert _raw_get(f'{base}/api/whoami', {'Authorization': 'Bearer sekrit'})[0] == 404
+        assert _raw_get(f'{base}/')[0] == 404                                # no UI here
+        assert _raw_post(f'{base}/api/like', {'content_hash': 'c' * 64},
+                         {'Authorization': 'Bearer sekrit'})[0] == 404
+        # the main port advertises it, with the token a player needs
+        _, _, body = _raw_get(f'{web_server}/api/orbit-stream', {'Authorization': 'Bearer sekrit'})
+        assert json.loads(body)['plain_url'] == f'{base}/api/orbit-view?token=sekrit'
+        _, _, body = _raw_get(f'{web_server}/api/config', {'Authorization': 'Bearer sekrit'})
+        assert json.loads(body)['stream_plain_url'] == base
+    finally:
+        plain.shutdown()
+        plain.server_close()
+
+
 def test_no_token_configured_keeps_everything_open(web_server):
     status, _, body = _raw_get(f'{web_server}/api/config')
     assert status == 200

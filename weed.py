@@ -188,6 +188,11 @@ def build_parser():
                         help='require a token for every API call: given a value, that token; '
                              'bare, a generated one (printed at startup, encoded in the QR). '
                              'Default: $WEED_UI_TOKEN if set, else no auth.')
+    p_web.add_argument('--stream-plain-port', type=int, metavar='PORT',
+                        default=int(os.environ.get('WEED_STREAM_PLAIN_PORT') or 0) or None,
+                        help='also serve just the stream endpoints over plain HTTP on this port, '
+                             'for players that cannot do self-signed TLS (Roku IP-camera viewers, '
+                             'smart TVs). Default: $WEED_STREAM_PLAIN_PORT if set.')
     p_web.add_argument('--advertise-host',
                         help='IP/hostname for the phone QR and lan-url instead of '
                              'auto-detecting it — use this if the startup QR was missing or '
@@ -338,7 +343,8 @@ def cmd_web(args):
                       tls=getattr(args, 'tls', False),
                       certfile=getattr(args, 'cert', None),
                       keyfile=getattr(args, 'key', None),
-                      auth_token=getattr(args, 'auth_token', None))
+                      auth_token=getattr(args, 'auth_token', None),
+                      stream_plain_port=getattr(args, 'stream_plain_port', None))
 
 
 NATIVE_COMMANDS = {

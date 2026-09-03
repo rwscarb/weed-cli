@@ -49,6 +49,11 @@ const app = createApp({
       authTokenInput: '',
       authError: '',
       streamToken: '',
+      // 'http://host:port' of the plain-HTTP stream listener when the
+      // server has one (web_ui.py STREAM_PLAIN_PORT) -- the URL a TV or
+      // Roku app can actually open when the UI itself is on self-signed
+      // TLS; the copy button hands out this one when it exists
+      streamPlainBase: '',
 
       tabs,
       activeTab: tabs.some(t => t.id === hashTab) ? hashTab : 'discover',
@@ -475,6 +480,7 @@ const app = createApp({
     const config = await this.apiGet('/api/config');
     this.lanUrlBase = config.lan_url;
     this.streamToken = config.token || '';
+    this.streamPlainBase = config.stream_plain_url || '';
     if (config.default_relay) {
       this.discoverRelays = config.default_relay;
       this.hostForm.relays = config.default_relay;
@@ -830,7 +836,7 @@ const app = createApp({
     // ── stream url (vlc / open network stream) ────────────────────────
     copyStreamUrl() {
       if (!this.player.jobId) return;
-      const url = location.origin + '/api/stream/' + this.player.jobId + this.authQuery;
+      const url = (this.streamPlainBase || location.origin) + '/api/stream/' + this.player.jobId + this.authQuery;
       navigator.clipboard.writeText(url).catch(() => {
         prompt('Copy this URL and open it in VLC (Media → Open Network Stream):', url);
       });
@@ -968,7 +974,8 @@ const app = createApp({
                 // until the user clicked it away. The clipboard write
                 // may be refused outside a user gesture (Firefox); the
                 // inline click-to-copy covers that case.
-                this.orbitViewUrl = `${location.protocol}//${location.host}/api/orbit-view${this.authQuery}`;
+                const base = this.streamPlainBase || `${location.protocol}//${location.host}`;
+                this.orbitViewUrl = `${base}/api/orbit-view${this.authQuery}`;
                 navigator.clipboard.writeText(this.orbitViewUrl).catch(() => {});
                 _running = true;
                 document.addEventListener('visibilitychange', _onVisibility);

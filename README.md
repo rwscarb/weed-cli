@@ -145,7 +145,16 @@ it as `?token=`, since a player can't send a cookie.
 weed serve                          # alias for `web`, positional: serve [bind] [port]
 weed serve 0.0.0.0 8080             # reachable from your phone; prints a scan-to-open QR
 weed web --bind 0.0.0.0 --auth-token # same, behind a generated token (printed + in the QR)
+weed web --bind 0.0.0.0 --tls --auth-token --stream-plain-port 8081
 ```
+
+`--stream-plain-port` adds a plain-HTTP listener that serves *only* the
+stream endpoints (the Orbit MJPEG stream and downloaded files), for
+players that can't do TLS with a self-signed cert — a Roku IP-camera
+viewer, a smart TV. Nothing else is served there, and the token still
+applies (`?token=`). In "IP Camera Viewer for Roku", enter the Pi's IP,
+that port, and `/api/orbit-view?token={0}` as the stream URL with the
+token as the login: the app substitutes `{0}` itself.
 
 Includes real HTTP range support (`/api/stream/<job_id>`) so a
 `<video>` tag can seek a completed download instead of downloading it
