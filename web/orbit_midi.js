@@ -64,6 +64,8 @@ window.orbitMidi = (function () {
     // leftover actions, all one Learn away
     { id: 'selMode', label: 'Mode', target: 'select:mode', key: null },
     { id: 'selFade', label: 'Fade style', target: 'select:transition', key: null },
+    { id: 'selChars', label: 'ASCII chars', target: 'select:asciiRamp', key: null },
+    { id: 'actColor', label: 'ASCII color', target: 'ascii:color:toggle', key: null },
     { id: 'actPrev', label: 'Prev mode', target: 'prev', key: null },
     { id: 'actFadePrev', label: 'Prev fade', target: 'transition:prev', key: null },
     { id: 'kFreeW', label: 'Freefall size', target: 'param:buildingWidth', key: null },
@@ -74,6 +76,7 @@ window.orbitMidi = (function () {
     video: 'video only (toggle)', flash: 'fire transition', 'transition:next': 'next fade style',
     'transition:prev': 'previous fade style', next: 'next mode', prev: 'previous mode', resetNav: 'reset zoom/pan',
     'select:mode': 'mode (sweep to choose)', 'select:transition': 'fade style (sweep to choose)',
+    'select:asciiRamp': 'ASCII character set (sweep to choose)', 'ascii:color:toggle': 'ASCII color: natural / neon',
     'param:speed': 'Speed', 'param:reactivity': 'React', 'param:zoom': 'Zoom', 'param:transitionMs': 'Fade length',
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
@@ -86,8 +89,36 @@ window.orbitMidi = (function () {
   let status = 'idle';        // idle | unsupported | denied | connected
   let learning = null;        // binding id waiting for the next message
   let last = '';              // last message, for the readout
-  const lastCC = {};          // "ch:cc" -> last value, for the rising-edge and relative math
+  const lastCC = {};          // "ch:cc" -> last value, for the rising-edge math
   const relValue = {};        // binding id -> 0..1 position for relative knobs
+  // Auto-detection of relative (endless-encoder) knobs, per CC. An
+  // absolute knob sweeps through the middle values as it turns; a
+  // relative one only ever says "+n" (1..15) or "-n" (113..127), which
+  // read as "jump to min / jump to max" if taken as positions -- the
+  // MPK mini IV's encoders do exactly this out of the box. A few
+  // messages in a row that all look like steps settle it; one value
+  // from the middle of the range un-settles it.
+  const ccHistory = {};       // "ch:cc" -> last few values
+  const detectedRel = {};     // "ch:cc" -> true/false once decided, undefined while unsure
+  const pendingSteps = {};    // "ch:cc" -> steps seen while unsure, applied once it's decided relative
+  const isStep = v => (v >= 1 && v <= 15) || (v >= 113 && v <= 127);
+  function noteCC(ccKey, v) {
+    const h = (ccHistory[ccKey] = (ccHistory[ccKey] || []).concat(v).slice(-6));
+    // four step-looking values in a row with at most two distinct
+    // values among them: an encoder clicking (1,1,1,1 / 127,127,1,1 /
+    // 2,1,1,1). An absolute knob passing through the same region sweeps
+    // (127,126,125,124) -- or repeats its end stop once and then sweeps
+    // (127,127,126,125) -- which is three or more distinct values and
+    // stays absolute.
+    if (!isStep(v)) { detectedRel[ccKey] = false; pendingSteps[ccKey] = 0; }
+    else if (h.length >= 4 && h.slice(-4).every(isStep) && new Set(h.slice(-4)).size <= 2) detectedRel[ccKey] = true;
+  }
+  function isRelative(b, ccKey) { return !!b.relative || !!detectedRel[ccKey]; }
+  // still unsure about this knob and the value could be a step: don't
+  // slam a parameter to min/max on what may be a single encoder click --
+  // remember the step and apply it once the next message decides
+  function undecided(b, ccKey, v) { return !b.relative && detectedRel[ccKey] === undefined && isStep(v); }
+  function stepOf(v) { return v === 0 || v === 64 ? 0 : (v < 64 ? v : v - 128); }
   const inputsWired = new WeakSet();
 
   function load() {
@@ -135,39 +166,56 @@ window.orbitMidi = (function () {
       if (kind !== 'cc') return;
       applyParam(b, t.slice(6), knobPosition(b, v, ccKey));
     } else if (t.startsWith('select:')) {
-      const list = t === 'select:mode' ? viz.modes() : viz.transitions();
+      const sel = SELECTORS[t.slice(7)];
+      const list = sel.list(viz);
+      if (!list.length) return;
       let idx;
       if (kind === 'note') {
         // a pad on a selector steps forward through the list
-        const cur = t === 'select:mode' ? (viz.debugState() ? currentMode() : 0) : list.indexOf(viz.debugState().transition);
+        const cur = list.indexOf((viz.current() || {})[sel.current]);
         idx = (Math.max(0, cur) + 1) % list.length;
       } else {
         idx = Math.min(list.length - 1, Math.floor(knobPosition(b, v, ccKey) * list.length));
       }
-      viz.trigger(t === 'select:mode' ? 'mode:' + list[idx] : 'transition:set:' + list[idx]);
+      viz.trigger(sel.action + list[idx]);
     } else {
-      // an action: a pad fires it; a knob fires it once as it crosses
-      // the middle going up, so a twist to the right is "press" and the
-      // knob can be turned back down and pressed again
+      // an action: a pad fires it. An absolute knob fires it once as it
+      // crosses the middle going up (twist right = press, turn back and
+      // press again). A relative encoder fires it on every clockwise
+      // click -- and, for the actions that have an opposite, fires that
+      // on a counter-clockwise click, so one knob walks both ways.
       if (kind === 'note') viz.trigger(t);
-      else {
+      else if (isRelative(b, ccKey)) {
+        const step = stepOf(v);
+        if (step > 0) viz.trigger(t);
+        else if (step < 0 && OPPOSITE[t]) viz.trigger(OPPOSITE[t]);
+      } else {
         const prev = lastCC[ccKey];
         if (prev !== undefined && prev < 64 && v >= 64) viz.trigger(t);
       }
     }
   }
-  function currentMode() {
-    const lit = document.querySelector('[data-viz].active');
-    const list = window.orbitViz.modes();
-    return lit ? list.indexOf(lit.dataset.viz) : -1;
-  }
+  const OPPOSITE = { next: 'prev', prev: 'next', 'transition:next': 'transition:prev', 'transition:prev': 'transition:next' };
+  // the selector-style targets: what they choose among, which field of
+  // orbitViz.current() holds the choice, and the trigger prefix that sets it
+  const SELECTORS = {
+    mode: { list: viz => viz.modes(), current: 'mode', action: 'mode:' },
+    transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:' },
+    asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:' },
+  };
   function knobPosition(b, v, ccKey) {
-    // absolute: the knob's 0..127 is the position. relative: 1..63 is
-    // +n steps, 65..127 is -(128-n) steps, nudging a remembered position
-    if (!b.relative) return v / 127;
-    const step = v === 0 || v === 64 ? 0 : (v < 64 ? v : v - 128);
-    const cur = relValue[b.id] !== undefined ? relValue[b.id] : 0.5;
-    const next = Math.min(1, Math.max(0, cur + step / 100));
+    // absolute: the knob's 0..127 is the position. relative (ticked, or
+    // auto-detected): 1..63 is +n steps, 65..127 is -(128-n) steps,
+    // nudging a remembered position -- 2% per click, so a full sweep is
+    // about 50 clicks, and a fast spin (the encoder sends bigger steps)
+    // gets there quicker
+    if (!isRelative(b, ccKey)) return v / 127;
+    // first nudge starts from where the parameter actually is
+    const cur = relValue[b.id] !== undefined ? relValue[b.id]
+              : (b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
+    const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
+    pendingSteps[ccKey] = 0;
+    const next = Math.min(1, Math.max(0, cur + steps / 50));
     relValue[b.id] = next;
     return next;
   }
@@ -184,8 +232,10 @@ window.orbitMidi = (function () {
     if (type === 0x90 && v > 0) kind = 'note';
     else if (type === 0xB0) kind = 'cc';
     else return;   // note-off, aftertouch, pitch bend, clock: ignored
-    last = `${kind === 'note' ? 'note' : 'CC'} ${n} ch${ch + 1} = ${v}`;
     const ccKey = `${ch}:${n}`;
+    if (kind === 'cc') noteCC(ccKey, v);
+    last = `${kind === 'note' ? 'note' : 'CC'} ${n} ch${ch + 1} = ${v}`
+         + (kind === 'cc' && detectedRel[ccKey] ? ` (relative: ${stepOf(v) > 0 ? '+' : ''}${stepOf(v)})` : '');
     if (learning) {
       const b = bindings.find(x => x.id === learning);
       if (b) {
@@ -199,7 +249,11 @@ window.orbitMidi = (function () {
       return;
     }
     const b = find(kind === 'note' ? 'n' : 'c', ch, n);
-    if (b) fire(b, kind, v, ccKey);
+    if (b && kind === 'cc' && undecided(b, ccKey, v)) {
+      pendingSteps[ccKey] = (pendingSteps[ccKey] || 0) + stepOf(v);
+    } else if (b) {
+      fire(b, kind, v, ccKey);
+    }
     if (kind === 'cc') lastCC[ccKey] = v;
     render();
   }
@@ -295,10 +349,13 @@ window.orbitMidi = (function () {
       key.textContent = learning === b.id ? 'hit a pad or turn a knob…' : keyLabel(b.key);
       const ctl = document.createElement('span'); ctl.className = 'midi-ctl';
       if (RELATIVE_CAPABLE(b.target)) {
-        const rel = document.createElement('label'); rel.className = 'midi-rel'; rel.title = 'this knob sends relative (endless-encoder) values rather than an absolute 0-127 position';
+        const rel = document.createElement('label'); rel.className = 'midi-rel';
+        const auto = b.key && b.key[0] === 'c' && detectedRel[b.key.slice(1)];
+        rel.title = auto ? 'this knob was detected as a relative (endless) encoder; tick to force it regardless'
+                         : 'tick if this knob sends relative (endless-encoder) steps rather than a 0-127 position -- normally detected on its own';
         const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = !!b.relative;
         cb.onchange = () => { b.relative = cb.checked; save(); };
-        rel.append(cb, document.createTextNode('rel'));
+        rel.append(cb, document.createTextNode(auto && !b.relative ? 'rel (auto)' : 'rel'));
         ctl.appendChild(rel);
       }
       const learn = document.createElement('button');

@@ -1436,6 +1436,23 @@ window.orbitViz = (function () {
         case 'buildingCount': setBuildingCount(x); break;
       }
     };
+    // the inverse of control(): where a parameter currently sits in its
+    // range as 0..1 -- what a relative encoder starts nudging from, so a
+    // first click moves the value from where the slider is, not from a
+    // made-up midpoint
+    s.controlPosition = function (param) {
+      const range = CONTROL_RANGES[param];
+      if (!range) return 0.5;
+      const [lo, hi, scale] = range;
+      const cur = {
+        speed: s.speed, reactivity: s.reactivity, zoom: s.vizUserScale, transitionMs: s.transitionMs,
+        asciiBrightness: s.asciiBrightness, asciiStride: s.asciiStride, asciiBgAlpha: s.asciiBgAlpha,
+        buildingWidth: s.buildingWidthScale, buildingHeight: s.buildingHeightScale, buildingCount: s.buildingCount,
+      }[param];
+      if (cur === undefined) return 0.5;
+      const pos = scale === 'log' ? Math.log(cur / lo) / Math.log(hi / lo) : (cur - lo) / (hi - lo);
+      return Math.min(1, Math.max(0, pos));
+    };
     s.trigger = function (action) {
       if (action.startsWith('mode:')) {
         const mode = action.slice(5);
@@ -1458,8 +1475,26 @@ window.orbitViz = (function () {
         if (TRANSITIONS.includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav();
+      } else if (action.startsWith('ascii:ramp:')) {
+        const key = action.slice('ascii:ramp:'.length);
+        if (asciiRampSelect && [...asciiRampSelect.options].some(o => o.value === key)) {
+          asciiRampSelect.value = key;
+          s.asciiRampKey = key;
+          persistSettings();
+        }
+      } else if (action.startsWith('ascii:color:')) {
+        let mode = action.slice('ascii:color:'.length);
+        if (mode === 'toggle') mode = s.asciiColorMode === 'neon' ? 'natural' : 'neon';
+        if (mode === 'neon' || mode === 'natural') {
+          s.asciiColorMode = mode;
+          document.querySelectorAll('#asciiControls [data-color]').forEach(b => b.classList.toggle('active', b.dataset.color === mode));
+          persistSettings();
+        }
       }
     };
+    // what the selector-style controls (orbit_midi.js) choose among
+    s.asciiRamps = () => (asciiRampSelect ? [...asciiRampSelect.options].map(o => o.value) : []);
+    s.current = () => ({ mode: s.vizMode, transition: s.transition, asciiRamp: s.asciiRampKey, asciiColor: s.asciiColorMode });
     if (window.orbitMidi) window.orbitMidi.mount();
 
     s.drawViz = drawViz;
@@ -1642,9 +1677,12 @@ window.orbitViz = (function () {
     debugState: () => (state ? state.transitionDebug() : null),
     // external controllers (orbit_midi.js) -- see s.control/s.trigger
     control: (param, v01) => { if (state) state.control(param, v01); },
+    controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),
     trigger: (action) => { if (state) state.trigger(action); },
     modes: () => VIZ_MODES.slice(),
     transitions: () => ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'],
+    asciiRamps: () => (state ? state.asciiRamps() : []),
+    current: () => (state ? state.current() : null),
     // the plugin API -- see the pluginModes/registerMode comment near
     // the top of this file for the full contract
     registerMode,
