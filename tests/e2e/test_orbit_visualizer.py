@@ -306,3 +306,37 @@ def test_reopening_the_visualizer_does_not_duplicate_document_keydown_handling(p
     page.keyboard.press('ArrowUp')
     after = float(bri_slider.input_value())
     assert after == pytest.approx(before + 0.1, abs=0.01)
+
+
+def test_midi_panel_stays_folded_on_open_even_when_already_permitted(page, golden_path_server):
+    """Ryan: "when I open the orbit visualizer, the MIDI key assignments
+    are shown expanded." orbit_midi.js auto-connects when the browser
+    remembers a granted MIDI permission (so pads work without a click),
+    and mount() used to treat "connected" as "show the panel", so every
+    open started with the whole binding list unfolded. The panel is a
+    settings surface: folded on every open, until the 🎹 click, and
+    folded again on the next open regardless of what the last one did.
+    Fake a remembered grant plus a device so the auto-connect path is
+    the one exercised."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+      const realQuery = navigator.permissions.query.bind(navigator.permissions);
+      navigator.permissions.query = (d) => d && d.name === 'midi' ? Promise.resolve({ state: 'granted' }) : realQuery(d);
+    """)
+    _download_and_play(page, golden_path_server)
+
+    _open_orbit_viz(page)
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    panel = page.locator('#midiPanel')
+    assert not panel.is_visible(), 'panel unfolded itself on open'
+    assert 'active' not in (page.locator('#vizMidiBtn').get_attribute('class') or '')
+
+    page.click('#vizMidiBtn')
+    assert panel.is_visible()
+    assert page.locator('#midiPanel .midi-row').count() > 0
+
+    page.locator('#orbit-egg-backdrop').click(position={'x': 5, 'y': 5})
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+    _open_orbit_viz(page)
+    assert not page.locator('#midiPanel').is_visible(), 'panel remembered being open across a close/reopen'

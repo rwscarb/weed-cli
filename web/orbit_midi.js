@@ -312,8 +312,13 @@ window.orbitMidi = (function () {
     };
     if (els.connect) els.connect.onclick = connect;
     if (els.reset) els.reset.onclick = () => { bindings = DEFAULTS.map(d => ({ ...d })); learning = null; save(); render(); };
-    if (access) { els.btn && els.btn.classList.add('active'); panel.classList.remove('mode-controls-hidden'); }
-    else autoConnect();
+    // The panel is a settings surface, not a status one: it stays folded
+    // on every open, connected or not, until the 🎹 click. (It used to
+    // unfold itself whenever permission had already been granted, so
+    // every visualizer open started with the binding list expanded.)
+    panel.classList.add('mode-controls-hidden');
+    if (els.btn) els.btn.classList.remove('active');
+    if (!access) autoConnect();
     render();
   }
 
