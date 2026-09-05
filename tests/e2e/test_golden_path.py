@@ -492,7 +492,9 @@ def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, go
     sv = page.locator('#global-player video.swap-video')
     assert sv.is_visible()
     assert sv.get_attribute('src') == f'/api/stream/{job_id}'
-    page.wait_for_function("() => { const v = document.querySelector('video.swap-video'); return v.readyState >= 2 && v.muted && v.loop; }", timeout=15000)
+    # the fixture's "video" is random bytes (see make_fake_archive), so
+    # neither element ever decodes a frame; the wiring is what's checked
+    assert page.evaluate("() => { const v = document.querySelector('video.swap-video'); return v.muted && v.loop; }")
     saved = page.evaluate("() => JSON.parse(localStorage.getItem('weed.player.swaps'))")
     assert saved[golden_path_server['content_hash']] == 'b' * 64
 

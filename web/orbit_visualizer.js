@@ -835,10 +835,18 @@ window.orbitViz = (function () {
     // use. Going through this canvas (rather than un-hiding the player
     // behind the dialog) is what keeps the network stream, which
     // captures this canvas, showing the same plain video.
-    const playerVideo = document.querySelector('#global-player video');
+    const playerVideo = document.querySelector('#global-player video:not(.swap-video)');
+    const swapVideo = document.querySelector('#global-player video.swap-video');
+    // the picture the plain view shows: the video swap's borrowed footage
+    // when one is loaded and has a frame (vue-app.js's feed samples the
+    // same element for the modes), the track's own otherwise
+    function pictureSource() {
+      if (swapVideo && swapVideo.getAttribute('src') && swapVideo.readyState >= 2 && swapVideo.videoWidth) return swapVideo;
+      return playerVideo;
+    }
     function drawPlainVideo(hueBase) {
       vctx.fillStyle = '#000'; vctx.fillRect(0, 0, s.VW, s.VH);
-      const v = playerVideo;
+      const v = pictureSource();
       if (!v || v.readyState < 2 || !v.videoWidth) { drawNoVideoMessage(hueBase); return; }
       const fit = fitFrameToCanvas(v.videoWidth, v.videoHeight);
       vctx.drawImage(v, (s.VW - fit.w) / 2, (s.VH - fit.h) / 2, fit.w, fit.h);
