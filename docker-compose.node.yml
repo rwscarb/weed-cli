@@ -72,6 +72,13 @@ services:
     volumes:
       - node-data:/data
       - ${WEED_SHARE_DIR:-./share}:/share
+      # the frontend, live from the checkout: web_ui.py re-reads every
+      # static file from disk per request and tells the browser not to
+      # cache (see _serve_static), so an edit to web/*.js/.html/.css is
+      # a browser reload away -- no rebuild, no restart. The image still
+      # COPYs web/ for a bare `docker run`; this mount just shadows it.
+      # Read-only: nothing in the container ever writes there.
+      - ./web:/app/web:ro
     env_file:
       # .env isn't committed (see .gitignore) -- a plain `env_file: .env`
       # here means `docker compose ... up` hard-fails on a fresh checkout

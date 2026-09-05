@@ -213,6 +213,10 @@ docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # 
 - `/share` is a separate *bind* mount, not a named volume, so the actual
   `.ott` archives you're hosting are real files on the host you can see
   and manage directly. Point the web UI's Host form at `/share`.
+- `web/` is bind-mounted read-only over the image's own copy, and the
+  server re-reads static files per request with `Cache-Control: no-store`,
+  so frontend edits show up on a browser reload — no rebuild or restart.
+  Python changes (`web_ui.py`, `node.py`) still need `make node`.
 - An entry's `last_path` (recorded at `ott add` time, on whatever
   machine ran it) is only trusted if it exists on disk; otherwise the
   node falls back to the given archive directory. This matters the
