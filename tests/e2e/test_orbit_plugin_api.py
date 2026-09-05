@@ -9,6 +9,8 @@ example to copy, not something every page load should carry) -- Vue's
 own app.js is server-relative on the SAME page though, so evaluate() is
 simpler than injecting a second real script tag just for this.
 """
+import re
+
 from test_golden_path import _download_and_play
 from test_orbit_visualizer import _open_orbit_viz
 
@@ -350,3 +352,48 @@ def test_a_transition_can_stretch_the_fade_length(page, golden_path_server):
     _select_transition(page, 'melt', ms=300)
     page.click('[data-viz="scope"]')
     assert page.evaluate("() => window.orbitViz.debugState().trans.ms") == 300
+
+
+# ── plugin modes/transitions in the MIDI panel (orbit_midi.js) ─────────
+
+def test_plugin_modes_and_transitions_get_learnable_midi_rows(page, golden_path_server):
+    """Ryan: "add the new modes to be assignable in MIDI keys." Every
+    non-built-in mode and transition gets a row in the MIDI panel, built
+    from the registries, so a plugin registers nothing extra. Learn a pad
+    onto Halftone and hit it; learn one onto the Melt fade and hit it. A
+    plugin registered after the panel is up gets its row live."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    labels = page.evaluate("() => [...document.querySelectorAll('.midi-row .midi-label')].map(e => e.textContent)")
+    for want in ['Halftone', 'Lava', 'VHS', 'Win95', 'Fade: Melt', 'Fade: VHS']:
+        assert want in labels, f'{want} row missing from {labels}'
+    assert 'Tunnel' not in labels   # built-ins keep their Pad rows, no duplicate per-mode rows
+
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Halftone$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0x99, 60, 100])")      # learn note 60
+    page.evaluate("() => window.__midi.send([0x99, 60, 100])")      # hit it
+    page.wait_for_function("() => window.orbitViz.current().mode === 'halftone'")
+
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Fade: Melt$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0x99, 61, 100])")
+    page.evaluate("() => window.__midi.send([0x99, 61, 100])")
+    page.wait_for_function("() => window.orbitViz.current().transition === 'melt'")
+    assert page.evaluate("() => document.getElementById('transitionSelect').value") == 'melt'
+
+    # registered after the fact: its row appears without reopening
+    _register_stub(page, 'stub-midi', label='Stubby')
+    labels = page.evaluate("() => [...document.querySelectorAll('.midi-row .midi-label')].map(e => e.textContent)")
+    assert 'Stubby' in labels
+    # and the learned key survives a reload
+    page.wait_for_timeout(200)
+    saved = page.evaluate("() => JSON.parse(localStorage.getItem('weed.orbit.midi'))")
+    assert any(r['id'] == 'mode:halftone' and r['key'] == 'n9:60' for r in saved)

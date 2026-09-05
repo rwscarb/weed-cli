@@ -30,6 +30,13 @@
 //
 // Note-off (0x8n, or 0x9n with velocity 0) is ignored: pads are
 // triggers, not holds.
+//
+// Plugin modes and transitions (orbitViz.registerMode/registerTransition,
+// e.g. orbit_extras.js) each get a row of their own too -- "Halftone",
+// "VHS", "Fade: Melt" -- built from the live registries, so a plugin
+// registers nothing extra here: adding a mode makes it learnable. Their
+// bindings persist by id like the fixed rows, and a row whose plugin
+// is gone disappears until it comes back.
 window.orbitMidi = (function () {
   const STORAGE_KEY = 'weed.orbit.midi';
   const DEFAULTS = [
@@ -84,6 +91,20 @@ window.orbitMidi = (function () {
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
 
+  // rows for whatever plugins have registered: one per non-built-in
+  // mode (target mode:<id>) and per non-built-in transition
+  // (transition:set:<id>)
+  function pluginRows() {
+    const viz = window.orbitViz;
+    if (!viz || typeof viz.listModes !== 'function') return [];
+    const rows = [];
+    for (const m of viz.listModes()) if (!m.builtin) rows.push({ id: 'mode:' + m.id, label: m.label || m.id, target: 'mode:' + m.id, key: null, plugin: true });
+    if (typeof viz.listTransitions === 'function') {
+      for (const t of viz.listTransitions()) if (!t.builtin) rows.push({ id: 'fade:' + t.id, label: 'Fade: ' + (t.label || t.id), target: 'transition:set:' + t.id, key: null, plugin: true });
+    }
+    return rows;
+  }
+  let savedRows = [];         // what localStorage had, kept so a plugin row registered later still finds its key
   let bindings = load();
   let access = null;          // MIDIAccess once granted
   let status = 'idle';        // idle | unsupported | denied | connected
@@ -121,32 +142,54 @@ window.orbitMidi = (function () {
   function stepOf(v) { return v === 0 || v === 64 ? 0 : (v < 64 ? v : v - 128); }
   const inputsWired = new WeakSet();
 
+  // a fresh row from its definition plus whatever was saved for that id.
+  // Keys saved before the kind prefix existed get one.
+  function withSaved(d) {
+    const s = savedRows.find(x => x && x.id === d.id);
+    if (!s || typeof s.key !== 'string') return { ...d };
+    let key = s.key;
+    if (!/^[nc]/.test(key)) key = (d.id.startsWith('k') ? 'c' : 'n') + key;
+    return { ...d, key, relative: !!s.relative };
+  }
   function load() {
     try {
       const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null');
-      if (Array.isArray(saved)) {
-        // saved rows override defaults by id; unknown ids are dropped,
-        // new defaults appear -- so a table from an older build stays
-        // usable. Keys saved before the kind prefix existed get one.
-        return DEFAULTS.map(d => {
-          const s = saved.find(x => x && x.id === d.id);
-          if (!s || typeof s.key !== 'string') return { ...d };
-          let key = s.key;
-          if (!/^[nc]/.test(key)) key = (d.id.startsWith('k') ? 'c' : 'n') + key;
-          return { ...d, key, relative: !!s.relative };
-        });
-      }
-    } catch (e) { /* fall through to defaults */ }
-    return DEFAULTS.map(d => ({ ...d }));
+      if (Array.isArray(saved)) savedRows = saved;
+    } catch (e) { savedRows = []; }
+    // saved rows override defaults by id; unknown ids are dropped, new
+    // defaults appear -- so a table from an older build stays usable
+    return [...DEFAULTS, ...pluginRows()].map(withSaved);
+  }
+  // plugins registered (or unregistered) since load(): add their rows,
+  // keeping any saved key; drop rows whose plugin is gone
+  function syncPluginRows() {
+    const want = pluginRows();
+    const have = new Set(bindings.map(b => b.id));
+    let changed = false;
+    for (const r of want) if (!have.has(r.id)) { bindings.push(withSaved(r)); changed = true; }
+    const wantIds = new Set(want.map(r => r.id));
+    const before = bindings.length;
+    bindings = bindings.filter(b => !b.plugin || wantIds.has(b.id));
+    return changed || bindings.length !== before;
   }
   function save() {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(
-        bindings.map(b => ({ id: b.id, key: b.key, relative: !!b.relative }))));
+      // rows for plugins that aren't loaded right now keep their saved
+      // entry, so their key is still there when the plugin comes back
+      const live = bindings.map(b => ({ id: b.id, key: b.key, relative: !!b.relative }));
+      const liveIds = new Set(live.map(b => b.id));
+      const dormant = savedRows.filter(x => x && /^(mode|fade):/.test(x.id) && !liveIds.has(x.id) && x.key);
+      savedRows = [...live, ...dormant];
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(savedRows));
     } catch (e) { /* quota/private */ }
   }
 
-  function describe(b) { return TARGET_LABELS[b.target] || (b.target.startsWith('mode:') ? 'mode: ' + b.target.slice(5) : b.target); }
+  function describe(b) {
+    if (TARGET_LABELS[b.target]) return TARGET_LABELS[b.target];
+    if (b.target.startsWith('mode:')) return 'mode: ' + (b.plugin ? b.label : b.target.slice(5));
+    if (b.target.startsWith('transition:set:')) return 'fade style: ' + b.label.replace(/^Fade: /, '');
+    return b.target;
+  }
   function keyLabel(key) {
     if (!key) return '—';
     const kind = key[0], rest = key.slice(1);
@@ -311,7 +354,7 @@ window.orbitMidi = (function () {
       if (!panel.classList.contains('mode-controls-hidden') && !access) connect();
     };
     if (els.connect) els.connect.onclick = connect;
-    if (els.reset) els.reset.onclick = () => { bindings = DEFAULTS.map(d => ({ ...d })); learning = null; save(); render(); };
+    if (els.reset) els.reset.onclick = () => { savedRows = []; bindings = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d })); learning = null; save(); render(); };
     // The panel is a settings surface, not a status one: it stays folded
     // on every open, connected or not, until the 🎹 click. (It used to
     // unfold itself whenever permission had already been granted, so
@@ -336,6 +379,7 @@ window.orbitMidi = (function () {
 
   function render() {
     if (!els || !document.body.contains(els.panel)) return;
+    syncPluginRows();
     const names = deviceNames();
     els.status.textContent =
       status === 'unsupported' ? 'this browser has no Web MIDI (Chrome, Edge and Firefox do; Safari does not)'
@@ -384,6 +428,10 @@ window.orbitMidi = (function () {
     // for tests / debugging
     bindings: () => bindings.map(b => ({ ...b })),
     status: () => status,
+    // orbit_visualizer.js calls this when a plugin mode/transition is
+    // registered or removed while the panel is up, so its row appears
+    // (or goes) without waiting for the next MIDI message
+    refresh: () => render(),
     _onMessage: onMessage,
   };
 })();

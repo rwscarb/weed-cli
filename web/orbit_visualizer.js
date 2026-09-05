@@ -464,6 +464,7 @@ window.orbitViz = (function () {
         if (s.vizMode === mode.id && !s.vizOff) vizModeSelect.value = mode.id;
       }
       callPlugin(mode, 'init', { container: vizSection, canvas: vizCanvas, vctx });
+      midiRefresh();
     }
     function unmountPlugin(mode) {
       callPlugin(mode, 'teardown', undefined);
@@ -471,7 +472,11 @@ window.orbitViz = (function () {
       if (btn) { btn.remove(); s.pluginButtons.delete(mode.id); }
       if (vizModeSelect) { const opt = vizModeSelect.querySelector(`option[value="${CSS.escape(mode.id)}"]`); if (opt) opt.remove(); }
       if (s.vizMode === mode.id) setVizMode('tunnel');
+      midiRefresh();
     }
+    // the MIDI panel builds a row per plugin mode/transition from the
+    // registries; tell it when they change
+    function midiRefresh() { if (window.orbitMidi && typeof window.orbitMidi.refresh === 'function') window.orbitMidi.refresh(); }
     function mountTransition(tr) {
       if (!transitionSelect) return;
       const opt = document.createElement('option');
@@ -480,12 +485,14 @@ window.orbitViz = (function () {
       transitionSelect.insertBefore(opt, transitionSelect.querySelector('option[value="random"]'));
       if (s.transition === tr.id) transitionSelect.value = tr.id;
       renderRandomPool();
+      midiRefresh();
     }
     function unmountTransition(tr) {
       if (transitionSelect) { const opt = transitionSelect.querySelector(`option[value="${CSS.escape(tr.id)}"]`); if (opt) opt.remove(); }
       if (s.transition === tr.id) { setTransition('burn'); persistSettings(); }
       if (s.trans && s.trans.type === tr.id) s.trans = null;
       renderRandomPool();
+      midiRefresh();
     }
     // ── the Random pool: which transitions Random may pick ──────────
     // A checkbox per real transition (built-ins and plugins alike), in a
