@@ -169,6 +169,13 @@ Includes real HTTP range support (`/api/stream/<job_id>`) so a
 `<video>` tag can seek a completed download instead of downloading it
 blind.
 
+The player's ⇄ button is **video swap**: pick another download whose
+picture stands in for the current track's — for an mp3 or a
+static-image video, so the visualizer (and the player window) have real
+footage. The audio stays with the track; the borrowed video loops on its
+own, follows play/pause, and the choice is remembered per track in the
+browser.
+
 ### Orbit Visualizer plugins
 
 The visualizer's modes and its Fade transitions are both open registries:

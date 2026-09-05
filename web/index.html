@@ -498,7 +498,7 @@
      current fullscreen element also makes the browser auto-exit
      fullscreen (spec behavior, not something this needs to do by hand),
      so hiding it here doubles as leaving Fullscreen cleanly as well. -->
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio}]">
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio && !player.swap, 'swap-audio': player.isAudio && !!player.swap}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
@@ -512,6 +512,10 @@
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
       <button type="button" class="icon-btn copy-stream-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
+      <!-- video swap: another download's picture over this track's audio (see vue-app.js setVideoSwap) -->
+      <button type="button" class="icon-btn swap-btn" :class="{active: player.swap}"
+              :title="player.swap ? 'Video swap: showing ' + player.swap.title + ' — click to change' : 'Video swap: use another download\'s picture for this track'"
+              @click.stop="toggleSwapPicker($event)">⇄</button>
       <select v-if="!orbitStreaming" v-model="orbitRes" @click.stop class="orbit-res-select" title="Stream resolution">
         <option value="720">720p</option>
         <option value="480">480p</option>
@@ -546,11 +550,15 @@
   </div>
   <div class="player-video-wrap">
     <video ref="playerVideo" :controls="!player.isAudio"
-           @play="player.isPlaying = true" @pause="player.isPlaying = false" @ended="onPlayerEnded"
+           @play="onPlayerPlay" @pause="onPlayerPause" @ended="onPlayerEnded"
            @loadedmetadata="player.isAudio = $refs.playerVideo.videoWidth === 0; player.audioDuration = $refs.playerVideo.duration || 0"
            @timeupdate="player.audioCurrentTime = $refs.playerVideo.currentTime"
            @durationchange="player.audioDuration = $refs.playerVideo.duration || 0"
            @volumechange="player.audioMuted = $refs.playerVideo.muted"></video>
+    <!-- the video swap's picture, muted and looping over the track's own
+         (pointer-events: none -- the real controls underneath still work) -->
+    <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
+           @loadedmetadata="syncSwapVideo"></video>
     <div v-if="player.isAudio" id="audio-transport" @click.stop>
       <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
               :title="player.isPlaying ? 'Pause' : 'Play'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
@@ -575,6 +583,25 @@
   <div class="qr-url">{{ qr.url }}</div>
 </div>
 
+<div id="swap-picker" ref="swapPicker" class="qr-popup playlist-picker swap-picker" :class="{hidden: !swapPicker.visible}" :style="swapPickerStyle">
+  <div class="playlist-picker-title">Video swap — picture from another download</div>
+  <div class="playlist-picker-list">
+    <div class="playlist-picker-item" v-if="player.swap">
+      <button type="button" class="playlist-picker-item-add" title="Back to this track's own picture" @click="setVideoSwap(null)">
+        <span class="playlist-picker-item-name">✕ none (own picture)</span>
+      </button>
+    </div>
+    <div class="playlist-picker-item" v-for="d in swapCandidates" :key="d.content_hash"
+         :class="{'playlist-picker-item-active': player.swap && player.swap.contentHash === d.content_hash}">
+      <button type="button" class="playlist-picker-item-add" :title="'Use the picture from ' + (d.title || shortHash(d.content_hash))"
+              @click="setVideoSwap(d)">
+        <span class="playlist-picker-item-name">{{ d.title || shortHash(d.content_hash) }}</span>
+        <span class="playlist-picker-item-playing" v-if="player.swap && player.swap.contentHash === d.content_hash">▶ swapped</span>
+      </button>
+    </div>
+    <div v-if="!swapCandidates.length" class="playlist-picker-empty muted">no other downloads with a picture</div>
+  </div>
+</div>
 <div id="playlist-picker" ref="playlistPicker" class="qr-popup playlist-picker" :class="{hidden: !playlistPicker.visible}"
      :style="playlistPickerStyle">
   <div class="playlist-picker-title">Add to playlist</div>

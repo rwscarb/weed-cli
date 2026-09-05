@@ -201,7 +201,15 @@ const app = createApp({
         // as items/index already were, since it's still the same
         // logical queue continuing, not a new one.
         queue: null,
+        // "video swap": another download whose *picture* stands in for
+        // this track's -- for an mp3 or a static-image video, so the
+        // visualizer (and the player window) have real footage to chew
+        // on. Audio always stays with the track itself. { jobId,
+        // contentHash, title } or null; remembered per track in
+        // localStorage (see setVideoSwap/applySavedSwap).
+        swap: null,
       },
+      swapPicker: { visible: false, top: 0, left: null, right: null },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
@@ -347,6 +355,21 @@ const app = createApp({
         left: this.qr.left != null ? this.qr.left + 'px' : 'auto',
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
+    },
+    swapPickerStyle() {
+      return {
+        top: this.swapPicker.top + 'px',
+        left: this.swapPicker.left != null ? this.swapPicker.left + 'px' : 'auto',
+        right: this.swapPicker.right != null ? this.swapPicker.right + 'px' : 'auto',
+      };
+    },
+    // every other download that plausibly has a picture: audio-only
+    // extensions are left out, the track itself too
+    swapCandidates() {
+      const AUDIO = /\.(mp3|m4a|aac|flac|ogg|oga|opus|wav|wma)$/i;
+      return Object.values(this.library.downloads)
+        .filter(d => d.content_hash !== this.player.contentHash && d.job_id && !AUDIO.test(d.path || ''))
+        .sort((a, b) => (a.title || a.content_hash).localeCompare(b.title || b.content_hash));
     },
     playlistPickerStyle() {
       return {
@@ -671,6 +694,10 @@ const app = createApp({
         const insidePicker = this.$refs.playlistPicker && this.$refs.playlistPicker.contains(e.target);
         if (!insidePicker && !e.target.closest('.playlist-add-btn')) this.playlistPicker.visible = false;
       }
+      if (this.swapPicker.visible) {
+        const inside = this.$refs.swapPicker && this.$refs.swapPicker.contains(e.target);
+        if (!inside && !e.target.closest('.swap-btn')) this.swapPicker.visible = false;
+      }
     },
 
     showError(message) {
@@ -731,8 +758,71 @@ const app = createApp({
         // Orbit Visualizer open doesn't glitch mid-playback (createMediaElementSource
         // reroutes audio and causes a brief interruption if called while playing).
         this._ensureOrbitAnalyser();
+        this.applySavedSwap();
       });
       this.recordPlay(contentHash, this.player.title);
+    },
+    // ── video swap ────────────────────────────────────────────────────
+    // The swap <video> is a second, muted element layered over the
+    // player's own (pointer-events: none, so the real controls under it
+    // still work); it loops on its own clock -- the borrowed footage may
+    // be longer or shorter than the track -- and follows play/pause/rate.
+    // startOrbitVizFeed samples it instead of the track when it's set.
+    SWAP_KEY: 'weed.player.swaps',
+    _savedSwaps() {
+      try { const m = JSON.parse(localStorage.getItem('weed.player.swaps') || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; }
+    },
+    applySavedSwap() {
+      const hash = this.player.contentHash;
+      const wanted = hash ? this._savedSwaps()[hash] : null;
+      const rec = wanted ? this.library.downloads[wanted] : null;
+      this._loadSwap(rec && rec.job_id && wanted !== hash ? rec : null);
+    },
+    _loadSwap(rec) {
+      const sv = this.$refs.swapVideo;
+      if (!rec) {
+        this.player.swap = null;
+        if (sv) { sv.pause(); sv.removeAttribute('src'); sv.load(); }
+        return;
+      }
+      const same = this.player.swap && this.player.swap.jobId === rec.job_id;
+      this.player.swap = { jobId: rec.job_id, contentHash: rec.content_hash, title: rec.title || this.shortHash(rec.content_hash) };
+      if (!sv) return;
+      if (!same) { sv.src = '/api/stream/' + rec.job_id; sv.load(); }
+      this.syncSwapVideo();
+    },
+    // the user's choice for this track, remembered; null forgets it
+    setVideoSwap(rec) {
+      const hash = this.player.contentHash;
+      if (hash) {
+        const m = this._savedSwaps();
+        if (rec) m[hash] = rec.content_hash; else delete m[hash];
+        try { localStorage.setItem('weed.player.swaps', JSON.stringify(m)); } catch (e) { /* quota/private */ }
+      }
+      this._loadSwap(rec);
+      this.swapPicker.visible = false;
+      // a new picture while the visualizer is up: let it transition
+      if (window.orbitViz && window.orbitViz.isActive()) window.orbitViz.transition();
+    },
+    // keeps the borrowed footage running whenever the track is
+    syncSwapVideo() {
+      const sv = this.$refs.swapVideo, v = this.$refs.playerVideo;
+      if (!sv || !this.player.swap || !v) return;
+      sv.muted = true; sv.loop = true;
+      sv.playbackRate = v.playbackRate || 1;
+      if (!v.paused && sv.paused) sv.play().catch(() => {});
+      else if (v.paused && !sv.paused) sv.pause();
+    },
+    onPlayerPlay() { this.player.isPlaying = true; this.syncSwapVideo(); },
+    onPlayerPause() { this.player.isPlaying = false; this.syncSwapVideo(); },
+    toggleSwapPicker(event) {
+      if (this.swapPicker.visible) { this.swapPicker.visible = false; return; }
+      const rect = event.currentTarget.getBoundingClientRect();
+      this.swapPicker.top = rect.bottom + window.scrollY + 6;
+      const popupWidth = 260;
+      if (rect.left + popupWidth > window.innerWidth) { this.swapPicker.left = null; this.swapPicker.right = window.innerWidth - rect.right; }
+      else { this.swapPicker.right = null; this.swapPicker.left = rect.left + window.scrollX; }
+      this.swapPicker.visible = true;
     },
     // Every real "start watching this" funnels through openPlayer above
     // (Discover's ▶ Play, a Downloads row, a playlist item, onPlayerEnded's
@@ -759,6 +849,8 @@ const app = createApp({
       video.pause();
       video.removeAttribute('src');
       video.load();
+      this._loadSwap(null);
+      this.swapPicker.visible = false;
       this.player.visible = false;
       this.player.isPlaying = false;
       this.player.isAudio = false;
@@ -1880,7 +1972,10 @@ const app = createApp({
         // analysis above -- every other frame (~30fps) is still
         // plenty smooth for a background visualization
         if (frameCount++ % 2 === 0) {
-          const video = this.$refs.playerVideo;
+          // the borrowed footage (video swap) when there is one and it
+          // has a frame; the track's own picture otherwise
+          const sv = this.player.swap ? this.$refs.swapVideo : null;
+          const video = (sv && sv.readyState >= 2 && sv.videoWidth > 0) ? sv : this.$refs.playerVideo;
           // readyState >= 2 (HAVE_CURRENT_DATA) is "there's an actual
           // decoded frame to draw" -- before that (nothing loaded, or
           // between openPlayer() setting src and the first frame

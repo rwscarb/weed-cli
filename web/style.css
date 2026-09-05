@@ -835,6 +835,15 @@ td button {
    bar. videoWidth === 0 at loadedmetadata sets the audio-mode class (see
    vue-app.js). Theater/fullscreen keep their own dimensions so the controls
    are still comfortably reachable at that size. */
+/* video swap: the borrowed picture sits over the track's own video and
+   passes clicks through to the real controls beneath */
+#global-player video.swap-video { position: absolute; inset: 0; pointer-events: none; }
+/* an audio track with a swap keeps the full picture area; its transport
+   bar becomes an overlay along the bottom instead of the whole box */
+#global-player.swap-audio #audio-transport { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: rgba(20,20,20,0.85); }
+.swap-picker { min-width: 220px; max-width: 320px; }
+#global-player .swap-btn.active { color: var(--accent); }
+
 #global-player.audio-mode .player-video-wrap {
   flex: none;
   height: 54px;

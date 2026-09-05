@@ -468,3 +468,46 @@ def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_
     assert css['position'] == 'sticky' and css['top'] == '0px'
     assert css['maxHeight'].endswith('px') and float(css['maxHeight'][:-2]) < 900 * 0.5
     assert css['fit'] == 'contain'
+
+
+def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, golden_path_server):
+    """Ryan: "video swap" -- a user can choose a different video track to
+    what's currently playing, for mp3s and static-image videos. The ⇄
+    button lists the other downloads; picking one loads its stream into
+    a muted, looping overlay <video> the visualizer samples instead, the
+    choice is remembered per track, and "none" undoes it. The fixture
+    has one real download, so a second record pointing at the same job
+    stands in for "another video"."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    job_id = page.evaluate("vm => Object.values(vm.library.downloads)[0].job_id", vm)
+    page.evaluate("([vm, jid]) => { vm.library.downloads['b'.repeat(64)] = { content_hash: 'b'.repeat(64), job_id: jid, title: 'Other Footage', path: '/x/other.mp4', signer_pubkey: null }; }", [vm, job_id])
+
+    assert page.locator('#swap-picker.hidden').count() == 1
+    page.click('#global-player .swap-btn')
+    page.wait_for_selector('#swap-picker:not(.hidden)')
+    page.locator('#swap-picker .playlist-picker-item-add', has_text='Other Footage').click()
+    page.wait_for_function("vm => vm.player.swap && vm.player.swap.title === 'Other Footage'", arg=vm)
+    assert page.locator('#swap-picker.hidden').count() == 1
+    sv = page.locator('#global-player video.swap-video')
+    assert sv.is_visible()
+    assert sv.get_attribute('src') == f'/api/stream/{job_id}'
+    page.wait_for_function("() => { const v = document.querySelector('video.swap-video'); return v.readyState >= 2 && v.muted && v.loop; }", timeout=15000)
+    saved = page.evaluate("() => JSON.parse(localStorage.getItem('weed.player.swaps'))")
+    assert saved[golden_path_server['content_hash']] == 'b' * 64
+
+    # the track's own player still plays its own audio/video source
+    assert page.evaluate("vm => vm.$refs.playerVideo.getAttribute('src')", vm) == f'/api/stream/{job_id}'
+
+    # reopening the same track re-applies the remembered swap
+    page.evaluate("vm => vm.closePlayer()", vm)
+    assert page.evaluate("vm => vm.player.swap", vm) is None
+    assert page.evaluate("() => document.querySelector('video.swap-video').getAttribute('src')") is None
+    page.evaluate("([vm, jid, h]) => vm.openPlayer(jid, 'Test Clip', h, null)", [vm, job_id, golden_path_server['content_hash']])
+    page.wait_for_function("vm => vm.player.swap && vm.player.swap.title === 'Other Footage'", arg=vm)
+
+    # "none" forgets it
+    page.click('#global-player .swap-btn')
+    page.locator('#swap-picker .playlist-picker-item-add', has_text='none').click()
+    page.wait_for_function("vm => vm.player.swap === null", arg=vm)
+    assert page.evaluate("() => JSON.parse(localStorage.getItem('weed.player.swaps'))") == {}
