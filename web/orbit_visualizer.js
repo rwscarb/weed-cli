@@ -273,6 +273,11 @@ window.orbitViz = (function () {
       videoFrame: null,
       VW: 0, VH: 0,
       vizPanX: 0, vizPanY: 0, vizUserScale: 1.0, vizRot: 0,
+      // the view's own rotation (radians), from a middle-drag or the
+      // Rotate knob -- applied to the whole picture around its centre,
+      // like pan/zoom a per-view gesture and not saved
+      vizUserRot: 0,
+      dragMode: null,           // 'pan' | 'rotate' | 'zoom' while a drag is in progress
       // PIXELS mode's own rotation/pulse state -- separate from vizRot
       // above (shared by tunnel/scope/spiral at a fixed rate) since this
       // ring's whole point is spinning *faster when the audio is more
@@ -567,7 +572,13 @@ window.orbitViz = (function () {
     on(zoomSlider, 'input', () => setZoom(parseFloat(zoomSlider.value)));
     setZoom(s.vizUserScale);
 
-    function resetVizNav() { s.vizPanX = 0; s.vizPanY = 0; setZoom(1.0); }
+    function resetVizNav() { s.vizPanX = 0; s.vizPanY = 0; s.vizUserRot = 0; setZoom(1.0); }
+    function setRotation(rad) {
+      // wrap into -π..π so a knob's range and a long drag agree
+      let r = rad % (Math.PI * 2);
+      if (r > Math.PI) r -= Math.PI * 2; else if (r < -Math.PI) r += Math.PI * 2;
+      s.vizUserRot = r;
+    }
 
     function resizeVizCanvas() {
       s.VW = Math.round(vizCanvas.offsetWidth * devicePixelRatio);
@@ -585,19 +596,28 @@ window.orbitViz = (function () {
       e.preventDefault();
       setZoom(s.vizUserScale * (e.deltaY > 0 ? 0.93 : 1.07));
     }, { passive: false });
+    // Blender's hand: left-drag pans (as before); middle-drag rotates
+    // the view, shift+middle pans, ctrl+middle zooms (drag up to zoom
+    // in). The middle button's default -- autoscroll on some platforms,
+    // paste on X11 -- is suppressed on the canvas.
     on(vizCanvas, 'mousedown', e => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 && e.button !== 1) return;
+      e.preventDefault();
+      s.dragMode = e.button === 0 ? 'pan' : (e.shiftKey ? 'pan' : e.ctrlKey ? 'zoom' : 'rotate');
       s.panning = true; s.lastX = e.clientX; s.lastY = e.clientY;
-      vizCanvas.style.cursor = 'grabbing';
+      vizCanvas.style.cursor = s.dragMode === 'pan' ? 'grabbing' : s.dragMode === 'zoom' ? 'ns-resize' : 'alias';
     });
+    on(vizCanvas, 'auxclick', e => { if (e.button === 1) e.preventDefault(); });
     on(vizCanvas, 'dblclick', () => resetVizNav());
     on(document, 'mousemove', e => {
       if (!s.panning) return;
-      s.vizPanX += (e.clientX - s.lastX) * devicePixelRatio;
-      s.vizPanY += (e.clientY - s.lastY) * devicePixelRatio;
+      const dx = e.clientX - s.lastX, dy = e.clientY - s.lastY;
       s.lastX = e.clientX; s.lastY = e.clientY;
+      if (s.dragMode === 'rotate') setRotation(s.vizUserRot + dx * 0.006);
+      else if (s.dragMode === 'zoom') setZoom(s.vizUserScale * Math.exp(-dy * 0.006));
+      else { s.vizPanX += dx * devicePixelRatio; s.vizPanY += dy * devicePixelRatio; }
     });
-    on(document, 'mouseup', () => { if (!s.panning) return; s.panning = false; vizCanvas.style.cursor = 'grab'; });
+    on(document, 'mouseup', () => { if (!s.panning) return; s.panning = false; s.dragMode = null; vizCanvas.style.cursor = 'grab'; });
 
     // Viz mode switching -- one shared setter for the three ways a mode
     // change can happen (clicking a button, arrow-key cycling, and the
@@ -949,6 +969,7 @@ window.orbitViz = (function () {
     // from the outside otherwise
     s.transitionDebug = () => ({
       transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(),
+      rot: s.vizUserRot, panX: s.vizPanX, panY: s.vizPanY, zoom: s.vizUserScale,
       VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
     });
 
@@ -1119,7 +1140,21 @@ window.orbitViz = (function () {
       if (!s.running) return;
       if (!externalClock) scheduleDraw();
       if (!s.VW || !s.VH) return;
-      drawScene();
+      if (s.vizUserRot) {
+        // the whole scene turned about the centre, scaled up just enough
+        // that a rotated frame still covers the corners (no wedges of
+        // last frame peeking through). Feedback modes read the canvas
+        // back each frame, so under a rotation their trails spiral --
+        // that's the fun of it.
+        const W = s.VW, H = s.VH, c = Math.abs(Math.cos(s.vizUserRot)), sn = Math.abs(Math.sin(s.vizUserRot));
+        const cover = Math.max((W * c + H * sn) / W, (W * sn + H * c) / H);
+        vctx.save();
+        vctx.translate(W / 2, H / 2); vctx.rotate(s.vizUserRot); vctx.scale(cover, cover); vctx.translate(-W / 2, -H / 2);
+        drawScene();
+        vctx.restore();
+      } else {
+        drawScene();
+      }
       if (s.trans) drawTransition();
     }
 
@@ -1599,6 +1634,7 @@ window.orbitViz = (function () {
       speed: [0.2, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
       asciiBrightness: [0.3, 3], asciiStride: [1, 4], asciiBgAlpha: [0, 1],
       buildingWidth: [0.3, 3], buildingHeight: [0.3, 3], buildingCount: [5, 120],
+      rotate: [-Math.PI, Math.PI],
     };
     s.control = function (param, v01) {
       const range = CONTROL_RANGES[param];
@@ -1617,6 +1653,7 @@ window.orbitViz = (function () {
         case 'buildingWidth': setBuildingWidth(x); break;
         case 'buildingHeight': setBuildingHeight(x); break;
         case 'buildingCount': setBuildingCount(x); break;
+        case 'rotate': setRotation(x); break;
       }
     };
     // the inverse of control(): where a parameter currently sits in its
@@ -1631,6 +1668,7 @@ window.orbitViz = (function () {
         speed: s.speed, reactivity: s.reactivity, zoom: s.vizUserScale, transitionMs: s.transitionMs,
         asciiBrightness: s.asciiBrightness, asciiStride: s.asciiStride, asciiBgAlpha: s.asciiBgAlpha,
         buildingWidth: s.buildingWidthScale, buildingHeight: s.buildingHeightScale, buildingCount: s.buildingCount,
+        rotate: s.vizUserRot,
       }[param];
       if (cur === undefined) return 0.5;
       const pos = scale === 'log' ? Math.log(cur / lo) / Math.log(hi / lo) : (cur - lo) / (hi - lo);

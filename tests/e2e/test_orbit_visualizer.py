@@ -340,3 +340,42 @@ def test_midi_panel_stays_folded_on_open_even_when_already_permitted(page, golde
     page.wait_for_selector('#orbit-egg-dialog', state='detached')
     _open_orbit_viz(page)
     assert not page.locator('#midiPanel').is_visible(), 'panel remembered being open across a close/reopen'
+
+
+def test_middle_drag_rotates_shift_pans_ctrl_zooms_like_blender(page, golden_path_server):
+    """Ryan: "could I hold middle-click and manipulate like Blender?"
+    Middle-drag turns the view, shift+middle pans, ctrl+middle zooms
+    (drag up = in); left-drag still pans; double-click resets all of it."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    box = page.locator('#vizCanvas').bounding_box()
+    cx, cy = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+    state = lambda: page.evaluate("() => window.orbitViz.debugState()")
+    assert state()['rot'] == 0
+
+    page.mouse.move(cx, cy); page.mouse.down(button='middle'); page.mouse.move(cx + 100, cy, steps=5); page.mouse.up(button='middle')
+    rot = state()['rot']
+    assert 0.3 < rot < 1.0, rot          # 100px * 0.006 rad/px
+    assert state()['panX'] == 0          # a plain middle-drag does not pan
+
+    page.keyboard.down('Shift')
+    page.mouse.move(cx, cy); page.mouse.down(button='middle'); page.mouse.move(cx + 40, cy + 30, steps=4); page.mouse.up(button='middle')
+    page.keyboard.up('Shift')
+    st = state()
+    assert st['panX'] > 0 and st['panY'] > 0 and st['rot'] == pytest.approx(rot)
+
+    page.keyboard.down('Control')
+    page.mouse.move(cx, cy); page.mouse.down(button='middle'); page.mouse.move(cx, cy - 80, steps=4); page.mouse.up(button='middle')
+    page.keyboard.up('Control')
+    assert state()['zoom'] > 1.3          # dragging up zooms in
+    assert float(page.locator('#zoomSlider').input_value()) > 1.3   # the slider followed
+
+    # several frames render under the rotation with no errors
+    errors = []
+    page.on('pageerror', lambda exc: errors.append(str(exc)))
+    page.wait_for_timeout(300)
+    assert errors == []
+
+    page.mouse.dblclick(cx, cy)
+    st = state()
+    assert st['rot'] == 0 and st['panX'] == 0 and st['panY'] == 0 and st['zoom'] == 1.0
