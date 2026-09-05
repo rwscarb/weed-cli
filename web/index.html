@@ -460,6 +460,9 @@
           <td>{{ t.votes }}</td>
           <td>
             <button type="button" class="icon-btn" title="play this now (clears its votes)" @click="playVoted(t)">▶</button>
+            <!-- the Downloads record carries the signer too; the vote row itself is only hash + title -->
+            <button type="button" class="icon-btn playlist-add-btn" title="Add to playlist"
+                    @click="openPlaylistPicker($event, library.downloads[t.content_hash] || t)">♫+</button>
             <button type="button" class="icon-btn" v-if="t.votes" title="clear its votes" @click="clearVotes(t)">✕</button>
           </td>
         </tr>

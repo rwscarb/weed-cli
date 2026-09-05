@@ -9,6 +9,8 @@ import re
 
 import pytest
 
+import web_ui
+
 
 def _vm(page):
     return page.evaluate_handle(
@@ -410,3 +412,54 @@ def test_downloading_under_a_not_downloaded_filter_does_not_hide_the_row(page, g
     # disappeared right when that Play button appeared
     assert row.count() == 1
     assert golden_path_server['title'] in page.content()
+
+
+# ── Party tab / party view ─────────────────────────────────────────────
+
+def test_party_tab_votes_row_can_add_the_track_to_a_playlist(page, golden_path_server):
+    """Ryan: "in party admin make adding to playlist an option." Each row
+    of the admin's Votes table gets the same ♫+ the Discover/Downloads
+    rows have, opening the same picker -- creating a playlist from it
+    lands the voted track in a real playlist."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.locator('#tabs .tab-btn', has_text='Party').click()
+    row = page.locator('#party-votes-table tbody tr', has_text=golden_path_server['title'])
+    row.wait_for()
+    # the floating PIP player from _download_and_play sits over the
+    # table's right edge in this viewport and would swallow the click
+    page.evaluate("vm => vm.closePlayer()", vm)
+    row.locator('.playlist-add-btn').click()
+    page.wait_for_selector('#playlist-picker:not(.hidden)')
+    page.fill('#playlist-picker .playlist-picker-new input', 'party picks')
+    page.click('#playlist-picker .playlist-picker-new button[type=submit]')
+    page.wait_for_function("vm => vm.library.playlists.length === 1 && vm.library.playlists[0].items.length === 1", arg=vm)
+    pl = page.evaluate("vm => vm.library.playlists[0]", vm)
+    assert pl['name'] == 'party picks'
+    assert pl['items'][0]['content_hash'] == golden_path_server['content_hash']
+    assert page.locator('#playlist-picker.hidden').count() == 1
+
+
+def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_server, monkeypatch):
+    """Ryan: "make the visualizer sticky in party view mode." A guest
+    scrolling down the vote list keeps the live picture in view: the
+    stream block is position: sticky, and its picture is capped below
+    the viewport height so the list always has room under it."""
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
+    # wait for the first /api/party answer before touching vm.party:
+    # #party-view appears before that fetch lands, and its arrival would
+    # overwrite the flags set below (a 5s poll follows, comfortably later)
+    with page.expect_response(lambda r: '/api/party' in r.url and r.status == 200):
+        page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+    page.wait_for_selector('#party-view')
+    vm = _vm(page)
+    # no stream is running in this fixture: flip the flag the way a
+    # refresh would once one starts, so the block renders
+    page.evaluate("vm => { vm.party.stream.active = true; vm.party.stream.url = '/api/orbit-view'; vm.party.stream.since = 1; }", vm)
+    # attached, not visible: with no real stream the <img> has no size yet
+    page.wait_for_selector('.party-stream', state='attached')
+    css = page.evaluate("() => { const b = getComputedStyle(document.querySelector('.party-stream')); const i = getComputedStyle(document.querySelector('.party-stream img')); return { position: b.position, top: b.top, maxHeight: i.maxHeight, fit: i.objectFit }; }")
+    assert css['position'] == 'sticky' and css['top'] == '0px'
+    assert css['maxHeight'].endswith('px') and float(css['maxHeight'][:-2]) < 900 * 0.5
+    assert css['fit'] == 'contain'
