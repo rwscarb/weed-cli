@@ -169,6 +169,22 @@ Includes real HTTP range support (`/api/stream/<job_id>`) so a
 `<video>` tag can seek a completed download instead of downloading it
 blind.
 
+### Orbit Visualizer plugins
+
+The visualizer's modes and its Fade transitions are both open registries:
+`window.orbitViz.registerMode({id, label, draw(ctx), init?, teardown?})`
+and `window.orbitViz.registerTransition({id, label, draw(ctx)})`, with
+`unregister*`/`list*` to match (the contracts are documented at the top
+of `web/orbit_visualizer.js`). A registered mode gets a button, an entry
+in the narrow-screen dropdown, a place in arrow/pad cycling and the MIDI
+mode selector; a registered transition gets a Fade option and a turn in
+"Random". A plugin that throws is logged once and disabled without
+taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
+built entirely on that API and adds Halftone, Lava, Terrain, Rain,
+Lissajous, Ripples and Cube, plus the Melt, Dissolve, Iris, Shatter,
+Wave, Spin, Zoom blur and RGB split transitions; `web/orbit_plugin_example.js`
+is a minimal one to copy.
+
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run

@@ -733,6 +733,9 @@
             <option value="pixelate">Pixelate</option>
             <option value="crossfade">Crossfade</option>
             <option value="wipe">Wipe</option>
+            <!-- transitions registered via orbitViz.registerTransition
+                 (orbit_extras.js) are inserted here, before Random -->
+            <option value="random">Random</option>
             <option value="none">None</option>
           </select>
           <input type="range" id="transitionSlider" min="0" max="5000" step="100" value="1200" title="Transition length">
@@ -800,6 +803,9 @@
 
 <script src="vendor/vue.global.prod.js"></script>
 <script src="orbit_visualizer.js"></script>
+<!-- extra modes/transitions, built entirely on the plugin API above --
+     drop this line to get the built-ins only -->
+<script src="orbit_extras.js"></script>
 <script src="orbit_midi.js"></script>
 <script src="vue-app.js"></script>
 </body>

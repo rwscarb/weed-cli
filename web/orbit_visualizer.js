@@ -129,6 +129,73 @@ window.orbitViz = (function () {
       ...Array.from(pluginModes.values()).map(m => ({ id: m.id, label: m.label, builtin: false })),
     ];
   }
+  // every mode id in button order: built-ins first, then plugins in
+  // registration order -- what arrow/pad cycling and the MIDI mode
+  // selector walk, so a plugin mode is reachable the same ways a
+  // built-in one is
+  function allModes() { return [...VIZ_MODES, ...pluginModes.keys()]; }
+
+  // ── Transition registry -- the same idea for the Fade dropdown ────
+  // A transition plugin is { id, label?, draw(ctx) }. draw runs once
+  // per frame while the transition is in flight, *after* the new mode
+  // has drawn its own frame, and paints whatever is left of the old
+  // picture over it. ctx (built fresh each frame, see makeTransitionContext
+  // inside init()):
+  //   vctx        -- the canvas context to draw into (already save()d;
+  //                  restore() runs after, so alpha/filter/composite
+  //                  changes don't leak)
+  //   old         -- a canvas holding the outgoing picture (size oldW x
+  //                  oldH; draw it scaled to W x H -- the canvas can
+  //                  change size mid-transition, see drawTransition)
+  //   W, H        -- current canvas size in device pixels
+  //   t           -- progress 0..1 (the Fade length slider sets the
+  //                  wall-clock length; a plugin never needs to know it)
+  //   seed        -- a random number fixed for this one transition, for
+  //                  anything that should look different every time but
+  //                  hold still frame to frame
+  //   hueBase     -- the shared 0-360 colour drift
+  //   scratch()   -- a cleared W x H scratch canvas context (one per
+  //                  frame; call it again for the same one) for masking
+  //                  tricks like the built-in burn/wipe use
+  // A draw that throws is logged once, the transition is dropped, and
+  // the Fade dropdown goes back to Burn -- same isolation as modes.
+  // 'random' is a built-in pseudo-transition: each snapshot picks any
+  // real one, plugins included.
+  const BUILTIN_TRANSITIONS = ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'random', 'none'];
+  const pluginTransitions = new Map();
+
+  function registerTransition(def) {
+    if (!def || typeof def.id !== 'string' || !def.id || typeof def.draw !== 'function') {
+      throw new Error('orbitViz.registerTransition(def) requires at least {id: string, draw: function}');
+    }
+    if (BUILTIN_TRANSITIONS.includes(def.id) || pluginTransitions.has(def.id)) {
+      throw new Error(`orbitViz.registerTransition: a transition called ${JSON.stringify(def.id)} already exists`);
+    }
+    const tr = { id: def.id, label: def.label || def.id, draw: def.draw, broken: false };
+    pluginTransitions.set(tr.id, tr);
+    if (state) state.mountTransition(tr);
+    return () => unregisterTransition(tr.id);
+  }
+
+  function unregisterTransition(id) {
+    const tr = pluginTransitions.get(id);
+    if (!tr) return false;
+    if (state) state.unmountTransition(tr);
+    pluginTransitions.delete(id);
+    return true;
+  }
+
+  function listTransitions() {
+    return [
+      ...BUILTIN_TRANSITIONS.map(id => ({ id, label: id, builtin: true })),
+      ...Array.from(pluginTransitions.values()).map(t => ({ id: t.id, label: t.label, builtin: false })),
+    ];
+  }
+  // dropdown order: the real built-ins, plugins, then Random and None
+  // at the end where a "meta" choice reads naturally
+  function allTransitions() {
+    return [...BUILTIN_TRANSITIONS.filter(t => t !== 'random' && t !== 'none'), ...pluginTransitions.keys(), 'random', 'none'];
+  }
 
   let state = null;
   // true while something else (vue-app.js's stream code, while the tab
@@ -311,7 +378,11 @@ window.orbitViz = (function () {
         // same type as the default, or it's ignored -- the setters
         // clamp ranges, this just keeps a stale/odd value from landing
         if (typeof saved[k] !== typeof s[k]) continue;
-        if (k === 'vizMode') { if (!VIZ_MODES.includes(saved[k])) continue; }
+        // plugin scripts register at page load, before any open, so a
+        // saved plugin mode/transition is known here; one whose script
+        // is gone falls back to the default
+        if (k === 'vizMode') { if (!allModes().includes(saved[k])) continue; }
+        else if (k === 'transition') { if (!allTransitions().includes(saved[k])) continue; }
         else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
         s[k] = saved[k];
       }
@@ -375,16 +446,41 @@ window.orbitViz = (function () {
       btn.textContent = mode.label;
       vizModesEl.appendChild(btn);
       s.pluginButtons.set(mode.id, btn);
+      // the narrow-viewport <select> mirrors the button row -- keep the
+      // "Video only" entry last
+      if (vizModeSelect) {
+        const opt = document.createElement('option');
+        opt.value = mode.id; opt.textContent = mode.label;
+        const video = vizModeSelect.querySelector('option[value="__video"]');
+        vizModeSelect.insertBefore(opt, video);
+        if (s.vizMode === mode.id && !s.vizOff) vizModeSelect.value = mode.id;
+      }
       callPlugin(mode, 'init', { container: vizSection, canvas: vizCanvas, vctx });
     }
     function unmountPlugin(mode) {
       callPlugin(mode, 'teardown', undefined);
       const btn = s.pluginButtons.get(mode.id);
       if (btn) { btn.remove(); s.pluginButtons.delete(mode.id); }
+      if (vizModeSelect) { const opt = vizModeSelect.querySelector(`option[value="${CSS.escape(mode.id)}"]`); if (opt) opt.remove(); }
       if (s.vizMode === mode.id) setVizMode('tunnel');
+    }
+    function mountTransition(tr) {
+      if (!transitionSelect) return;
+      const opt = document.createElement('option');
+      opt.value = tr.id; opt.textContent = tr.label;
+      // before Random/None, which stay at the end (see allTransitions)
+      transitionSelect.insertBefore(opt, transitionSelect.querySelector('option[value="random"]'));
+      if (s.transition === tr.id) transitionSelect.value = tr.id;
+    }
+    function unmountTransition(tr) {
+      if (transitionSelect) { const opt = transitionSelect.querySelector(`option[value="${CSS.escape(tr.id)}"]`); if (opt) opt.remove(); }
+      if (s.transition === tr.id) { setTransition('burn'); persistSettings(); }
+      if (s.trans && s.trans.type === tr.id) s.trans = null;
     }
     s.mountPlugin = mountPlugin;
     s.unmountPlugin = unmountPlugin;
+    s.mountTransition = mountTransition;
+    s.unmountTransition = unmountTransition;
     s.callPlugin = callPlugin;
     // any plugin registered from an earlier dialog session (or before
     // the visualizer was ever opened at all) needs its button re-created
@@ -392,6 +488,7 @@ window.orbitViz = (function () {
     // on close, plugin buttons included, but pluginModes itself is
     // module-level state that outlives any single open/close cycle
     for (const mode of pluginModes.values()) mountPlugin(mode);
+    for (const tr of pluginTransitions.values()) mountTransition(tr);
 
     // shared by the Zoom slider's own 'input' event, scroll-to-zoom, and
     // the double-click reset below, so all three ways of changing it
@@ -586,6 +683,7 @@ window.orbitViz = (function () {
     setSpeed(s.speed);
 
     function setTransition(type) {
+      if (!allTransitions().includes(type)) type = 'burn';
       s.transition = type;
       if (transitionSelect && transitionSelect.value !== type) transitionSelect.value = type;
     }
@@ -777,7 +875,14 @@ window.orbitViz = (function () {
       }
       transOldCtx.clearRect(0, 0, s.VW, s.VH);
       transOldCtx.drawImage(vizCanvas, 0, 0);
-      s.trans = { t0: performance.now(), type: s.transition, seed: Math.random() * 1000 };
+      let type = s.transition;
+      if (type === 'random') {
+        // any real one, plugins included, never the same as last time
+        const pool = allTransitions().filter(t => t !== 'random' && t !== 'none' && t !== s.lastRandomTransition);
+        type = pool[Math.floor(Math.random() * pool.length)];
+        s.lastRandomTransition = type;
+      }
+      s.trans = { t0: performance.now(), type, seed: Math.random() * 1000 };
     }
     s.snapshotForTransition = snapshotForTransition;
     // for orbitViz.debugState() -- the transition machinery is closure-
@@ -913,6 +1018,26 @@ window.orbitViz = (function () {
           transTmpCtx.fillRect(0, 0, W, H);
           transTmpCtx.globalCompositeOperation = 'source-over';
           vctx.drawImage(transTmp, 0, 0);
+          break;
+        }
+        default: {
+          // a registered transition plugin (or a stale name whose
+          // plugin is gone: nothing drawn, the transition just ends)
+          const plugin = pluginTransitions.get(tr.type);
+          if (!plugin || plugin.broken) { s.trans = null; break; }
+          try {
+            plugin.draw({
+              vctx, old: transOld, oldW: transOld.width, oldH: transOld.height, W, H, t, seed: tr.seed,
+              hueBase: s.c60Hue * 360,
+              scratch: () => { ensureTransTmp(W, H); transTmpCtx.setTransform(1, 0, 0, 1, 0, 0); transTmpCtx.globalCompositeOperation = 'source-over'; transTmpCtx.globalAlpha = 1; transTmpCtx.filter = 'none'; transTmpCtx.clearRect(0, 0, W, H); return transTmpCtx; },
+            });
+          } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(`[orbit visualizer] transition "${plugin.id}" threw in draw():`, err);
+            plugin.broken = true;
+            s.trans = null;
+            if (s.transition === plugin.id) { setTransition('burn'); persistSettings(); }
+          }
           break;
         }
       }
@@ -1411,7 +1536,6 @@ window.orbitViz = (function () {
     // and it persists like any other change. control() takes 0..1 (a
     // knob's 0..127 divided by 127) and maps it onto the parameter's
     // own range; trigger() fires a discrete action.
-    const TRANSITIONS = ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'];
     const CONTROL_RANGES = {
       speed: [0.2, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
       asciiBrightness: [0.3, 3], asciiStride: [1, 4], asciiBgAlpha: [0, 1],
@@ -1463,16 +1587,16 @@ window.orbitViz = (function () {
       } else if (action === 'flash') {
         snapshotForTransition();                       // re-fire the transition on whatever's showing: a hit
       } else if (action === 'next' || action === 'prev') {
-        const idx = VIZ_MODES.indexOf(s.vizMode);
-        setVizMode(VIZ_MODES[(idx + (action === 'next' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
+        const modes = allModes(), idx = modes.indexOf(s.vizMode);
+        setVizMode(modes[(idx + (action === 'next' ? 1 : -1) + modes.length) % modes.length]);
       } else if (action === 'transition:next' || action === 'transition:prev') {
-        const order = TRANSITIONS;
+        const order = allTransitions();
         const step = action === 'transition:next' ? 1 : -1;
         setTransition(order[(order.indexOf(s.transition) + step + order.length) % order.length]);
         persistSettings();
       } else if (action.startsWith('transition:set:')) {
         const name = action.slice('transition:set:'.length);
-        if (TRANSITIONS.includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
+        if (allTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav();
       } else if (action.startsWith('ascii:ramp:')) {
@@ -1548,8 +1672,8 @@ window.orbitViz = (function () {
       if (e.code === 'KeyF') toggleVizFullscreen();
       if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
         e.preventDefault();
-        const idx = VIZ_MODES.indexOf(s.vizMode);
-        setVizMode(VIZ_MODES[(idx + (e.code === 'ArrowRight' ? 1 : -1) + VIZ_MODES.length) % VIZ_MODES.length]);
+        const modes = allModes(), idx = modes.indexOf(s.vizMode);
+        setVizMode(modes[(idx + (e.code === 'ArrowRight' ? 1 : -1) + modes.length) % modes.length]);
       }
       // Shift+1 through Shift+7 jump straight to a mode, in the same
       // left-to-right order the mode buttons themselves render in --
@@ -1679,14 +1803,18 @@ window.orbitViz = (function () {
     control: (param, v01) => { if (state) state.control(param, v01); },
     controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),
     trigger: (action) => { if (state) state.trigger(action); },
-    modes: () => VIZ_MODES.slice(),
-    transitions: () => ['burn', 'warp', 'glitch', 'pixelate', 'crossfade', 'wipe', 'none'],
+    modes: allModes,
+    transitions: allTransitions,
     asciiRamps: () => (state ? state.asciiRamps() : []),
     current: () => (state ? state.current() : null),
-    // the plugin API -- see the pluginModes/registerMode comment near
-    // the top of this file for the full contract
+    // the plugin API -- see the pluginModes/registerMode and
+    // pluginTransitions/registerTransition comments near the top of
+    // this file for the full contracts
     registerMode,
     unregisterMode,
     listModes,
+    registerTransition,
+    unregisterTransition,
+    listTransitions,
   };
 })();
