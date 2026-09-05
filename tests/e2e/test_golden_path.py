@@ -454,6 +454,11 @@ def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_
         page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
     page.wait_for_selector('#party-view')
     vm = _vm(page)
+    # Ryan: "remove the header in party mode": no site header, and no
+    # placeholder "party" heading either -- the page starts at the picture
+    assert page.locator('header').count() == 0
+    assert page.locator('#party-view h2').count() == 0
+    assert page.locator('#tabs').count() == 0
     # no stream is running in this fixture: flip the flag the way a
     # refresh would once one starts, so the block renders
     page.evaluate("vm => { vm.party.stream.active = true; vm.party.stream.url = '/api/orbit-view'; vm.party.stream.since = 1; }", vm)

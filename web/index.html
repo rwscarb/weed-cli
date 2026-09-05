@@ -11,7 +11,9 @@
 </head>
 <body>
 <div id="app">
-<header>
+<!-- guests (party mode) get no site header at all: the party page
+     starts straight at the live picture -->
+<header v-if="!partyMode">
   <h1>weed</h1>
   <p class="tagline">censorship-resistant video PoC — local control UI</p>
   <div class="identity" v-if="!partyMode">
@@ -26,7 +28,8 @@
      unlock prompt are all a guest ever gets; the nav/main below don't
      render for them at all -->
 <section id="party-view" v-if="partyMode">
-  <h2>{{ party.title || 'party' }}</h2>
+  <!-- only a title the admin actually set; no placeholder heading -->
+  <h2 v-if="party.title">{{ party.title }}</h2>
   <div class="party-now" v-if="party.now_playing">
     now playing: <strong>{{ party.now_playing.title || shortHash(party.now_playing.content_hash) }}</strong>
   </div>
