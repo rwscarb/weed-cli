@@ -921,15 +921,17 @@
   (function () {
     const frame = offscreen();
     let win = null, dialogs = [], avg = 0, cooldown = 0, seconds = 0, lastNow = 0;
+    let avgBass = 0, smearUntil = 0, lastRepaint = 0, frameNo = 0;
     viz.registerMode({
       id: 'win95', label: 'Win95',
-      init() { win = null; dialogs = []; avg = 0; cooldown = 0; seconds = 0; lastNow = 0; },
+      init() { win = null; dialogs = []; avg = 0; cooldown = 0; seconds = 0; lastNow = 0; avgBass = 0; smearUntil = 0; lastRepaint = 0; frameNo = 0; },
       draw(ctx) {
         const { vctx, VW, VH, freqData, videoFrame, speed, vizUserScale } = ctx;
         const fs = Math.max(10, Math.round(VH / 40));
         const now = performance.now(); if (lastNow) seconds += (now - lastNow) / 1000; lastNow = now;
         const energy = energyOf(freqData), bass = bassOf(freqData);
         avg = avg * 0.95 + energy * 0.05; cooldown = Math.max(0, cooldown - 1);
+        avgBass = avgBass * 0.9 + bass * 0.1; frameNo++;
         const ww = Math.round(Math.min(VW * 0.9, VW * 0.42 * vizUserScale));
         const wh = 3 + fs * 3 + 2 + Math.round((ww - 8) * 0.5625) + fs * 5.1 + 3;
         const barH = fs * 2.2;
@@ -937,8 +939,16 @@
         win.x += win.vx * speed * (1 + energy * 2); win.y += win.vy * speed * (1 + energy * 2);
         if (win.x < 0 || win.x + ww > VW) { win.vx *= -1; win.x = Math.max(0, Math.min(VW - ww, win.x)); }
         if (win.y < 0 || win.y + wh > VH - barH) { win.vy *= -1; win.y = Math.max(0, Math.min(VH - barH - wh, win.y)); }
-        // the desktop only repaints when the machine is keeping up
-        if (bass < 0.45) vctx.drawImage(desktop(VW, VH, fs), 0, 0);
+        // The desktop stops repainting for a moment on a kick -- a bass
+        // *transient*, judged against its own running average, not an
+        // absolute level (real music sits above any fixed bass threshold
+        // most of the time, which left the desktop never repainting and
+        // the whole picture buried under smeared window frames). Each
+        // hit buys ~12 frames of smear; never more than 40 frames go by
+        // without a full repaint, whatever the music does.
+        if (bass > avgBass * 1.35 + 0.06 && frameNo > smearUntil) smearUntil = frameNo + 12;
+        const smearing = frameNo < smearUntil && frameNo - lastRepaint < 40;
+        if (!smearing) { vctx.drawImage(desktop(VW, VH, fs), 0, 0); lastRepaint = frameNo; }
         let fc = null;
         if (videoFrame) { const f = frame(videoFrame.w, videoFrame.h); f.ctx.putImageData(videoFrame.imageData, 0, 0); fc = f.c; }
         mediaPlayer(vctx, Math.round(win.x), Math.round(win.y), ww, fs, fc, seconds);
