@@ -494,19 +494,6 @@
     vctx.fillText(`SP ${pad(Math.floor(s / 3600))}:${pad(Math.floor(s / 60) % 60)}:${pad(s % 60)}`, fs, H - fs * 2);
     vctx.restore();
   }
-  // horizontal slices of a picture pushed sideways by noise, worst in a
-  // tracking band that rolls down the screen; the band also washes out
-  function drawTracking(vctx, src, sw, sh, W, H, amp, bandY, bandH, frame, seed) {
-    const n = 72, dh = H / n, ssh = sh / n;
-    for (let i = 0; i < n; i++) {
-      const y = i * dh;
-      const inBand = Math.max(0, 1 - Math.abs(y - bandY) / bandH);
-      const r = hash(i * 7.3 + frame * 1.7 + seed);
-      const dx = (r - 0.5) * amp * (0.15 + 2.5 * inBand * inBand);
-      vctx.drawImage(src, 0, i * ssh, sw, ssh, dx, y, W, dh);
-      if (inBand > 0.3) { vctx.fillStyle = `rgba(230,230,230,${(0.35 * inBand).toFixed(2)})`; vctx.fillRect(0, y, W, dh); }
-    }
-  }
   const scanlines = (() => {
     let pat = null;
     return (vctx) => {
@@ -514,19 +501,76 @@
       return pat;
     };
   })();
+  // Tracking bands. A band is a horizontal strip of the picture that has
+  // come loose: pushed sideways as a whole (off), sheared top-to-bottom
+  // by an amount that swings over time (shear × sin(phase) -- the
+  // perspective wobble as it moves), vertically stretched (the strip
+  // shows a compressed slice of the source), washed out, and edged with
+  // a line of pure noise. Thin ones and thick ones, per the reference.
+  function makeBand(W, H, rnd) {
+    const thick = rnd() < 0.4;
+    return {
+      y: rnd() * H, h: H * (thick ? 0.10 + rnd() * 0.18 : 0.012 + rnd() * 0.04),
+      vy: H * (0.002 + rnd() * 0.006) * (rnd() < 0.8 ? 1 : -1),
+      off: (rnd() - 0.5) * W * 0.45, shear: (rnd() - 0.5) * W * 0.5, phase: rnd() * 6.28, dphase: 0.05 + rnd() * 0.15,
+      stretch: 1.2 + rnd() * 1.8, ttl: 40 + rnd() * 220,
+    };
+  }
+  const chromaA = offscreen(), chromaB = offscreen();
+  // magenta and green copies of a picture, for the colour fringing
+  function chromaCopies(src, sw, sh) {
+    const out = [];
+    for (const [holder, color] of [[chromaA, '#f0f'], [chromaB, '#0f0']]) {
+      const { c, ctx } = holder(sw, sh);
+      ctx.globalCompositeOperation = 'source-over'; ctx.clearRect(0, 0, sw, sh); ctx.drawImage(src, 0, 0, sw, sh);
+      ctx.globalCompositeOperation = 'multiply'; ctx.fillStyle = color; ctx.fillRect(0, 0, sw, sh);
+      out.push(c);
+    }
+    return out;
+  }
+  function drawTracking(vctx, src, sw, sh, W, H, bands, jitter, frameNo, seed) {
+    const n = 96, dh = H / n, ssh = sh / n;
+    const [mag, grn] = chromaCopies(src, sw, sh);
+    const { c: snow } = staticCanvas(160, 90);
+    for (let i = 0; i < n; i++) {
+      const y = i * dh;
+      let band = null;
+      for (const b of bands) if (y >= b.y && y < b.y + b.h) { band = b; break; }
+      const j = (hash(i * 7.3 + frameNo * 1.7 + seed) - 0.5) * jitter;
+      if (!band) { vctx.drawImage(src, 0, i * ssh, sw, ssh, j, y, W, dh); continue; }
+      const u = (y - band.y) / band.h;                                 // 0 top .. 1 bottom of the band
+      const edge = u < 0.08 || u > 0.92;
+      if (edge) {                                                       // the loose strip's torn edges: noise
+        vctx.drawImage(snow, 0, (i * 3) % 88, 160, 2, 0, y, W, dh);
+        continue;
+      }
+      const dx = band.off + band.shear * (u - 0.5) * 2 * Math.sin(band.phase) + j * 4;
+      // vertical stretch: this strip shows a compressed run of the source
+      const sy = band.y + band.h * (0.5 + (u - 0.5) / band.stretch);
+      const srcY = Math.max(0, Math.min(sh - ssh, sy / H * sh));
+      vctx.drawImage(src, 0, srcY, sw, ssh, dx, y, W, dh);
+      vctx.save();
+      vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.55;
+      const fr = W * 0.02 + Math.abs(band.shear) * 0.15;
+      vctx.drawImage(mag, 0, srcY, sw, ssh, dx + fr, y, W, dh);
+      vctx.drawImage(grn, 0, srcY, sw, ssh, dx - fr, y, W, dh);
+      vctx.restore();
+      vctx.fillStyle = `rgba(255,255,255,${(0.12 + 0.18 * (1 - Math.abs(u - 0.5) * 2)).toFixed(2)})`; vctx.fillRect(0, y, W, dh);
+    }
+  }
 
-  // VHS mode: the video through a worn tape -- chroma smear, scanlines,
-  // a tracking band that rolls through, static that thickens with the
-  // music, and now and then the deck loses the picture to blue.
+  // VHS mode: the video through a worn tape -- loose tracking bands,
+  // colour fringing, scanlines, static that thickens with the music,
+  // and now and then the deck loses the picture to blue.
   (function () {
-    const frame = offscreen(), chroma = offscreen();
-    let seconds = 0, lastNow = 0, blueUntil = 0, avg = 0;
+    const frame = offscreen();
+    let seconds = 0, lastNow = 0, blueUntil = 0, avg = 0, bands = [], frameNo = 0;
     viz.registerMode({
       id: 'vhs', label: 'VHS',
-      init() { seconds = 0; lastNow = 0; blueUntil = 0; avg = 0; },
+      init() { seconds = 0; lastNow = 0; blueUntil = 0; avg = 0; bands = []; frameNo = 0; },
       draw(ctx) {
         const { vctx, VW, VH, freqData, videoFrame, speed, vizRot } = ctx;
-        const now = performance.now();
+        const now = performance.now(); frameNo++;
         if (lastNow) seconds += (now - lastNow) / 1000; lastNow = now;
         const energy = energyOf(freqData), bass = bassOf(freqData);
         avg = avg * 0.95 + energy * 0.05;
@@ -539,47 +583,53 @@
           vhsOsd(vctx, VW, VH, videoFrame ? '▶ PLAY' : '■ STOP', seconds, !videoFrame);
           return;
         }
+        // bands come and go; the music decides how many are loose at once
+        const want = 1 + Math.round(energy * 4 + bass * 2);
+        if (bands.length < Math.min(6, want) && Math.random() < 0.08) bands.push(makeBand(VW, VH, Math.random));
+        for (const b of bands) { b.y += b.vy * speed; b.phase += b.dphase * speed; b.ttl -= 1; }
+        bands = bands.filter(b => b.ttl > 0 && b.y + b.h > -VH * 0.1 && b.y < VH * 1.1);
         const { w, h, imageData } = videoFrame;
         const { c: fc, ctx: fctx } = frame(w, h);
         fctx.putImageData(imageData, 0, 0);
-        // colour bleeding sideways: a red-tinted copy pushed right, a
-        // blue-tinted one left, added over the picture
-        const { c: cc, ctx: cctx } = chroma(w, h);
-        const bleed = Math.max(2, VW * 0.006 * (1 + energy));
         const wobble = Math.sin(vizRot * 6) * VH * 0.004 * (1 + energy * 3);
-        const frameNo = Math.floor(now / 40);
-        const bandY = ((now / (9000 / speed)) % 1.3) * VH * 1.3 - VH * 0.15;
         vctx.save();
         vctx.translate(0, wobble);
-        drawTracking(vctx, fc, w, h, VW, VH, VW * 0.03 * (1 + energy * 3), bandY, VH * 0.06, frameNo, 0);
-        vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.35;
-        for (const [color, dx] of [['#f00', bleed], ['#00f', -bleed]]) {
-          cctx.globalCompositeOperation = 'source-over'; cctx.drawImage(fc, 0, 0);
-          cctx.globalCompositeOperation = 'multiply'; cctx.fillStyle = color; cctx.fillRect(0, 0, w, h);
-          vctx.drawImage(cc, dx, 0, VW, VH);
-        }
+        drawTracking(vctx, fc, w, h, VW, VH, bands, VW * 0.01 * (1 + energy * 3), frameNo, 0);
+        // a little colour bleed everywhere, not just in the bands
+        const [mag, grn] = chromaCopies(fc, w, h);
+        const bleed = Math.max(2, VW * 0.005 * (1 + energy));
+        vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.22;
+        vctx.drawImage(mag, bleed, 0, VW, VH); vctx.drawImage(grn, -bleed, 0, VW, VH);
         vctx.restore();
-        // the band itself carries a stripe of pure static
-        drawStatic(vctx, VW, VH, 0.06 + 0.25 * energy);
-        vctx.save(); vctx.beginPath(); vctx.rect(0, bandY - VH * 0.02, VW, VH * 0.035); vctx.clip(); drawStatic(vctx, VW, VH, 0.8); vctx.restore();
+        drawStatic(vctx, VW, VH, 0.05 + 0.25 * energy);
         vctx.fillStyle = scanlines(vctx); vctx.fillRect(0, 0, VW, VH);
         vhsOsd(vctx, VW, VH, '▶ PLAY', seconds, false);
       },
     });
   })();
 
-  // VHS transition: the outgoing picture loses tracking and drowns in
-  // static, the deck drops to blue with STOP, then PLAY comes back up
-  // on the new picture through a last wash of snow.
+  // VHS transition: the outgoing picture comes apart in tracking bands
+  // and drowns in static, the deck drops to blue with STOP, then PLAY
+  // comes back up on the new picture through a last wash of snow.
   viz.registerTransition({
     id: 'vhs', label: 'VHS',
     draw({ vctx, old, oldW, oldH, W, H, t, seed }) {
       const frameNo = Math.floor(t * 40);
       if (t < 0.6) {
         const k = t / 0.6;
-        const bandY = H * (0.1 + 0.9 * k);
-        drawTracking(vctx, old, oldW, oldH, W, H, W * 0.5 * k * k + W * 0.02, bandY, H * (0.08 + 0.2 * k), frameNo, seed);
-        drawStatic(vctx, W, H, 0.1 + 0.6 * k * k);
+        // bands fixed by the seed, rolling down and fattening as it goes
+        const bands = [];
+        for (let i = 0; i < 5; i++) {
+          const r = (m) => hash(seed + i * 13.7 + m);
+          const thick = i % 2 === 0;
+          bands.push({
+            y: ((r(1) + k * 1.4) % 1.3 - 0.15) * H, h: H * (thick ? 0.08 + 0.22 * k : 0.015 + 0.05 * k),
+            off: (r(2) - 0.5) * W * (0.2 + 0.7 * k), shear: (r(3) - 0.5) * W * (0.3 + 0.6 * k), phase: r(4) * 6.28 + t * 18,
+            stretch: 1.2 + r(5) * 2,
+          });
+        }
+        drawTracking(vctx, old, oldW, oldH, W, H, bands, W * 0.03 * k, frameNo, seed);
+        drawStatic(vctx, W, H, 0.08 + 0.6 * k * k);
         vctx.fillStyle = scanlines(vctx); vctx.fillRect(0, 0, W, H);
       } else if (t < 0.82) {
         vctx.fillStyle = VHS_BLUE; vctx.fillRect(0, 0, W, H);
@@ -594,119 +644,247 @@
   });
 
   // ══════════════════════════════════════════════════════════════════
-  //  Win95 -- teal desktop, a media player window, and the trails a
-  //  hung window leaves when you drag it
+  //  Win95 -- a lived-in desktop, Windows Media Player, and the trails
+  //  a hung window leaves when you drag it
   // ══════════════════════════════════════════════════════════════════
-  const W95 = { desk: '#008080', face: '#c0c0c0', light: '#ffffff', shade: '#808080', dark: '#000000', title1: '#000080', title2: '#1084d0', bsod: '#0000aa' };
+  const W95 = { face: '#c0c0c0', light: '#ffffff', shade: '#808080', dark: '#000000', title1: '#000080', title2: '#1084d0', bsod: '#0000aa' };
   // a raised 3D box, the one shape every Win95 control is made of
-  function bevel(ctx, x, y, w, h) {
+  function bevel(ctx, x, y, w, h, sunken) {
     ctx.fillStyle = W95.face; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = W95.light; ctx.fillRect(x, y, w - 1, 1); ctx.fillRect(x, y, 1, h - 1);
-    ctx.fillStyle = W95.shade; ctx.fillRect(x + 1, y + h - 2, w - 2, 1); ctx.fillRect(x + w - 2, y + 1, 1, h - 2);
-    ctx.fillStyle = W95.dark; ctx.fillRect(x, y + h - 1, w, 1); ctx.fillRect(x + w - 1, y, 1, h);
+    ctx.fillStyle = sunken ? W95.shade : W95.light; ctx.fillRect(x, y, w - 1, 1); ctx.fillRect(x, y, 1, h - 1);
+    ctx.fillStyle = sunken ? W95.light : W95.shade; ctx.fillRect(x + 1, y + h - 2, w - 2, 1); ctx.fillRect(x + w - 2, y + 1, 1, h - 2);
+    if (!sunken) { ctx.fillStyle = W95.dark; ctx.fillRect(x, y + h - 1, w, 1); ctx.fillRect(x + w - 1, y, 1, h); }
   }
-  function titleBar(ctx, x, y, w, h, text, fs) {
-    const g = ctx.createLinearGradient(x, 0, x + w, 0); g.addColorStop(0, W95.title1); g.addColorStop(1, W95.title2);
+  function titleBar(ctx, x, y, w, h, text, fs, inactive) {
+    const g = ctx.createLinearGradient(x, 0, x + w, 0);
+    g.addColorStop(0, inactive ? '#808080' : W95.title1); g.addColorStop(1, inactive ? '#b5b5b5' : W95.title2);
     ctx.fillStyle = g; ctx.fillRect(x, y, w, h);
-    ctx.fillStyle = '#fff'; ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.fillText(text, x + fs * 0.5, y + h / 2);
-    // _ □ ×
+    ctx.fillStyle = inactive ? '#d4d4d4' : '#fff'; ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    ctx.fillText(text, x + fs * 0.5, y + h / 2);
     const b = h - 4; let bx = x + w - 2 - b;
     for (const glyph of ['×', '□', '_']) {
       bevel(ctx, bx, y + 2, b, b);
-      ctx.fillStyle = '#000'; ctx.font = `bold ${fs * 0.9}px sans-serif`; ctx.textAlign = 'center'; ctx.fillText(glyph, bx + b / 2, y + 2 + b / 2 - (glyph === '_' ? b * 0.15 : 0));
+      ctx.fillStyle = '#000'; ctx.font = `bold ${fs * 0.9}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(glyph, bx + b / 2, y + 2 + b / 2 - (glyph === '_' ? b * 0.15 : 0));
       ctx.textAlign = 'left';
       bx -= b + (glyph === '×' ? 2 : 0);
     }
   }
-  function startBar(ctx, W, H, fs) {
+  function menuBar(ctx, x, y, w, fs, items) {
+    ctx.fillStyle = W95.face; ctx.fillRect(x, y, w, fs * 1.5);
+    ctx.fillStyle = '#000'; ctx.font = `${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left';
+    let mx = x + fs * 0.6;
+    for (const it of items) { ctx.fillText(it, mx, y + fs * 0.75); mx += ctx.measureText(it).width + fs * 1.1; }
+    return y + fs * 1.5;
+  }
+  // a whole window: frame, title, optional menu; returns the client rect
+  function win95Window(ctx, x, y, w, h, title, fs, menu, inactive) {
+    bevel(ctx, x, y, w, h);
+    titleBar(ctx, x + 3, y + 3, w - 6, fs * 1.5, title, fs, inactive);
+    let cy = y + 3 + fs * 1.5;
+    if (menu) cy = menuBar(ctx, x + 3, cy, w - 6, fs, menu);
+    return { x: x + 3, y: cy, w: w - 6, h: y + h - 3 - cy };
+  }
+  // small desktop icons drawn from primitives -- no image assets
+  function drawIcon(ctx, kind, x, y, s) {
+    switch (kind) {
+      case 'folder':
+        ctx.fillStyle = '#e8c53a'; ctx.fillRect(x, y + s * 0.2, s, s * 0.7); ctx.fillRect(x, y + s * 0.08, s * 0.45, s * 0.15);
+        ctx.fillStyle = '#fff3a0'; ctx.fillRect(x + s * 0.05, y + s * 0.3, s * 0.9, s * 0.05); break;
+      case 'doc':
+        ctx.fillStyle = '#fff'; ctx.fillRect(x + s * 0.15, y, s * 0.7, s);
+        ctx.fillStyle = '#888'; ctx.fillRect(x + s * 0.15, y, s * 0.7, 1); ctx.fillRect(x + s * 0.15, y, 1, s); ctx.fillRect(x + s * 0.84, y, 1, s); ctx.fillRect(x + s * 0.15, y + s - 1, s * 0.7, 1);
+        ctx.fillStyle = '#446'; for (let i = 0; i < 4; i++) ctx.fillRect(x + s * 0.25, y + s * (0.25 + i * 0.16), s * 0.5, s * 0.05); break;
+      case 'exe':
+        bevel(ctx, x, y + s * 0.1, s, s * 0.8); ctx.fillStyle = W95.title1; ctx.fillRect(x + 2, y + s * 0.1 + 2, s - 4, s * 0.18); break;
+      case 'computer':
+        ctx.fillStyle = '#d9d0b8'; ctx.fillRect(x, y, s, s * 0.75); ctx.fillStyle = '#000'; ctx.fillRect(x + s * 0.12, y + s * 0.1, s * 0.76, s * 0.5);
+        ctx.fillStyle = '#4a8'; ctx.fillRect(x + s * 0.18, y + s * 0.16, s * 0.64, s * 0.38); ctx.fillStyle = '#d9d0b8'; ctx.fillRect(x + s * 0.3, y + s * 0.78, s * 0.4, s * 0.2); break;
+      case 'bin':
+        ctx.fillStyle = '#9fb7c8'; ctx.beginPath(); ctx.moveTo(x + s * 0.15, y + s * 0.2); ctx.lineTo(x + s * 0.85, y + s * 0.2); ctx.lineTo(x + s * 0.75, y + s); ctx.lineTo(x + s * 0.25, y + s); ctx.closePath(); ctx.fill();
+        ctx.fillStyle = '#6f8fa3'; ctx.fillRect(x + s * 0.1, y + s * 0.12, s * 0.8, s * 0.1); ctx.fillStyle = '#fff'; ctx.fillRect(x + s * 0.4, y + s * 0.35, s * 0.2, s * 0.35); break;
+      case 'ie':
+        ctx.fillStyle = '#2a6fd6'; ctx.beginPath(); ctx.arc(x + s / 2, y + s / 2, s * 0.45, 0, Math.PI * 2); ctx.fill();
+        ctx.fillStyle = '#fff'; ctx.font = `bold ${s * 0.7}px serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('e', x + s / 2, y + s * 0.55); ctx.textAlign = 'left'; break;
+      case 'network':
+        ctx.fillStyle = '#d9d0b8'; ctx.fillRect(x, y + s * 0.3, s * 0.45, s * 0.4); ctx.fillRect(x + s * 0.55, y, s * 0.45, s * 0.4);
+        ctx.fillStyle = '#000'; ctx.fillRect(x + s * 0.05, y + s * 0.35, s * 0.35, s * 0.25); ctx.fillRect(x + s * 0.6, y + s * 0.05, s * 0.35, s * 0.25);
+        ctx.strokeStyle = '#000'; ctx.beginPath(); ctx.moveTo(x + s * 0.22, y + s * 0.75); ctx.lineTo(x + s * 0.22, y + s * 0.9); ctx.lineTo(x + s * 0.78, y + s * 0.9); ctx.lineTo(x + s * 0.78, y + s * 0.45); ctx.stroke(); break;
+    }
+  }
+  const DESKTOP_ICONS = [
+    ['My Computer', 'computer'], ['Network Neighborhood', 'network'], ['Recycle Bin', 'bin'], ['My Documents', 'folder'],
+    ['The Internet', 'ie'], ['New Folder (2)', 'folder'], ['resume_final_v3.doc', 'doc'], ['party mix.m3u', 'doc'],
+    ['DOOM', 'exe'], ['setup.exe', 'exe'], ['untitled.txt', 'doc'], ['taxes 1996', 'folder'], ['weed.txt', 'doc'], ['WINZIP', 'exe'],
+  ];
+  // the whole static backdrop -- wallpaper, icons, the other windows
+  // someone left open -- painted once per canvas size and reused
+  const desktopCache = offscreen(); let desktopKey = '';
+  function desktop(W, H, fs) {
+    const key = W + 'x' + H + ':' + fs;
+    const { c, ctx } = desktopCache(W, H);
+    if (desktopKey === key) return c;
+    desktopKey = key;
+    // Clouds.bmp, more or less: blue sky, soft white blobs
+    const sky = ctx.createLinearGradient(0, 0, 0, H); sky.addColorStop(0, '#2f6fc9'); sky.addColorStop(1, '#8fc1ef');
+    ctx.fillStyle = sky; ctx.fillRect(0, 0, W, H);
+    const small = document.createElement('canvas'); small.width = 64; small.height = 36; const sc = small.getContext('2d');
+    for (let i = 0; i < 40; i++) {
+      const r = 3 + hash(i * 3.1) * 9;
+      sc.fillStyle = `rgba(255,255,255,${(0.35 + hash(i * 5.3) * 0.5).toFixed(2)})`;
+      sc.beginPath(); sc.ellipse(hash(i * 1.7) * 64, hash(i * 2.9) * 36, r * 1.6, r, 0, 0, Math.PI * 2); sc.fill();
+    }
+    ctx.save(); ctx.filter = `blur(${Math.max(4, W / 90)}px)`; ctx.globalAlpha = 0.85; ctx.drawImage(small, 0, 0, W, H); ctx.restore();
+    // the windows left open underneath, oldest first
+    const nb = win95Window(ctx, W * 0.42, H * 0.06, W * 0.5, H * 0.5, 'untitled - Notepad', fs, ['File', 'Edit', 'Search', 'Help'], true);
+    ctx.fillStyle = '#fff'; ctx.fillRect(nb.x, nb.y, nb.w, nb.h);
+    ctx.fillStyle = '#000'; ctx.font = `${fs}px monospace`; ctx.textBaseline = 'top';
+    ['party tonight -- do NOT let dave touch the playlist', '', 'todo:', '  - defrag', '  - burn the mix to a cd-r for the car',
+     '  - fix the tracking on the vcr (again)', '  - return doom to jeremy', '', 'dear diary: the bass hit and explorer.exe', 'crashed. twice. i regret nothing.'].forEach((l, i) => ctx.fillText(l, nb.x + fs * 0.4, nb.y + fs * 0.3 + i * fs * 1.3));
+    const ex = win95Window(ctx, W * 0.04, H * 0.34, W * 0.42, H * 0.44, 'Exploring - C:\\WINDOWS\\Desktop', fs, ['File', 'Edit', 'View', 'Tools', 'Help'], true);
+    bevel(ctx, ex.x, ex.y, ex.w, fs * 1.8); ctx.fillStyle = '#000'; ctx.font = `${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.fillText('Address  C:\\WINDOWS\\Desktop', ex.x + fs * 0.5, ex.y + fs * 0.9);
+    ctx.fillStyle = '#fff'; ctx.fillRect(ex.x, ex.y + fs * 1.8, ex.w, ex.h - fs * 1.8);
+    ctx.fillStyle = '#000'; ctx.font = `${fs * 0.9}px sans-serif`;
+    DESKTOP_ICONS.slice(5).forEach(([name, kind], i) => { const yy = ex.y + fs * 2.2 + i * fs * 1.35; drawIcon(ctx, kind, ex.x + fs * 0.4, yy, fs * 0.9); ctx.fillText(name, ex.x + fs * 1.7, yy + fs * 0.45); });
+    const dos = win95Window(ctx, W * 0.5, H * 0.5, W * 0.46, H * 0.34, 'MS-DOS Prompt', fs, null, true);
+    ctx.fillStyle = '#000'; ctx.fillRect(dos.x, dos.y, dos.w, dos.h);
+    ctx.fillStyle = '#c0c0c0'; ctx.font = `${fs}px monospace`; ctx.textBaseline = 'top';
+    ['Microsoft(R) Windows 95', '   (C)Copyright Microsoft Corp 1981-1996.', '', 'C:\\WINDOWS>cd ..', 'C:\\>dir /w *.avi', ' WEED.AVI      PARTY~1.AVI   TRACKING.AVI',
+     '         3 file(s)    412,208,344 bytes', 'C:\\>weed.avi', 'Bad command or file name', 'C:\\>_'].forEach((l, i) => ctx.fillText(l, dos.x + fs * 0.3, dos.y + fs * 0.2 + i * fs * 1.25));
+    // desktop icons down the left, two columns
+    const s = fs * 2.2, colW = fs * 9.5;
+    DESKTOP_ICONS.forEach(([name, kind], i) => {
+      const col = Math.floor(i / 7), row = i % 7;
+      const ix = fs * 1.4 + col * colW, iy = fs * 1 + row * (H - fs * 4) / 7;
+      drawIcon(ctx, kind, ix, iy, s);
+      // the font is set per label: an icon (the 'e') changes it
+      ctx.font = `${fs * 0.85}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      let label = name;
+      while (label.length > 3 && ctx.measureText(label).width > colW - fs * 0.8) label = label.slice(0, -2).replace(/…$/, '') + '…';
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(label, ix + s / 2 + 1, iy + s + fs * 0.35 + 1);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, ix + s / 2, iy + s + fs * 0.35);
+    });
+    ctx.textAlign = 'left';
+    return c;
+  }
+  function startBar(ctx, W, H, fs, tasks) {
     const bh = fs * 2.2, y = H - bh;
     bevel(ctx, -2, y, W + 4, bh + 2);
     const sw = fs * 4.2, sx = 2, sy = y + 3, sh = bh - 6;
     bevel(ctx, sx, sy, sw, sh);
-    // the flag: four coloured panes
     const px = sx + fs * 0.4, py = sy + sh / 2 - fs * 0.45, ps = fs * 0.42;
     for (const [i, col] of ['#f00', '#0a0', '#00f', '#ff0'].entries()) ctx.fillStyle = col, ctx.fillRect(px + (i % 2) * (ps + 1), py + Math.floor(i / 2) * (ps + 1), ps, ps);
-    ctx.fillStyle = '#000'; ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.fillText('Start', px + ps * 2 + fs * 0.4, sy + sh / 2);
-    // the clock well
+    ctx.fillStyle = '#000'; ctx.font = `bold ${fs}px sans-serif`; ctx.textBaseline = 'middle'; ctx.textAlign = 'left'; ctx.fillText('Start', px + ps * 2 + fs * 0.4, sy + sh / 2);
+    // the clock well, with a speaker beside it
     const d = new Date(); let hr = d.getHours(); const ampm = hr >= 12 ? 'PM' : 'AM'; hr = hr % 12 || 12;
     const clock = `${hr}:${String(d.getMinutes()).padStart(2, '0')} ${ampm}`;
     ctx.font = `${fs * 0.9}px sans-serif`;
-    const cw = ctx.measureText(clock).width + fs;
-    ctx.fillStyle = W95.shade; ctx.fillRect(W - cw - 4, sy, cw, sh);
-    ctx.fillStyle = W95.light; ctx.fillRect(W - cw - 3, sy + 1, cw - 1, sh - 1);
-    ctx.fillStyle = W95.face; ctx.fillRect(W - cw - 3, sy + 1, cw - 2, sh - 2);
-    ctx.fillStyle = '#000'; ctx.textAlign = 'center'; ctx.fillText(clock, W - cw / 2 - 4, sy + sh / 2); ctx.textAlign = 'left';
+    const cw = ctx.measureText(clock).width + fs * 2.4;
+    bevel(ctx, W - cw - 4, sy, cw, sh, true);
+    ctx.fillStyle = '#000'; ctx.textAlign = 'right'; ctx.fillText(clock, W - fs * 0.6, sy + sh / 2); ctx.textAlign = 'left';
+    ctx.fillStyle = '#555'; ctx.fillRect(W - cw + fs * 0.3, sy + sh / 2 - fs * 0.2, fs * 0.3, fs * 0.4);
+    ctx.beginPath(); ctx.moveTo(W - cw + fs * 0.6, sy + sh / 2 - fs * 0.2); ctx.lineTo(W - cw + fs * 0.95, sy + sh / 2 - fs * 0.5); ctx.lineTo(W - cw + fs * 0.95, sy + sh / 2 + fs * 0.5); ctx.lineTo(W - cw + fs * 0.6, sy + sh / 2 + fs * 0.2); ctx.closePath(); ctx.fill();
+    // one task button per open window, the active one pressed in
+    const avail = W - cw - 8 - (sx + sw + 6), tw = Math.min(fs * 11, avail / tasks.length - 3);
+    ctx.font = `${fs * 0.9}px sans-serif`;
+    tasks.forEach(([label, active], i) => {
+      const tx = sx + sw + 6 + i * (tw + 3);
+      bevel(ctx, tx, sy, tw, sh, active);
+      if (active) { ctx.fillStyle = '#dcdcdc'; ctx.fillRect(tx + 2, sy + 2, tw - 4, sh - 4); }
+      ctx.fillStyle = '#000'; ctx.font = `${active ? 'bold ' : ''}${fs * 0.9}px sans-serif`;
+      ctx.save(); ctx.beginPath(); ctx.rect(tx + 2, sy, tw - 6, sh); ctx.clip(); ctx.fillText(label, tx + fs * 0.5, sy + sh / 2); ctx.restore();
+    });
   }
   function errorDialog(ctx, x, y, w, fs, title, lines) {
     const th = fs * 1.5, lh = fs * 1.35, h = th + 8 + lines.length * lh + fs * 3;
     bevel(ctx, x, y, w, h);
     titleBar(ctx, x + 3, y + 3, w - 6, th, title, fs);
-    // the red-circle X icon
     ctx.fillStyle = '#c00'; ctx.beginPath(); ctx.arc(x + fs * 1.6, y + th + fs * 1.6, fs * 0.9, 0, Math.PI * 2); ctx.fill();
     ctx.strokeStyle = '#fff'; ctx.lineWidth = fs * 0.18; ctx.beginPath();
     ctx.moveTo(x + fs * 1.15, y + th + fs * 1.15); ctx.lineTo(x + fs * 2.05, y + th + fs * 2.05); ctx.moveTo(x + fs * 2.05, y + th + fs * 1.15); ctx.lineTo(x + fs * 1.15, y + th + fs * 2.05); ctx.stroke();
-    ctx.fillStyle = '#000'; ctx.font = `${fs}px sans-serif`; ctx.textBaseline = 'top';
+    ctx.fillStyle = '#000'; ctx.font = `${fs}px sans-serif`; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
     lines.forEach((l, i) => ctx.fillText(l, x + fs * 3, y + th + 8 + i * lh));
     const bw = fs * 5, bx = x + w / 2 - bw / 2, by = y + h - fs * 2.4;
     bevel(ctx, bx, by, bw, fs * 1.8);
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('OK', bx + bw / 2, by + fs * 0.9); ctx.textAlign = 'left';
     return h;
   }
+  // Windows Media Player, the old one: menu, picture, seek bar,
+  // transport buttons, status line with the clock
+  function mediaPlayer(ctx, x, y, ww, fs, frameCanvas, seconds) {
+    const vw = ww - 8, vh = Math.round(vw * 0.5625);
+    const wh = 3 + fs * 1.5 + fs * 1.5 + 2 + vh + fs * 1.2 + fs * 2.4 + fs * 1.5 + 3;
+    const cl = win95Window(ctx, x, y, ww, wh, 'weed.avi - Windows Media Player', fs, ['File', 'View', 'Play', 'Favorites', 'Go', 'Help']);
+    const vx = cl.x + 1, vy = cl.y + 2;
+    ctx.fillStyle = '#000'; ctx.fillRect(vx, vy, vw, vh);
+    if (frameCanvas) ctx.drawImage(frameCanvas, vx, vy, vw, vh);
+    // seek bar
+    const total = 223, pos = seconds % total, sy = vy + vh + fs * 0.4;
+    bevel(ctx, vx + fs * 0.5, sy, vw - fs, fs * 0.5, true);
+    bevel(ctx, vx + fs * 0.5 + (vw - fs * 1.6) * (pos / total), sy - fs * 0.25, fs * 0.6, fs);
+    // transport row: ▶ ‖ ■ | ⏮ ◀◀ ▶▶ ⏭ | speaker + volume
+    const by = sy + fs * 1.1, bs = fs * 1.7; let bx = vx + fs * 0.5;
+    ctx.fillStyle = '#000'; ctx.font = `${fs * 0.85}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    for (const g of ['▶', '❚❚', '■', '', '⏮', '◀◀', '▶▶', '⏭']) {
+      if (g === '') { ctx.fillStyle = W95.shade; ctx.fillRect(bx + fs * 0.3, by + 2, 1, bs - 4); ctx.fillStyle = W95.light; ctx.fillRect(bx + fs * 0.3 + 1, by + 2, 1, bs - 4); bx += fs * 0.8; continue; }
+      bevel(ctx, bx, by, bs, bs, g === '▶');
+      ctx.fillStyle = '#000'; ctx.fillText(g, bx + bs / 2, by + bs / 2);
+      bx += bs + 2;
+    }
+    const volX = vx + vw - fs * 6.5;
+    ctx.fillStyle = '#000'; ctx.fillRect(volX, by + bs * 0.35, fs * 0.35, bs * 0.3);
+    ctx.beginPath(); ctx.moveTo(volX + fs * 0.35, by + bs * 0.35); ctx.lineTo(volX + fs * 0.8, by + bs * 0.05); ctx.lineTo(volX + fs * 0.8, by + bs * 0.95); ctx.lineTo(volX + fs * 0.35, by + bs * 0.65); ctx.closePath(); ctx.fill();
+    bevel(ctx, volX + fs * 1.2, by + bs / 2 - 2, fs * 4.8, 4, true);
+    bevel(ctx, volX + fs * 1.2 + fs * 3.4, by + bs / 2 - fs * 0.5, fs * 0.6, fs);
+    // status bar
+    const st = by + bs + fs * 0.4;
+    bevel(ctx, cl.x, st, cl.w * 0.55, fs * 1.3, true); bevel(ctx, cl.x + cl.w * 0.55 + 2, st, cl.w * 0.45 - 2, fs * 1.3, true);
+    const pad = (n) => String(n).padStart(2, '0');
+    ctx.fillStyle = '#000'; ctx.font = `${fs * 0.9}px sans-serif`; ctx.textAlign = 'left';
+    ctx.fillText('Playing', cl.x + fs * 0.5, st + fs * 0.65);
+    ctx.textAlign = 'right'; ctx.fillText(`${pad(Math.floor(pos / 60))}:${pad(Math.floor(pos) % 60)} / 03:43`, cl.x + cl.w - fs * 0.5, st + fs * 0.65); ctx.textAlign = 'left';
+    return wh;
+  }
+  const W95_TASKS = [['Exploring - C:\\WINDOWS\\Desktop', false], ['untitled - Notepad', false], ['MS-DOS Prompt', false], ['weed.avi - Windows Media...', true]];
 
-  // Win95 mode: the video plays in a Media Player window bouncing
-  // around a teal desktop. When the bass hits, the desktop stops
-  // repainting and the window smears the way a hung one did under a
-  // drag; big hits throw an illegal-operation box.
+  // Win95 mode: the video plays in Windows Media Player, drifting over a
+  // desktop someone actually used -- Clouds wallpaper, a pile of files,
+  // Notepad, Explorer and a DOS prompt left open. When the bass hits,
+  // the desktop stops repainting and the player smears the way a hung
+  // window did under a drag; big hits throw an illegal-operation box.
   (function () {
     const frame = offscreen();
-    let win = null, dialogs = [], avg = 0, cooldown = 0;
+    let win = null, dialogs = [], avg = 0, cooldown = 0, seconds = 0, lastNow = 0;
     viz.registerMode({
       id: 'win95', label: 'Win95',
-      init() { win = null; dialogs = []; avg = 0; cooldown = 0; },
+      init() { win = null; dialogs = []; avg = 0; cooldown = 0; seconds = 0; lastNow = 0; },
       draw(ctx) {
         const { vctx, VW, VH, freqData, videoFrame, speed, vizUserScale } = ctx;
-        const fs = Math.max(10, Math.round(VH / 34));
+        const fs = Math.max(10, Math.round(VH / 40));
+        const now = performance.now(); if (lastNow) seconds += (now - lastNow) / 1000; lastNow = now;
         const energy = energyOf(freqData), bass = bassOf(freqData);
         avg = avg * 0.95 + energy * 0.05; cooldown = Math.max(0, cooldown - 1);
-        const ww = Math.min(VW * 0.9, VW * 0.5 * vizUserScale), wh = ww * 0.62 + fs * 2;
-        if (!win) win = { x: VW * 0.2, y: VH * 0.1, vx: 1.4, vy: 1.1 };
-        win.x += win.vx * speed * (1 + energy * 2); win.y += win.vy * speed * (1 + energy * 2);
+        const ww = Math.round(Math.min(VW * 0.9, VW * 0.42 * vizUserScale));
+        const wh = 3 + fs * 3 + 2 + Math.round((ww - 8) * 0.5625) + fs * 5.1 + 3;
         const barH = fs * 2.2;
+        if (!win) win = { x: VW * 0.25, y: VH * 0.15, vx: 1.1, vy: 0.9 };
+        win.x += win.vx * speed * (1 + energy * 2); win.y += win.vy * speed * (1 + energy * 2);
         if (win.x < 0 || win.x + ww > VW) { win.vx *= -1; win.x = Math.max(0, Math.min(VW - ww, win.x)); }
         if (win.y < 0 || win.y + wh > VH - barH) { win.vy *= -1; win.y = Math.max(0, Math.min(VH - barH - wh, win.y)); }
         // the desktop only repaints when the machine is keeping up
-        if (bass < 0.45) {
-          vctx.fillStyle = W95.desk; vctx.fillRect(0, 0, VW, VH);
-          // two desktop icons
-          vctx.font = `${fs * 0.85}px sans-serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'top';
-          for (const [i, [name, col]] of [['My Computer', '#d9d9d9'], ['Recycle Bin', '#9ad']].entries()) {
-            const ix = fs * 2.6, iy = fs * 1.5 + i * fs * 5;
-            vctx.fillStyle = col; vctx.fillRect(ix - fs, iy, fs * 2, fs * 1.6);
-            vctx.fillStyle = '#000'; vctx.fillRect(ix - fs * 0.7, iy + fs * 0.25, fs * 1.4, fs * 0.9);
-            vctx.fillStyle = '#fff'; vctx.fillText(name, ix, iy + fs * 1.9);
-          }
-          vctx.textAlign = 'left';
-        }
-        // the window
-        bevel(vctx, win.x, win.y, ww, wh);
-        titleBar(vctx, win.x + 3, win.y + 3, ww - 6, fs * 1.5, 'weed.avi - Media Player', fs);
-        const vx = win.x + 4, vy = win.y + fs * 1.5 + 6, vw = ww - 8, vh = wh - fs * 1.5 - 10;
-        vctx.fillStyle = '#000'; vctx.fillRect(vx, vy, vw, vh);
-        if (videoFrame) {
-          const { c, ctx: fctx } = frame(videoFrame.w, videoFrame.h);
-          fctx.putImageData(videoFrame.imageData, 0, 0);
-          vctx.drawImage(c, vx, vy, vw, vh);
-        }
-        // illegal operations, on the hits
+        if (bass < 0.45) vctx.drawImage(desktop(VW, VH, fs), 0, 0);
+        let fc = null;
+        if (videoFrame) { const f = frame(videoFrame.w, videoFrame.h); f.ctx.putImageData(videoFrame.imageData, 0, 0); fc = f.c; }
+        mediaPlayer(vctx, Math.round(win.x), Math.round(win.y), ww, fs, fc, seconds);
         if (energy > avg * 1.3 + 0.05 && cooldown === 0 && dialogs.length < 5) {
           dialogs.push({ x: Math.random() * (VW - fs * 22), y: Math.random() * (VH - fs * 12), ttl: 110 });
           cooldown = 25;
         }
         for (let i = dialogs.length - 1; i >= 0; i--) {
           const d = dialogs[i]; if (--d.ttl <= 0) { dialogs.splice(i, 1); continue; }
-          errorDialog(vctx, d.x, d.y, fs * 22, fs, 'weed.exe', ['This program has performed an illegal', 'operation and will be shut down.', '', 'If the problem persists, contact the', 'program vendor.']);
+          errorDialog(vctx, d.x, d.y, fs * 22, fs, 'Mplayer2', ['This program has performed an illegal', 'operation and will be shut down.', '', 'If the problem persists, contact the', 'program vendor.']);
         }
-        startBar(vctx, VW, VH, fs);
+        startBar(vctx, VW, VH, fs, W95_TASKS);
       },
     });
   })();
@@ -728,7 +906,7 @@
       } else if (t < 0.85) {
         vctx.fillStyle = W95.bsod; vctx.fillRect(0, 0, W, H);
         const cfs = Math.max(9, Math.round(H / 27));
-        vctx.font = `${cfs}px monospace`; vctx.textBaseline = 'top';
+        vctx.font = `${cfs}px monospace`; vctx.textBaseline = 'top'; vctx.textAlign = 'left';
         const lines = [
           'A fatal exception 0E has occurred at 0028:C0011E36 in VXD VMM(01) +',
           '00010E36. The current application will be terminated.',
@@ -747,11 +925,10 @@
         vctx.fillStyle = '#fff';
         lines.forEach((l, i) => vctx.fillText(l, x0, y0 + i * cfs * 1.35));
       } else {
-        // the reboot: black, then the new picture fades up
         vctx.globalAlpha = 1 - (t - 0.85) / 0.15;
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, W, H);
         vctx.globalAlpha = 1;
-        vctx.fillStyle = '#ccc'; vctx.font = `${fs}px monospace`; vctx.textBaseline = 'top';
+        vctx.fillStyle = '#ccc'; vctx.font = `${fs}px monospace`; vctx.textBaseline = 'top'; vctx.textAlign = 'left';
         vctx.fillText('Starting Windows 95...', fs, fs);
       }
     },
