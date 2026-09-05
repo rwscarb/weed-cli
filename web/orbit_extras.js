@@ -507,13 +507,17 @@
   // perspective wobble as it moves), vertically stretched (the strip
   // shows a compressed slice of the source), washed out, and edged with
   // a line of pure noise. Thin ones and thick ones, per the reference.
+  // Mostly lines, not slabs: thin strips a few scanlines tall, the odd
+  // fatter one. They sit roughly where they are -- a slow drift and a
+  // small up-and-down tremble around a home row -- rather than rolling
+  // through the frame.
   function makeBand(W, H, rnd) {
-    const thick = rnd() < 0.4;
+    const thick = rnd() < 0.2;
     return {
-      y: rnd() * H, h: H * (thick ? 0.10 + rnd() * 0.18 : 0.012 + rnd() * 0.04),
-      vy: H * (0.002 + rnd() * 0.006) * (rnd() < 0.8 ? 1 : -1),
+      y: rnd() * H, y0: 0, h: H * (thick ? 0.035 + rnd() * 0.045 : 0.006 + rnd() * 0.02),
+      vy: H * (rnd() - 0.5) * 0.0012, tremble: H * (0.002 + rnd() * 0.008), tphase: rnd() * 6.28,
       off: (rnd() - 0.5) * W * 0.45, shear: (rnd() - 0.5) * W * 0.5, phase: rnd() * 6.28, dphase: 0.05 + rnd() * 0.15,
-      stretch: 1.2 + rnd() * 1.8, ttl: 40 + rnd() * 220,
+      stretch: 1.2 + rnd() * 1.8, ttl: 120 + rnd() * 400,
     };
   }
   const chromaA = offscreen(), chromaB = offscreen();
@@ -584,10 +588,10 @@
           return;
         }
         // bands come and go; the music decides how many are loose at once
-        const want = 1 + Math.round(energy * 4 + bass * 2);
-        if (bands.length < Math.min(6, want) && Math.random() < 0.08) bands.push(makeBand(VW, VH, Math.random));
-        for (const b of bands) { b.y += b.vy * speed; b.phase += b.dphase * speed; b.ttl -= 1; }
-        bands = bands.filter(b => b.ttl > 0 && b.y + b.h > -VH * 0.1 && b.y < VH * 1.1);
+        const want = 2 + Math.round(energy * 4 + bass * 2);
+        if (bands.length < Math.min(7, want) && Math.random() < 0.08) { const b = makeBand(VW, VH, Math.random); b.y0 = b.y; bands.push(b); }
+        for (const b of bands) { b.y0 += b.vy * speed; b.tphase += 0.2 * speed; b.y = b.y0 + Math.sin(b.tphase) * b.tremble; b.phase += b.dphase * speed; b.ttl -= 1; }
+        bands = bands.filter(b => b.ttl > 0 && b.y + b.h > 0 && b.y < VH);
         const { w, h, imageData } = videoFrame;
         const { c: fc, ctx: fctx } = frame(w, h);
         fctx.putImageData(imageData, 0, 0);
@@ -619,11 +623,12 @@
         const k = t / 0.6;
         // bands fixed by the seed, rolling down and fattening as it goes
         const bands = [];
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 8; i++) {
           const r = (m) => hash(seed + i * 13.7 + m);
-          const thick = i % 2 === 0;
+          const thick = i % 4 === 0;
           bands.push({
-            y: ((r(1) + k * 1.4) % 1.3 - 0.15) * H, h: H * (thick ? 0.08 + 0.22 * k : 0.015 + 0.05 * k),
+            y: r(1) * H + Math.sin(t * 25 + r(6) * 6.28) * H * 0.01 + k * H * 0.06 * (r(7) - 0.5),
+            h: H * (thick ? 0.03 + 0.06 * k : 0.006 + 0.025 * k),
             off: (r(2) - 0.5) * W * (0.2 + 0.7 * k), shear: (r(3) - 0.5) * W * (0.3 + 0.6 * k), phase: r(4) * 6.28 + t * 18,
             stretch: 1.2 + r(5) * 2,
           });
@@ -891,8 +896,8 @@
 
   // Win95 transition: the outgoing picture is a hung window being
   // dragged, leaving a stack of itself behind, until the whole machine
-  // gives up: blue screen, fatal exception, press any key. It reboots
-  // into the new picture.
+  // gives up: blue screen, fatal exception, press any key. Then black,
+  // and the new picture fades up.
   viz.registerTransition({
     id: 'win95', label: 'Win95',
     draw({ vctx, old, W, H, t, seed }) {
@@ -925,11 +930,9 @@
         vctx.fillStyle = '#fff';
         lines.forEach((l, i) => vctx.fillText(l, x0, y0 + i * cfs * 1.35));
       } else {
+        // the reboot: black, then the new picture fades up
         vctx.globalAlpha = 1 - (t - 0.85) / 0.15;
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, W, H);
-        vctx.globalAlpha = 1;
-        vctx.fillStyle = '#ccc'; vctx.font = `${fs}px monospace`; vctx.textBaseline = 'top'; vctx.textAlign = 'left';
-        vctx.fillText('Starting Windows 95...', fs, fs);
       }
     },
   });
