@@ -171,7 +171,11 @@ window.orbitViz = (function () {
     if (BUILTIN_TRANSITIONS.includes(def.id) || pluginTransitions.has(def.id)) {
       throw new Error(`orbitViz.registerTransition: a transition called ${JSON.stringify(def.id)} already exists`);
     }
-    const tr = { id: def.id, label: def.label || def.id, draw: def.draw, broken: false };
+    // duration: a multiplier on the Fade length slider for this one
+    // transition -- a slow burn like a crash screen wants longer than a
+    // wipe at the same slider setting
+    const duration = Number.isFinite(def.duration) && def.duration > 0 ? def.duration : 1;
+    const tr = { id: def.id, label: def.label || def.id, draw: def.draw, duration, broken: false };
     pluginTransitions.set(tr.id, tr);
     if (state) state.mountTransition(tr);
     return () => unregisterTransition(tr.id);
@@ -345,6 +349,9 @@ window.orbitViz = (function () {
       // how long. `trans` is the in-flight one, or null.
       transition: 'burn',
       transitionMs: 1200,
+      // transitions ticked off in the Random pool panel: Random never
+      // picks these (persisted; ids, so it survives plugins coming and going)
+      randomExclude: [],
       trans: null,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
@@ -367,7 +374,7 @@ window.orbitViz = (function () {
     const SETTINGS_KEY = 'weed.orbit.settings';
     const SAVED_KEYS = ['vizMode', 'vizOff', 'vizUserScale', 'speed', 'reactivity', 'transition',
                         'transitionMs', 'asciiStride', 'asciiBrightness', 'asciiBgAlpha', 'asciiRampKey',
-                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount'];
+                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude'];
     let restoredVizOff = false;
     (function restoreSettings() {
       let saved;
@@ -383,6 +390,7 @@ window.orbitViz = (function () {
         // is gone falls back to the default
         if (k === 'vizMode') { if (!allModes().includes(saved[k])) continue; }
         else if (k === 'transition') { if (!allTransitions().includes(saved[k])) continue; }
+        else if (k === 'randomExclude') { if (!Array.isArray(saved[k])) continue; s[k] = saved[k].filter(x => typeof x === 'string'); continue; }
         else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
         s[k] = saved[k];
       }
@@ -471,12 +479,49 @@ window.orbitViz = (function () {
       // before Random/None, which stay at the end (see allTransitions)
       transitionSelect.insertBefore(opt, transitionSelect.querySelector('option[value="random"]'));
       if (s.transition === tr.id) transitionSelect.value = tr.id;
+      renderRandomPool();
     }
     function unmountTransition(tr) {
       if (transitionSelect) { const opt = transitionSelect.querySelector(`option[value="${CSS.escape(tr.id)}"]`); if (opt) opt.remove(); }
       if (s.transition === tr.id) { setTransition('burn'); persistSettings(); }
       if (s.trans && s.trans.type === tr.id) s.trans = null;
+      renderRandomPool();
     }
+    // ── the Random pool: which transitions Random may pick ──────────
+    // A checkbox per real transition (built-ins and plugins alike), in a
+    // row that folds out of the ⚄ button beside the Fade dropdown. The
+    // list is rebuilt whenever a plugin transition comes or goes.
+    const randomPoolPanel = document.getElementById('randomPoolPanel');
+    const randomPoolList = document.getElementById('randomPoolList');
+    const randomPoolBtn = document.getElementById('randomPoolBtn');
+    function randomCandidates() { return allTransitions().filter(t => t !== 'random' && t !== 'none'); }
+    function randomPool() {
+      const pool = randomCandidates().filter(t => !s.randomExclude.includes(t));
+      return pool.length ? pool : randomCandidates();     // everything unticked: behave as if nothing were
+    }
+    function renderRandomPool() {
+      if (!randomPoolList) return;
+      const labels = new Map(listTransitions().map(t => [t.id, t.label]));
+      for (const opt of transitionSelect ? transitionSelect.options : []) labels.set(opt.value, opt.textContent);
+      randomPoolList.innerHTML = '';
+      for (const id of randomCandidates()) {
+        const lbl = document.createElement('label');
+        lbl.className = 'random-pool-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !s.randomExclude.includes(id); cb.dataset.transition = id;
+        cb.addEventListener('change', () => {
+          s.randomExclude = cb.checked ? s.randomExclude.filter(x => x !== id) : [...s.randomExclude, id];
+          persistSettings();
+        });
+        lbl.append(cb, document.createTextNode(labels.get(id) || id));
+        randomPoolList.appendChild(lbl);
+      }
+    }
+    if (randomPoolBtn && randomPoolPanel) on(randomPoolBtn, 'click', () => {
+      randomPoolPanel.classList.toggle('mode-controls-hidden');
+      randomPoolBtn.classList.toggle('active', !randomPoolPanel.classList.contains('mode-controls-hidden'));
+    });
+    renderRandomPool();
     s.mountPlugin = mountPlugin;
     s.unmountPlugin = unmountPlugin;
     s.mountTransition = mountTransition;
@@ -877,19 +922,26 @@ window.orbitViz = (function () {
       transOldCtx.drawImage(vizCanvas, 0, 0);
       let type = s.transition;
       if (type === 'random') {
-        // any real one, plugins included, never the same as last time
-        const pool = allTransitions().filter(t => t !== 'random' && t !== 'none' && t !== s.lastRandomTransition);
+        // any ticked one, plugins included, never the same as last time
+        // when there's a choice
+        let pool = randomPool();
+        if (pool.length > 1) pool = pool.filter(t => t !== s.lastRandomTransition);
         type = pool[Math.floor(Math.random() * pool.length)];
         s.lastRandomTransition = type;
       }
-      s.trans = { t0: performance.now(), type, seed: Math.random() * 1000 };
+      // a plugin transition may stretch the slider's length (see
+      // registerTransition's duration); fixed here so a mid-transition
+      // slider drag can't make t jump
+      const plugin = pluginTransitions.get(type);
+      const ms = s.transitionMs * (plugin ? plugin.duration : 1);
+      s.trans = { t0: performance.now(), type, seed: Math.random() * 1000, ms };
     }
     s.snapshotForTransition = snapshotForTransition;
     // for orbitViz.debugState() -- the transition machinery is closure-
     // private, and "why didn't that transition show" is unanswerable
     // from the outside otherwise
     s.transitionDebug = () => ({
-      transition: s.transition, transitionMs: s.transitionMs, trans: s.trans,
+      transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(),
       VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
     });
 
@@ -935,7 +987,7 @@ window.orbitViz = (function () {
 
     function drawTransition() {
       const tr = s.trans;
-      const t = (performance.now() - tr.t0) / s.transitionMs;
+      const t = (performance.now() - tr.t0) / (tr.ms || s.transitionMs);
       if (t >= 1) {
         s.trans = null;
         return;

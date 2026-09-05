@@ -296,3 +296,57 @@ def test_random_transition_picks_a_real_one_each_time(page, golden_path_server):
         assert t not in ('random', 'none')
         seen.add(t)
     assert len(seen) >= 2
+
+
+def test_random_pool_checkboxes_limit_what_random_picks(page, golden_path_server):
+    """Ryan: "enable/disable transitions from the dropdown for when Random
+    is used." The ⚄ button beside Fade unfolds one checkbox per real
+    transition; unticked ones are never picked, and the choice persists
+    across a reload like every other setting."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    assert not page.locator('#randomPoolPanel').is_visible()
+    page.click('#randomPoolBtn')
+    assert page.locator('#randomPoolPanel').is_visible()
+    ids = page.evaluate("() => [...document.querySelectorAll('#randomPoolList input')].map(i => i.dataset.transition)")
+    assert 'burn' in ids and 'melt' in ids and 'random' not in ids and 'none' not in ids
+    # untick everything except wipe
+    page.evaluate("() => document.querySelectorAll('#randomPoolList input').forEach(i => { if (i.checked && i.dataset.transition !== 'wipe') i.click(); })")
+    _select_transition(page, 'random', ms=2000)
+    for mode in ['bars', 'scope', 'bars', 'scope', 'bars']:
+        page.click(f'[data-viz="{mode}"]')
+        assert page.evaluate("() => window.orbitViz.debugState().trans.type") == 'wipe'
+    # persists: reopen after a reload, wipe is the only ticked box
+    page.wait_for_timeout(300)   # the debounced save
+    page.reload()
+    # already downloaded: the row offers Play straight away
+    page.wait_for_selector('#discover-table .swipe-back:not(.swipe-back-mirror) .play-btn:has-text("▶ Play")', timeout=15_000)
+    page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first.locator(
+        '.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='▶ Play').click()
+    page.wait_for_selector('#global-player:not(.hidden)', timeout=5_000)
+    _open_orbit_viz(page)
+    ticked = page.evaluate("() => [...document.querySelectorAll('#randomPoolList input:checked')].map(i => i.dataset.transition)")
+    assert ticked == ['wipe']
+    # everything unticked falls back to the full pool rather than nothing
+    page.evaluate("() => document.querySelectorAll('#randomPoolList input:checked').forEach(i => i.click())")
+    page.click('[data-viz="scope"]')
+    assert page.evaluate("() => window.orbitViz.debugState().trans.type") not in (None, 'random', 'none')
+
+
+def test_a_transition_can_stretch_the_fade_length(page, golden_path_server):
+    """registerTransition's duration multiplier: Win95 declares 3, so at a
+    300ms Fade setting it runs about 900ms, while a stub with no duration
+    still finishes at 300."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    assert page.evaluate("() => window.orbitViz.listTransitions().find(t => t.id === 'win95')") is not None
+    _select_transition(page, 'win95', ms=300)
+    page.click('[data-viz="bars"]')
+    d = page.evaluate("() => window.orbitViz.debugState()")
+    assert d['trans']['type'] == 'win95' and d['trans']['ms'] == 900
+    page.wait_for_timeout(450)
+    assert page.evaluate("() => window.orbitViz.debugState().trans") is not None   # still going past the slider's 300
+    page.wait_for_function("() => window.orbitViz.debugState().trans === null", timeout=3000)
+    _select_transition(page, 'melt', ms=300)
+    page.click('[data-viz="scope"]')
+    assert page.evaluate("() => window.orbitViz.debugState().trans.ms") == 300

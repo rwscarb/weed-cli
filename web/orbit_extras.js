@@ -900,6 +900,8 @@
   // and the new picture fades up.
   viz.registerTransition({
     id: 'win95', label: 'Win95',
+    // a crash deserves to be read: three times the Fade slider
+    duration: 3,
     draw({ vctx, old, W, H, t, seed }) {
       const fs = Math.max(10, Math.round(H / 30));
       if (t < 0.4) {

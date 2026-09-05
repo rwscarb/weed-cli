@@ -746,6 +746,13 @@
           </select>
           <input type="range" id="transitionSlider" min="0" max="5000" step="100" value="1200" title="Transition length">
           <span class="ascii-controls-val" id="transitionVal">1.2s</span>
+          <button type="button" class="icon-btn" id="randomPoolBtn" title="Choose which transitions Random picks from">⚄</button>
+        </div>
+        <!-- the Random pool: one checkbox per transition, folded until ⚄ --
+             see orbit_visualizer.js renderRandomPool -->
+        <div class="preset-row random-pool mode-controls-hidden" id="randomPoolPanel">
+          <span class="ascii-controls-label">Random picks from</span>
+          <div id="randomPoolList"></div>
         </div>
         <!-- MIDI controller panel (orbit_midi.js) -- toggled by the 🎹
              header button; the bindings table is rendered by JS -->
