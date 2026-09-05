@@ -181,7 +181,7 @@ mode selector; a registered transition gets a Fade option and a turn in
 "Random". A plugin that throws is logged once and disabled without
 taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
 built entirely on that API and adds Halftone, Lava, Terrain, Rain,
-Lissajous, Ripples, Cube, VHS and Win95, plus the Melt, Dissolve, Iris,
+Lissajous, Ripples, Cube, VHS, Win95 and Joy Division, plus the Melt, Dissolve, Iris,
 Shatter, Wave, Spin, Zoom blur, RGB split, VHS and Win95 transitions; `web/orbit_plugin_example.js`
 is a minimal one to copy.
 

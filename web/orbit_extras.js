@@ -7,7 +7,7 @@
 // set of effects, and the template for adding more. Drop the <script>
 // tag in index.html to get the built-ins only.
 //
-// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95
+// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, Joy Division
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95
 (function () {
   const viz = window.orbitViz;
@@ -312,6 +312,67 @@
             vctx.lineWidth = (1 + v * 7) * depth * scale;
             vctx.stroke();
           });
+        }
+      },
+    });
+  })();
+
+  // Joy Division: Unknown Pleasures. Stacked white traces on black, each
+  // one a pulse of the spectrum shaped by a bell so it's busy in the
+  // middle and flat at the sides, each trace blacking out whatever sits
+  // behind it. New traces arrive at the bottom and the stack climbs.
+  (function () {
+    const N = 160, ROWS = 80;
+    let rows = [], frameNo = 0;
+    function makeRow(freqData, energy) {
+      const r = new Float32Array(N), maxBin = Math.floor(freqData.length * 0.6);
+      for (let i = 0; i < N; i++) {
+        const x = i / (N - 1), d = (x - 0.5) / 0.17;
+        const bell = Math.exp(-d * d);
+        const k = Math.abs(x - 0.5) * 2;                       // loud low end in the middle
+        const spec = freqData[Math.floor(k * k * maxBin)] / 255;
+        const jag = (Math.random() - 0.5) * (0.25 + energy * 0.6);
+        r[i] = bell * (0.2 + spec * 1.3 + jag) + (Math.random() - 0.5) * 0.03;
+      }
+      // a light smoothing so the jaggedness reads as a signal, not sand
+      const out = new Float32Array(N);
+      for (let i = 0; i < N; i++) out[i] = (r[Math.max(0, i - 1)] + r[i] * 2 + r[Math.min(N - 1, i + 1)]) / 4;
+      return out;
+    }
+    viz.registerMode({
+      id: 'joydivision', label: 'Joy Division',
+      init() { rows = []; frameNo = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, freqData, speed, vizUserScale } = ctx;
+        const energy = energyOf(freqData);
+        frameNo++;
+        // the stack climbs at the Speed slider's pace
+        const every = Math.max(1, Math.round(3 / speed));
+        if (frameNo % every === 0) { rows.push(makeRow(freqData, energy)); if (rows.length > ROWS) rows.shift(); }
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        const plotW = Math.min(VW * 0.9, VH * 0.95) * vizUserScale;
+        const plotH = plotW * 0.78, top = (VH - plotH) / 2, left = cx - plotW / 2;
+        const spacing = plotH / ROWS, amp = spacing * 9 * (1 + energy * 0.5);
+        vctx.lineWidth = Math.max(1, VW / 900); vctx.lineJoin = 'round';
+        vctx.strokeStyle = '#f2f2f2';
+        // oldest at the top, drawn first; every newer trace below fills
+        // black under itself and covers what's behind
+        const start = ROWS - rows.length;
+        for (let i = 0; i < rows.length; i++) {
+          const y0 = top + (start + i) * spacing, r = rows[i];
+          vctx.beginPath();
+          for (let j = 0; j < N; j++) {
+            const x = left + (j / (N - 1)) * plotW, y = y0 - Math.max(0, r[j]) * amp;
+            if (j === 0) vctx.moveTo(x, y); else vctx.lineTo(x, y);
+          }
+          vctx.lineTo(left + plotW, VH + 2); vctx.lineTo(left, VH + 2); vctx.closePath();
+          vctx.fillStyle = '#000'; vctx.fill();
+          vctx.beginPath();
+          for (let j = 0; j < N; j++) {
+            const x = left + (j / (N - 1)) * plotW, y = y0 - Math.max(0, r[j]) * amp;
+            if (j === 0) vctx.moveTo(x, y); else vctx.lineTo(x, y);
+          }
+          vctx.stroke();
         }
       },
     });
