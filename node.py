@@ -429,15 +429,30 @@ def _manifest_mtime(archive_dir):
 
 
 def _load_hostable_entries(archive_dir, file_name):
+    """Every entry that can actually be served: manifest entry, its chunk
+    leaves, and the file on disk. Hosting a whole directory skips an
+    entry whose file has since been deleted or moved (with a warning on
+    stderr) rather than refusing to host anything -- one missing video
+    used to poison-pill the other forty-four beside it, and the web UI
+    then forgot the host config as unrecoverable. Asking for one file by
+    name that isn't there is still an error: that's the one thing the
+    caller explicitly wanted."""
     entries = load_manifest_entries(archive_dir, file_name)
     entries_by_hash = {}
+    kept = []
     for entry in entries:
-        leaves = load_leaves(archive_dir, entry['sha256'])
         file_path = resolve_file_path(entry, archive_dir)
         if not os.path.exists(file_path):
-            sys.exit(f"archived file not found on disk at {file_path}")
+            if file_name is not None or len(entries) == 1:
+                sys.exit(f"archived file not found on disk at {file_path}")
+            print(f"[host] skipping {entry.get('name')!r}: archived file not found on disk at {file_path}", file=sys.stderr)
+            continue
+        leaves = load_leaves(archive_dir, entry['sha256'])
         entries_by_hash[entry['sha256']] = (entry, leaves, file_path)
-    return entries, entries_by_hash
+        kept.append(entry)
+    if not entries_by_hash:
+        sys.exit(f"no archived file found in {archive_dir} is still on disk -- nothing to host")
+    return kept, entries_by_hash
 
 
 def run_host_server(archive_dir, file_name, port, bind_host='0.0.0.0', quiet=False, price=0,

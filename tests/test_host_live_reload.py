@@ -79,3 +79,32 @@ def test_a_broken_manifest_mid_session_does_not_take_down_an_already_running_hos
     out2 = str(tmp_path / 'out2.mp4')
     node.download(f'127.0.0.1:{port}', out2, content_hash=second['sha256'])
     assert os.path.getsize(out2) == 6_000
+
+
+def test_a_missing_file_no_longer_stops_the_rest_of_the_directory_being_hosted(tmp_path):
+    """Real report: "archived file not found on disk" for one video that
+    had since been deleted refused to host the whole archive_dir. Now the
+    missing one is skipped with a warning and everything else is served;
+    asking for the missing file by name is still an error, and so is a
+    directory where nothing is left."""
+    import os, pytest
+    archive_dir = str(tmp_path / 'archive')
+    keep = make_fake_archive(archive_dir, name='keep.mp4', size=30_000, chunk_size=8_192)
+    gone = make_fake_archive(archive_dir, name='gone.mp4', size=20_000, chunk_size=8_192)
+    os.remove(os.path.join(archive_dir, 'gone.mp4'))
+
+    entries, by_hash = node._load_hostable_entries(archive_dir, None)
+    assert [e['name'] for e in entries] == ['keep.mp4']
+    assert set(by_hash) == {keep['sha256']}
+    with pytest.raises(SystemExit, match='not found on disk'):
+        node._load_hostable_entries(archive_dir, 'gone.mp4')
+
+    port = free_port()
+    _host_thread(archive_dir, port)
+    out = str(tmp_path / 'out.mp4')
+    node.download(f'127.0.0.1:{port}', out, content_hash=keep['sha256'])
+    assert os.path.getsize(out) == 30_000
+
+    os.remove(os.path.join(archive_dir, 'keep.mp4'))
+    with pytest.raises(SystemExit, match='nothing to host'):
+        node._load_hostable_entries(archive_dir, None)
