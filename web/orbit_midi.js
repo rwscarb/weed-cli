@@ -186,6 +186,59 @@ window.orbitMidi = (function () {
     } catch (e) { /* quota/private */ }
   }
 
+  // ── keymaps as files ─────────────────────────────────────────────
+  // The export carries every row's id *and* target, so an import can
+  // match by id (the normal case) or, for a row that has since been
+  // renamed, by what it does. Plugin rows come along too; one whose
+  // plugin isn't loaded here is kept dormant (see save()) until it is.
+  const KEYMAP_FORMAT = 'weed.orbit.midi-keymap';
+  function exportKeymap() {
+    return {
+      format: KEYMAP_FORMAT, version: 1, exported: new Date().toISOString(),
+      device: deviceNames().join(', ') || null,
+      bindings: bindings.map(b => ({ id: b.id, target: b.target, label: b.label, key: b.key, relative: !!b.relative })),
+    };
+  }
+  function downloadKeymap() {
+    const data = exportKeymap();
+    const stamp = data.exported.slice(0, 19).replace(/[:T]/g, '-');
+    const name = `weed-orbit-keymap-${(data.device || 'midi').replace(/[^\w.-]+/g, '_')}-${stamp}.json`;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    return name;
+  }
+  // replaces the current bindings with the file's; rows the file doesn't
+  // mention are left unbound. Returns how many rows got a key, or throws
+  // on something that isn't a keymap.
+  function importKeymap(data) {
+    if (typeof data === 'string') data = JSON.parse(data);
+    if (!data || data.format !== KEYMAP_FORMAT || !Array.isArray(data.bindings)) throw new Error('not a weed Orbit keymap file');
+    const rows = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d, key: null, relative: false }));
+    let bound = 0;
+    const dormant = [];
+    for (const f of data.bindings) {
+      if (!f || typeof f.id !== 'string') continue;
+      const key = typeof f.key === 'string' && /^[nc](\*|\d+):\d+$/.test(f.key) ? f.key : null;
+      const row = rows.find(r => r.id === f.id) || rows.find(r => f.target && r.target === f.target);
+      if (row) { row.key = key; row.relative = !!f.relative; if (key) bound++; }
+      else if (key && /^(mode|fade):/.test(f.id)) dormant.push({ id: f.id, key, relative: !!f.relative });
+    }
+    bindings = rows; savedRows = dormant; learning = null;
+    save(); render();
+    return bound;
+  }
+  function readKeymapFile(file) {
+    if (!file) return;
+    file.text().then(text => {
+      const n = importKeymap(text);
+      last = `imported ${n} binding${n === 1 ? '' : 's'} from ${file.name}`;
+      render();
+    }).catch(err => { last = 'import failed: ' + (err && err.message || err); render(); });
+  }
+
   function describe(b) {
     if (TARGET_LABELS[b.target]) return TARGET_LABELS[b.target];
     if (b.target.startsWith('mode:')) return 'mode: ' + (b.plugin ? b.label : b.target.slice(5));
@@ -348,6 +401,9 @@ window.orbitMidi = (function () {
       list: document.getElementById('midiBindings'),
       connect: document.getElementById('midiConnectBtn'),
       reset: document.getElementById('midiResetBtn'),
+      exportBtn: document.getElementById('midiExportBtn'),
+      importBtn: document.getElementById('midiImportBtn'),
+      importFile: document.getElementById('midiImportFile'),
       last: document.getElementById('midiLast'),
     };
     if (els.btn) els.btn.onclick = () => {
@@ -357,6 +413,11 @@ window.orbitMidi = (function () {
     };
     if (els.connect) els.connect.onclick = connect;
     if (els.reset) els.reset.onclick = () => { savedRows = []; bindings = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d })); learning = null; save(); render(); };
+    if (els.exportBtn) els.exportBtn.onclick = () => { const name = downloadKeymap(); last = 'saved ' + name; render(); };
+    if (els.importBtn && els.importFile) {
+      els.importBtn.onclick = () => { els.importFile.value = ''; els.importFile.click(); };
+      els.importFile.onchange = () => readKeymapFile(els.importFile.files && els.importFile.files[0]);
+    }
     // The panel is a settings surface, not a status one: it stays folded
     // on every open, connected or not, until the 🎹 click. (It used to
     // unfold itself whenever permission had already been granted, so
@@ -434,6 +495,9 @@ window.orbitMidi = (function () {
     // registered or removed while the panel is up, so its row appears
     // (or goes) without waiting for the next MIDI message
     refresh: () => render(),
+    // keymap files -- the panel's export/import buttons use these
+    exportKeymap,
+    importKeymap,
     _onMessage: onMessage,
   };
 })();

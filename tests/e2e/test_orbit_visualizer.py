@@ -13,6 +13,8 @@ orbit_visualizer.js itself can see it, the same reason a plain
 this test used, back when vizMode really was a page-global) doesn't work
 against it anymore.
 """
+import re
+
 import pytest
 
 from test_golden_path import _download_and_play
@@ -379,3 +381,58 @@ def test_middle_drag_rotates_shift_pans_ctrl_zooms_like_blender(page, golden_pat
     page.mouse.dblclick(cx, cy)
     st = state()
     assert st['rot'] == 0 and st['panX'] == 0 and st['panY'] == 0 and st['zoom'] == 1.0
+
+
+def test_midi_keymap_exports_to_a_file_and_imports_back(page, golden_path_server, tmp_path):
+    """Ryan: "add the ability to export keymaps." The panel's export
+    button downloads a .json of every row's learned control; import
+    replaces the bindings from such a file, matching rows by id (or by
+    target for a renamed row), leaving unmentioned rows unbound and
+    keeping a plugin row's key dormant until its plugin is loaded."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    # learn a knob onto Zoom (CC 28) so the export has something non-default in it
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^K3$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 28, 10])")
+
+    with page.expect_download() as dl:
+        page.click('#midiExportBtn')
+    download = dl.value
+    assert download.suggested_filename.startswith('weed-orbit-keymap-MPK_mini_IV-') and download.suggested_filename.endswith('.json')
+    path = tmp_path / 'keymap.json'
+    download.save_as(str(path))
+    import json
+    data = json.loads(path.read_text())
+    assert data['format'] == 'weed.orbit.midi-keymap' and data['device'] == 'MPK mini IV'
+    k3 = next(b for b in data['bindings'] if b['id'] == 'k3')
+    assert k3 == {'id': 'k3', 'target': 'param:zoom', 'label': 'K3', 'key': 'c0:28', 'relative': False}
+    assert any(b['id'] == 'mode:halftone' for b in data['bindings'])   # plugin rows travel too
+
+    # wipe, then import the file through the real file input
+    page.click('#midiResetBtn')
+    assert page.evaluate("() => window.orbitMidi.exportKeymap().bindings.find(b => b.id === 'k3').key") == 'c*:72'
+    page.locator('#midiImportFile').set_input_files(str(path))
+    page.wait_for_function("() => window.orbitMidi.exportKeymap().bindings.find(b => b.id === 'k3').key === 'c0:28'")
+    assert 'imported' in page.locator('#midiLast').inner_text()
+    # and it took effect: the learned knob drives zoom again (a mid-range
+    # value first: the encoder auto-detection holds a lone end-stop value
+    # from an undecided knob rather than applying it -- see orbit_midi.js)
+    page.evaluate("() => { window.__midi.send([0xB0, 28, 100]); window.__midi.send([0xB0, 28, 127]); }")
+    page.wait_for_function("() => parseFloat(document.getElementById('zoomSlider').value) > 7")
+
+    # a file with an unknown id but a known target still lands; junk is refused
+    n = page.evaluate("""() => window.orbitMidi.importKeymap({ format: 'weed.orbit.midi-keymap', version: 1,
+        bindings: [{ id: 'renamed-row', target: 'param:speed', key: 'n*:60' }, { id: 'mode:not-loaded', target: 'mode:not-loaded', key: 'n*:61' }] })""")
+    assert n == 1
+    exported = page.evaluate("() => window.orbitMidi.exportKeymap().bindings")
+    assert next(b for b in exported if b['id'] == 'k1')['key'] == 'n*:60'
+    assert next(b for b in exported if b['id'] == 'k3')['key'] is None
+    assert page.evaluate("() => { try { window.orbitMidi.importKeymap({ hello: 1 }); return 'accepted'; } catch (e) { return e.message; } }") == 'not a weed Orbit keymap file'

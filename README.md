@@ -169,6 +169,11 @@ Includes real HTTP range support (`/api/stream/<job_id>`) so a
 `<video>` tag can seek a completed download instead of downloading it
 blind.
 
+The visualizer's 🎹 panel binds an AKAI MPK mini (or any Web MIDI
+controller) to modes, transitions and sliders; **export** saves the
+keymap as a `.json` file and **import** loads one, so a layout travels
+between browsers and machines.
+
 The player's ⇄ button is **video swap**: pick another download whose
 picture stands in for the current track's — for an mp3 or a
 static-image video, so the visualizer (and the player window) have real

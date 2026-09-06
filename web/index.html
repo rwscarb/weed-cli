@@ -788,6 +788,11 @@
             <span id="midiStatus">not connected</span>
             <button type="button" class="icon-btn" id="midiConnectBtn">connect</button>
             <button type="button" class="icon-btn" id="midiResetBtn" title="back to the MPK mini factory layout">defaults</button>
+            <!-- keymaps as a file: every row's learned control, to share
+                 between browsers/machines or keep per controller -->
+            <button type="button" class="icon-btn" id="midiExportBtn" title="save this keymap as a .json file">export</button>
+            <button type="button" class="icon-btn" id="midiImportBtn" title="load a keymap .json (replaces the current bindings)">import</button>
+            <input type="file" id="midiImportFile" accept="application/json,.json" hidden>
             <span class="midi-last" id="midiLast"></span>
           </div>
           <div id="midiBindings"></div>
