@@ -1376,7 +1376,9 @@
           const rr = nx * nx + ny * ny; if (rr > 1) continue;
           const nz = Math.sqrt(1 - rr);
           // undo the tilt, then the spin, to find where on the map this point is
-          const y = ny * ct + nz * st, z = -ny * st + nz * ct, x = nx;
+          // screen-right is east: the sphere's x runs the other way from
+          // the screen's (it was mirrored, Florida west of California)
+          const y = ny * ct + nz * st, z = -ny * st + nz * ct, x = -nx;
           const lat = Math.asin(Math.max(-1, Math.min(1, y))), lon = Math.atan2(z, x) - spin;
           const u = ((lon / (Math.PI * 2)) % 1 + 1.5) % 1, v = 0.5 - lat / Math.PI;
           const mi = ((Math.min(MH - 1, (v * MH) | 0)) * MW + Math.min(MW - 1, (u * MW) | 0)) * 4;
@@ -1405,7 +1407,7 @@
         vctx.strokeStyle = 'hsla(200,90%,70%,0.55)'; vctx.lineWidth = Math.max(1.5, R * 0.012);
         vctx.beginPath(); vctx.arc(cx, cy, R, 0, Math.PI * 2); vctx.stroke();
         vctx.strokeStyle = 'rgba(255,255,255,0.12)'; vctx.lineWidth = 1;
-        const P = (lat, lon) => { const x = Math.cos(lat) * Math.cos(lon + spin), y = Math.sin(lat), z = Math.cos(lat) * Math.sin(lon + spin); return [x, y * ct - z * st, y * st + z * ct]; };
+        const P = (lat, lon) => { const x = -Math.cos(lat) * Math.cos(lon + spin), y = Math.sin(lat), z = Math.cos(lat) * Math.sin(lon + spin); return [x, y * ct - z * st, y * st + z * ct]; };
         const ring = pts => { vctx.beginPath(); let on = false; for (const [x, y, z] of pts) { if (z < 0) { on = false; continue; } const sx = cx + x * R, sy = cy - y * R; if (!on) { vctx.moveTo(sx, sy); on = true; } else vctx.lineTo(sx, sy); } vctx.stroke(); };
         for (let i = 1; i < 6; i++) ring(Array.from({ length: 49 }, (_, k) => P((i / 6 - 0.5) * Math.PI, (k / 48) * Math.PI * 2)));
         for (let j = 0; j < 8; j++) ring(Array.from({ length: 49 }, (_, k) => P((k / 48 - 0.5) * Math.PI, (j / 8) * Math.PI * 2)));
