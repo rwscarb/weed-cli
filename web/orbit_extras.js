@@ -926,9 +926,63 @@
     const frame = offscreen();
     let win = null, dialogs = [], avg = 0, cooldown = 0, seconds = 0, lastNow = 0;
     let avgBass = 0, smearUntil = 0, lastRepaint = 0, frameNo = 0;
+    // Clippy. Drops in a few seconds after the mode opens and then every
+    // half minute or so, offers help nobody asked for, hangs around for
+    // eight seconds, slides off. Eyebrows ride the bass.
+    const CLIPPY_LINES = [
+      ['It looks like you\'re trying to VJ.', 'Would you like help?'],
+      ['It looks like you\'re dropping the bass.', 'Would you like me to call someone?'],
+      ['It looks like you\'re writing a setlist.', 'Would you like to use the Setlist Wizard?'],
+      ['I see the Reactivity slider is at 3.', 'That\'s a bold choice.'],
+      ['It looks like this song has no video.', 'Have you tried Video Swap?'],
+      ['Tip: pressing the lit mode button', 'turns the effects off.'],
+      ['It looks like it\'s 2 AM.', 'Would you like help going to bed?'],
+    ];
+    let clippy = null, clippyNext = 0, clippyCount = 0;
+    function drawClippy(ctx, x, y, s, blink, browLift, t) {
+      // a paperclip: two nested loops in grey wire, eyes and eyebrows
+      ctx.save();
+      ctx.translate(x, y);
+      ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+      const wire = (w, col) => { ctx.lineWidth = w; ctx.strokeStyle = col; ctx.beginPath();
+        ctx.moveTo(-s * 0.32, s * 0.5); ctx.lineTo(-s * 0.32, -s * 0.55); ctx.arc(0, -s * 0.55, s * 0.32, Math.PI, 0);
+        ctx.lineTo(s * 0.32, s * 0.7); ctx.arc(0.02 * s, s * 0.7, s * 0.3, 0, Math.PI);
+        ctx.lineTo(-s * 0.28, -s * 0.2); ctx.arc(0, -s * 0.2, s * 0.28, Math.PI, 0);
+        ctx.lineTo(s * 0.28, s * 0.35);
+        ctx.stroke(); };
+      wire(s * 0.13, '#6f6f7c'); wire(s * 0.08, '#d5d5e0'); wire(s * 0.03, '#ffffff');
+      // eyes
+      for (const ex of [-s * 0.13, s * 0.13]) {
+        ctx.fillStyle = '#fff'; ctx.strokeStyle = '#000'; ctx.lineWidth = s * 0.02;
+        ctx.beginPath(); ctx.ellipse(ex, -s * 0.55, s * 0.11, blink ? s * 0.015 : s * 0.15, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        if (!blink) { ctx.fillStyle = '#000'; ctx.beginPath(); ctx.ellipse(ex + Math.sin(t) * s * 0.03, -s * 0.52, s * 0.05, s * 0.07, 0, 0, Math.PI * 2); ctx.fill(); }
+        // eyebrow
+        ctx.strokeStyle = '#000'; ctx.lineWidth = s * 0.05; ctx.beginPath();
+        ctx.moveTo(ex - s * 0.1, -s * 0.75 - browLift); ctx.quadraticCurveTo(ex, -s * 0.85 - browLift * 1.4, ex + s * 0.1, -s * 0.75 - browLift);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    function drawBubble(ctx, x, y, w, fs, lines, tailX, tailY) {
+      const lh = fs * 1.35, h = lines.length * lh + fs * 1.2 + fs * 3.9;
+      ctx.save();
+      ctx.fillStyle = '#ffffcc'; ctx.strokeStyle = '#000'; ctx.lineWidth = 1.5;
+      ctx.beginPath(); ctx.roundRect(x, y, w, h, fs * 0.5); ctx.fill(); ctx.stroke();
+      // the tail
+      ctx.beginPath(); ctx.moveTo(x + w - fs * 2.4, y + h); ctx.lineTo(tailX, tailY); ctx.lineTo(x + w - fs * 1.2, y + h); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = '#000'; ctx.beginPath(); ctx.moveTo(x + w - fs * 2.4, y + h); ctx.lineTo(tailX, tailY); ctx.lineTo(x + w - fs * 1.2, y + h); ctx.stroke();
+      ctx.fillStyle = '#000'; ctx.font = `${fs}px sans-serif`; ctx.textBaseline = 'top'; ctx.textAlign = 'left';
+      lines.forEach((l, i) => ctx.fillText(l, x + fs * 0.8, y + fs * 0.6 + i * lh));
+      const oy = y + fs * 0.6 + lines.length * lh + fs * 0.4;
+      [['●', 'Get help with VJing'], ['○', 'Just do it myself'], ['○', 'Don\'t show me this tip again']].forEach(([b, l], i) => {
+        ctx.fillStyle = i === 0 ? '#000' : '#333'; ctx.fillText(b + '  ' + l, x + fs * 0.8, oy + i * fs * 1.15);
+      });
+      ctx.restore();
+      return h;
+    }
     viz.registerMode({
       id: 'win95', label: 'Win95',
-      init() { win = null; dialogs = []; avg = 0; cooldown = 0; seconds = 0; lastNow = 0; avgBass = 0; smearUntil = 0; lastRepaint = 0; frameNo = 0; },
+      init() { win = null; dialogs = []; avg = 0; cooldown = 0; seconds = 0; lastNow = 0; avgBass = 0; smearUntil = 0; lastRepaint = 0; frameNo = 0; clippy = null; clippyNext = 4; clippyCount = 0; },
       draw(ctx) {
         const { vctx, VW, VH, freqData, videoFrame, speed, vizUserScale } = ctx;
         const fs = Math.max(10, Math.round(VH / 40));
@@ -963,6 +1017,28 @@
         for (let i = dialogs.length - 1; i >= 0; i--) {
           const d = dialogs[i]; if (--d.ttl <= 0) { dialogs.splice(i, 1); continue; }
           errorDialog(vctx, d.x, d.y, fs * 22, fs, 'Mplayer2', ['This program has performed an illegal', 'operation and will be shut down.', '', 'If the problem persists, contact the', 'program vendor.']);
+        }
+        // Clippy: in from the right, a bubble above, out again
+        if (!clippy && seconds >= clippyNext) {
+          clippy = { t0: seconds, lines: CLIPPY_LINES[clippyCount++ % CLIPPY_LINES.length], blinkAt: seconds + 1 + Math.random() * 3 };
+          clippyNext = seconds + 8 + 25 + Math.random() * 20;
+        }
+        if (clippy) {
+          const age = seconds - clippy.t0, IN = 0.5, STAY = 8, OUT = 0.5;
+          if (age > IN + STAY + OUT) clippy = null;
+          else {
+            const k = age < IN ? age / IN : age > IN + STAY ? 1 - (age - IN - STAY) / OUT : 1;
+            const ease = k * k * (3 - 2 * k);
+            const size = Math.max(40, VH * 0.16);
+            const cxp = VW - size * 0.9 + (1 - ease) * size * 2, cyp = VH - barH - size * 0.75 + Math.sin(seconds * 2) * size * 0.03;
+            const blink = seconds > clippy.blinkAt && seconds < clippy.blinkAt + 0.15;
+            if (seconds > clippy.blinkAt + 0.15) clippy.blinkAt = seconds + 2 + Math.random() * 3;
+            if (ease > 0.95) {
+              const bw = Math.min(VW * 0.5, fs * 22), bx = cxp - size * 0.6 - bw, by = cyp - size * 1.9;
+              drawBubble(vctx, bx, by, bw, fs, clippy.lines, cxp - size * 0.3, cyp - size * 0.7);
+            }
+            drawClippy(vctx, cxp, cyp, size, blink, bass * size * 0.12, seconds * 1.7);
+          }
         }
         startBar(vctx, VW, VH, fs, W95_TASKS);
       },
