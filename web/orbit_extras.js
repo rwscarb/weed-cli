@@ -1206,20 +1206,39 @@
   // Fireworks: every beat launches a shell that bursts into a shower
   // of sparks with gravity and trails; the bass sets the size.
   (function () {
-    let sparks = [], shells = [], avg = 0, cooldown = 0;
+    let sparks = [], shells = [], cooldown = 0, prevFreq = null, fluxAvg = 0, bassAvg = 0, sinceLaunch = 0;
     viz.registerMode({
       id: 'fireworks', label: 'Fireworks',
-      init() { sparks = []; shells = []; avg = 0; cooldown = 0; },
+      init() { sparks = []; shells = []; cooldown = 0; prevFreq = null; fluxAvg = 0; bassAvg = 0; sinceLaunch = 0; },
       draw(ctx) {
         const { vctx, VW, VH, hueBase, freqData, speed, vizUserScale } = ctx;
         const energy = energyOf(freqData), bass = bassOf(freqData);
-        avg = avg * 0.94 + energy * 0.06; cooldown = Math.max(0, cooldown - 1);
-        fadeFrame(vctx, VW, VH, 0.18);
-        if (energy > avg * 1.2 + 0.03 && cooldown === 0) {
+        // Onsets, not loudness. A level threshold against the running
+        // average barely ever fired on real music, whose level hardly
+        // moves; what marks a hit is *spectral flux* -- how much louder
+        // the bins got since the last frame -- plus a bass jump. Both are
+        // judged against their own running averages. A strong onset
+        // launches a volley, a big one a bigger volley; between hits a
+        // slow trickle keeps the sky busy in proportion to the energy,
+        // and nothing longer than two seconds goes by with music playing
+        // and no shell at all.
+        const maxBin = Math.floor(freqData.length * 0.7);
+        let flux = 0;
+        if (prevFreq && prevFreq.length === freqData.length) for (let i = 0; i < maxBin; i++) { const d = freqData[i] - prevFreq[i]; if (d > 0) flux += d; }
+        flux /= (maxBin * 255);
+        prevFreq = Uint8Array.from(freqData);
+        fluxAvg = fluxAvg * 0.9 + flux * 0.1; bassAvg = bassAvg * 0.9 + bass * 0.1;
+        cooldown = Math.max(0, cooldown - 1); sinceLaunch++;
+        const onset = flux > fluxAvg * 1.6 + 0.008 || bass > bassAvg * 1.25 + 0.06;
+        const strength = Math.max(flux / (fluxAvg + 0.004), bass / (bassAvg + 0.05));
+        let launches = 0;
+        if (onset && cooldown === 0) { launches = strength > 3 ? 3 : strength > 2 ? 2 : 1; cooldown = 8; }
+        else if (energy > 0.08 && (Math.random() < energy * 0.02 * speed || sinceLaunch > 120)) launches = 1;
+        for (let n = 0; n < launches; n++) {
           // launch speed sized so the shell tops out somewhere in the
           // upper half (apex = v² / 2g against the 2.2g shell gravity)
-          shells.push({ x: VW * (0.2 + Math.random() * 0.6), y: VH, vy: -(VH * 0.036 + Math.random() * VH * 0.012) * Math.sqrt(vizUserScale), hue: (hueBase + Math.random() * 120) % 360, size: 60 + bass * 160 });
-          cooldown = 6;
+          shells.push({ x: VW * (0.15 + Math.random() * 0.7), y: VH, vy: -(VH * 0.034 + Math.random() * VH * 0.016) * Math.sqrt(vizUserScale), hue: (hueBase + Math.random() * 140) % 360, size: 50 + bass * 140 + (launches > 1 ? 30 : 0) });
+          sinceLaunch = 0;
         }
         const g = VH * 0.0006;
         vctx.lineCap = 'round';
