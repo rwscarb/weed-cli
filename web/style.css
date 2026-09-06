@@ -2011,7 +2011,17 @@ code {
 #auth-gate .auth-error { color: #e06c75; font-size: 0.85rem; }
 
 /* ── party view (guests) + Party tab (admin) ─────────────────────── */
-#party-view { max-width: 720px; margin: 0 auto; padding: 1rem; display: flex; flex-direction: column; gap: 0.9rem; }
+#party-view { max-width: 720px; margin: 0 auto; padding: 1rem 1.9rem 1rem 1rem; display: flex; flex-direction: column; gap: 0.9rem; }
+.party-leaders { color: var(--muted); font-size: 0.85rem; }
+.party-leaders strong { color: var(--text); font-weight: 600; }
+/* the iPod index: A-Z pinned to the right edge, mid-screen */
+.party-index { position: fixed; right: 0; top: 50%; transform: translateY(-50%); z-index: 6; display: flex; flex-direction: column; align-items: center;
+  padding: 0.3rem 0.2rem; background: rgba(20,20,20,0.75); border-radius: 8px 0 0 8px; touch-action: none; user-select: none; cursor: pointer; }
+.party-index-letter { font-size: 0.62rem; line-height: 1.25; padding: 0 0.35rem; color: var(--accent); font-weight: 600; }
+.party-index-letter.dim { color: var(--muted); opacity: 0.55; }
+.party-index-letter.hit { color: #fff; }
+.party-index-bubble { position: fixed; right: 3rem; top: 50%; transform: translateY(-50%); z-index: 7; width: 3.6rem; height: 3.6rem; border-radius: 12px;
+  background: rgba(0,0,0,0.8); color: #fff; font-size: 2rem; font-weight: 700; display: flex; align-items: center; justify-content: center; pointer-events: none; }
 #party-view h2 { margin: 0; }
 #party-view h3 { margin: 0.4rem 0 0; font-size: 0.95rem; color: var(--muted); }
 .party-now { color: var(--muted); }
@@ -2055,7 +2065,8 @@ code {
 .chat-line { align-self: flex-start; max-width: 100%; background: rgba(0,0,0,0.55); color: #fff; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-admin { color: #7ee8a2; }
 .chat-guest { color: #ffd166; }
-.party-stream-off { position: relative; min-height: 6rem; }
+.party-stream-off { position: relative; }
+.party-stream-off:has(.chat-overlay) { min-height: 6rem; }   /* room for the messages only when there are any */
 .party-chat { display: flex; flex-direction: column; gap: 0.4rem; }
 .party-chat h3 { display: flex; align-items: center; gap: 0.6rem; }
 .chat-list { max-height: 14rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.2rem; padding: 0.4rem 0.5rem; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }

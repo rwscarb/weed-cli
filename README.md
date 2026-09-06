@@ -158,7 +158,9 @@ and whatever links you set. The admin's **Party** tab holds the guest
 link and its QR code, the title and links, the live tally with a ▶ and
 a ♫+ (add to playlist) per track, and an "auto-play the top vote when a
 track ends" switch. The guest page itself is bare: the live picture and
-"now playing" pinned to the top, the vote list scrolling beneath.
+"now playing" pinned to the top, the vote list scrolling beneath —
+alphabetical, with an iPod-style A–Z strip down the right edge to jump
+by letter, and a "leading:" line for the current front-runners.
 Guests can't host, download, like, subscribe, or read the library.
 Switch on **guest chat** in the Party tab and everyone gets a message
 box: the last few messages are drawn over the picture — into the

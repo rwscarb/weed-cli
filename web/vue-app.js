@@ -65,6 +65,7 @@ const app = createApp({
       // by admin and guest alike; overlay = draw the last few over the
       // picture (the visualizer canvas, so the stream carries it; a DOM
       // layer on the player window and the guest page otherwise)
+      indexActive: null,     // the letter under the finger on the party index strip
       chat: { enabled: false, messages: [], lastId: 0, input: '', error: '',
               name: localStorage.getItem('weed.chat.name') || '',
               you: '', overlay: localStorage.getItem('weed.chat.overlay') !== '0' },
@@ -362,6 +363,22 @@ const app = createApp({
         left: this.qr.left != null ? this.qr.left + 'px' : 'auto',
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
+    },
+    // ── the guest page's list: alphabetical, with an iPod-style index ──
+    partyTracksAlpha() {
+      const name = t => (this.displayTitle(t.title) || t.content_hash || '').toLowerCase();
+      return [...this.party.tracks].sort((a, b) => name(a).localeCompare(name(b), undefined, { numeric: true }));
+    },
+    // the top three with any votes at all -- the leaderboard the
+    // vote-sorted list used to be
+    partyLeaders() {
+      return [...this.party.tracks].filter(t => t.votes > 0).sort((a, b) => b.votes - a.votes).slice(0, 3);
+    },
+    indexLetters() { return ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ']; },
+    indexPresent() {
+      const present = {};
+      for (const t of this.party.tracks) present[this.indexLetter(t)] = true;
+      return present;
     },
     // what the DOM overlays show: the last six messages under 20 s old
     chatRecent() {
@@ -1453,6 +1470,38 @@ const app = createApp({
         this.partyForm.autoplay = !!p.autoplay;
         this.partyForm.chat = !!p.chat;
       }
+    },
+    // ── the party index strip ─────────────────────────────────────────
+    indexLetter(t) {
+      const c = (this.displayTitle(t.title) || t.content_hash || '').trim().charAt(0).toUpperCase();
+      return /[A-Z]/.test(c) ? c : '#';
+    },
+    // tap or drag along the strip: the letter under the pointer (via
+    // elementFromPoint, so a drag that started on one letter follows the
+    // finger down the strip) jumps the list -- to that letter's first
+    // track, or the next letter that has one
+    indexPointer(e) {
+      if (e.type === 'pointermove' && !e.buttons && e.pointerType === 'mouse') return;
+      if (e.type === 'pointerdown' && e.currentTarget.setPointerCapture) { try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* not capturable */ } }
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const letter = el && el.dataset && el.dataset.letter;
+      if (!letter || letter === this.indexActive) return;
+      this.indexActive = letter;
+      this.jumpToLetter(letter);
+    },
+    indexRelease() { this.indexActive = null; },
+    jumpToLetter(letter) {
+      const list = this.$refs.partyTracks;
+      if (!list) return;
+      const order = this.indexLetters;
+      let target = null;
+      for (let i = order.indexOf(letter); i < order.length && !target; i++) target = list.querySelector(`li[data-letter="${order[i]}"]`);
+      if (!target) target = list.lastElementChild;
+      if (!target) return;
+      // land just under the sticky top (now playing + picture)
+      const top = document.querySelector('.party-top');
+      const stickyH = top ? top.getBoundingClientRect().height : 0;
+      window.scrollTo({ top: target.getBoundingClientRect().top + window.scrollY - stickyH - 6, behavior: 'auto' });
     },
     // ── party chat ────────────────────────────────────────────────────
     async refreshChat() {

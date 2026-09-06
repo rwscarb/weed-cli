@@ -566,3 +566,50 @@ def test_party_chat_posts_from_the_guest_page_and_overlays_the_picture(page, gol
     page.click('.admin-chat button[type=submit]')
     page.wait_for_selector('.admin-chat .chat-msg:has-text("no")')
     assert page.locator('.admin-chat .chat-msg b').last.inner_text() == 'host'
+
+
+def test_party_view_alphabetical_index_jumps_by_letter(page, golden_path_server, monkeypatch):
+    """Ryan: "an alphabetical index along the right edge, like an iPod."
+    The guest list is alphabetical; a strip of letters is pinned to the
+    right edge; tapping (or dragging across) a letter scrolls the list
+    to that letter's first track, landing just under the sticky top; a
+    letter with no track is dimmed and lands on the next one that has.
+    The leaders line keeps the vote ranking visible."""
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
+    # seeded server-side (the page polls /api/party every few seconds and
+    # would overwrite anything injected into the Vue state)
+    names = ['Zebra', 'apple pie', 'Mango', 'banana', '99 problems', 'Tangerine', 'tango', 'Cherry', 'Yellow', 'Lemon', 'Kiwi', 'Quince',
+             'Umbrella', 'Vortex', 'Waves', 'Xylophone', 'Zulu', 'Zapp']   # enough below T that T can reach the top
+    with web_ui._lock:
+        for i, n in enumerate(names):
+            h = f'{i:064x}'
+            web_ui._library['downloads'][h] = {'content_hash': h, 'job_id': f'seed{i}', 'title': n + '.mp4', 'path': f'/x/{n}.mp4', 'signer_pubkey': None}
+            if n == 'Mango': web_ui._party_votes[h] = {'v1', 'v2', 'v3', 'v4', 'v5'}
+            if n == 'Kiwi': web_ui._party_votes[h] = {'v1', 'v2'}
+    with page.expect_response(lambda r: '/api/party' in r.url and r.status == 200):
+        page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+    page.wait_for_selector('.party-index')
+    titles = page.evaluate("() => [...document.querySelectorAll('.party-tracks .party-track-title')].map(e => e.textContent)")
+    # case-insensitive, numbers first ('tange…' sorts before 'tango')
+    assert titles == ['99 problems', 'apple pie', 'banana', 'Cherry', 'Kiwi', 'Lemon', 'Mango', 'Quince', 'Tangerine', 'tango',
+                      'Umbrella', 'Vortex', 'Waves', 'Xylophone', 'Yellow', 'Zapp', 'Zebra', 'Zulu']
+    assert 'Mango' in page.locator('.party-leaders').inner_text() and page.locator('.party-leaders strong').first.inner_text() == 'Mango'
+    letters = page.evaluate("() => [...document.querySelectorAll('.party-index-letter')].map(e => e.textContent)")
+    assert letters[0] == '#' and letters[-1] == 'Z' and len(letters) == 27
+    assert 'dim' not in page.locator('.party-index-letter[data-letter="B"]').get_attribute('class')   # banana
+    assert 'dim' in page.locator('.party-index-letter[data-letter="D"]').get_attribute('class')       # nothing under D
+    assert 'dim' not in page.locator('.party-index-letter[data-letter="M"]').get_attribute('class')
+
+    page.set_viewport_size({'width': 420, 'height': 400})   # short: the list has to scroll
+    page.locator('.party-index-letter[data-letter="T"]').click()
+    page.wait_for_function("() => window.scrollY > 0")
+    first_t = page.locator('.party-tracks li[data-letter="T"]').first
+    box = first_t.bounding_box(); sticky = page.locator('.party-top').bounding_box()
+    assert abs(box['y'] - (sticky['y'] + sticky['height'])) < 12
+    assert page.locator('.party-index-bubble').count() == 0   # released
+    # an empty letter lands on the next one that has a track
+    page.locator('.party-index-letter[data-letter="N"]').click()
+    first_q = page.locator('.party-tracks li[data-letter="Q"]').first
+    box = first_q.bounding_box()
+    assert abs(box['y'] - (sticky['y'] + sticky['height'])) < 12
