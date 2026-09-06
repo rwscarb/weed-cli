@@ -2017,7 +2017,7 @@ code {
 .party-now { color: var(--muted); }
 /* the live picture stays put while the vote list scrolls under it --
    capped well under the viewport so there's always room for the list */
-.party-stream { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 0.4rem 0 0.3rem; }
+.party-top { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 0.4rem 0 0.3rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .party-stream img { width: 100%; max-height: 46vh; object-fit: contain; border-radius: 8px; background: #000; display: block; }
 .party-player-link { display: inline-block; margin-top: 0.3rem; font-size: 0.8rem; color: var(--muted); }
 .party-stream-off, .party-empty { color: var(--muted); font-size: 0.9rem; }

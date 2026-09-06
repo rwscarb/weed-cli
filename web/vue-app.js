@@ -772,6 +772,13 @@ const app = createApp({
     _savedSwaps() {
       try { const m = JSON.parse(localStorage.getItem('weed.player.swaps') || '{}'); return m && typeof m === 'object' ? m : {}; } catch (e) { return {}; }
     },
+    // a title for people: the file extension dropped ("party mix.mp3"
+    // -> "party mix"), nothing else touched. Only for a name that looks
+    // like a file -- a title with a dot in it for other reasons stays.
+    displayTitle(title) {
+      if (!title) return title;
+      return title.replace(/\.(mp4|m4v|mkv|webm|mov|avi|mpg|mpeg|ts|mp3|m4a|aac|flac|ogg|oga|opus|wav|wma|ott)$/i, '');
+    },
     applySavedSwap() {
       const hash = this.player.contentHash;
       const wanted = hash ? this._savedSwaps()[hash] : null;

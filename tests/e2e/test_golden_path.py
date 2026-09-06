@@ -461,13 +461,17 @@ def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_
     assert page.locator('#tabs').count() == 0
     # no stream is running in this fixture: flip the flag the way a
     # refresh would once one starts, so the block renders
-    page.evaluate("vm => { vm.party.stream.active = true; vm.party.stream.url = '/api/orbit-view'; vm.party.stream.since = 1; }", vm)
+    page.evaluate("vm => { vm.party.stream.active = true; vm.party.stream.url = '/api/orbit-view'; vm.party.stream.since = 1; vm.party.now_playing = { title: 'Late Night Mix.mp3', content_hash: 'a'.repeat(64) }; }", vm)
     # attached, not visible: with no real stream the <img> has no size yet
-    page.wait_for_selector('.party-stream', state='attached')
-    css = page.evaluate("() => { const b = getComputedStyle(document.querySelector('.party-stream')); const i = getComputedStyle(document.querySelector('.party-stream img')); return { position: b.position, top: b.top, maxHeight: i.maxHeight, fit: i.objectFit }; }")
+    page.wait_for_selector('.party-top .party-stream', state='attached')
+    css = page.evaluate("() => { const b = getComputedStyle(document.querySelector('.party-top')); const i = getComputedStyle(document.querySelector('.party-stream img')); return { position: b.position, top: b.top, maxHeight: i.maxHeight, fit: i.objectFit }; }")
     assert css['position'] == 'sticky' and css['top'] == '0px'
     assert css['maxHeight'].endswith('px') and float(css['maxHeight'][:-2]) < 900 * 0.5
     assert css['fit'] == 'contain'
+    # "now playing" rides inside the sticky block, without the file extension
+    now = page.locator('.party-top .party-now')
+    assert now.count() == 1
+    assert now.inner_text().strip() == 'now playing: Late Night Mix'
 
 
 def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, golden_path_server):
