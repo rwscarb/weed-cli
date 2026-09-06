@@ -1019,28 +1019,45 @@
   // ══════════════════════════════════════════════════════════════════
 
   // Spectrogram: a waterfall -- each frame's spectrum is one column,
-  // scrolling left, loud bins hot and quiet ones cold. Low end at the
-  // bottom.
+  // scrolling left, on an inferno-style ramp (black, plum, crimson,
+  // orange, cream) with a slow hue drift. Low end at the bottom.
   (function () {
     const strip = offscreen();
+    // 256-entry ramp from a few control points, rebuilt when the hue drifts
+    const STOPS = [[0, 0, 4], [40, 11, 84], [120, 28, 109], [190, 55, 84], [237, 105, 37], [251, 160, 25], [252, 220, 90], [252, 254, 190]];
+    let lut = null, lutHue = -1;
+    function ramp(hueShift) {
+      const key = Math.round(hueShift / 12);
+      if (lut && key === lutHue) return lut;
+      lutHue = key; lut = new Uint8ClampedArray(256 * 3);
+      const rot = (key * 12) * Math.PI / 180, cr = Math.cos(rot), sr = Math.sin(rot);
+      for (let i = 0; i < 256; i++) {
+        const f = (i / 255) * (STOPS.length - 1), k = Math.min(STOPS.length - 2, Math.floor(f)), t = f - k;
+        let [r, g, b] = [0, 1, 2].map(c => STOPS[k][c] + (STOPS[k + 1][c] - STOPS[k][c]) * t);
+        // a small hue rotation around the grey axis (YIQ-style), so the
+        // ramp drifts with the rest of the app without losing its shape
+        const Y = 0.299 * r + 0.587 * g + 0.114 * b, I = 0.596 * r - 0.274 * g - 0.322 * b, Q = 0.211 * r - 0.523 * g + 0.312 * b;
+        const I2 = I * cr - Q * sr, Q2 = I * sr + Q * cr;
+        r = Y + 0.956 * I2 + 0.621 * Q2; g = Y - 0.272 * I2 - 0.647 * Q2; b = Y - 1.106 * I2 + 1.703 * Q2;
+        lut[i * 3] = r; lut[i * 3 + 1] = g; lut[i * 3 + 2] = b;
+      }
+      return lut;
+    }
     viz.registerMode({
       id: 'spectrogram', label: 'Spectrogram',
       draw(ctx) {
         const { vctx, VW, VH, hueBase, freqData, speed, vizUserScale } = ctx;
         const SW = 256, SH = 128, { c, ctx: sc } = strip(SW, SH);
         const step = Math.max(1, Math.round(speed));
-        // scroll left by `step` columns, then paint the new ones at the right
         sc.drawImage(c, -step, 0);
         const maxBin = Math.floor(freqData.length * 0.7);
+        const L = ramp(hueBase * 0.25);
         const col = sc.createImageData(step, SH), d = col.data;
         for (let y = 0; y < SH; y++) {
-          const k = 1 - y / (SH - 1);                          // top = high frequencies
+          const k = 1 - y / (SH - 1);
           const v = freqData[Math.floor(Math.pow(k, 1.6) * maxBin)] / 255;
-          const hue = (hueBase + 260 - v * 260) % 360, light = 8 + v * 62, sat = 90;
-          // hsl -> rgb, once per row
-          const cc = (1 - Math.abs(2 * light / 100 - 1)) * sat / 100, hp = hue / 60, x = cc * (1 - Math.abs(hp % 2 - 1)), m = light / 100 - cc / 2;
-          const [r, g, b] = hp < 1 ? [cc, x, 0] : hp < 2 ? [x, cc, 0] : hp < 3 ? [0, cc, x] : hp < 4 ? [0, x, cc] : hp < 5 ? [x, 0, cc] : [cc, 0, x];
-          for (let i = 0; i < step; i++) { const o = (y * step + i) * 4; d[o] = (r + m) * 255; d[o + 1] = (g + m) * 255; d[o + 2] = (b + m) * 255; d[o + 3] = 255; }
+          const idx = Math.min(255, Math.round(Math.pow(v, 0.8) * 255)) * 3;
+          for (let i = 0; i < step; i++) { const o = (y * step + i) * 4; d[o] = L[idx]; d[o + 1] = L[idx + 1]; d[o + 2] = L[idx + 2]; d[o + 3] = 255; }
         }
         sc.putImageData(col, SW - step, 0);
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
@@ -1194,31 +1211,45 @@
     });
   })();
 
-  // Slit-scan: every row of the picture comes from a different moment
-  // -- the top from now, the bottom from a second ago -- so anything
-  // that moves smears through time. The bass tilts the scan.
+  // Slit-scan: a wave of time rolls through the picture. Rows near the
+  // scan line are live; the further a row is from it, the older the
+  // frame it shows (up to two seconds back), so anything that moves
+  // smears and folds. Old rows are tinted cold and pushed sideways, and
+  // the wave itself is drawn as a bright line, so time is visible.
   (function () {
-    const HIST = 30; let hist = [];
+    const HIST = 60; let hist = [], pool = [];
     viz.registerMode({
       id: 'slitscan', label: 'Slit-scan',
-      init() { hist = []; },
+      init() { hist = []; pool = []; },
       draw(ctx) {
-        const { vctx, VW, VH, hueBase, freqData, videoFrame, vizRot, vizUserScale } = ctx;
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, vizRot, vizUserScale, speed } = ctx;
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
         if (!videoFrame) { vctx.fillStyle = `hsl(${hueBase | 0},60%,40%)`; vctx.font = `${Math.round(VH / 20)}px monospace`; vctx.textAlign = 'center'; vctx.fillText('— no video playing —', VW / 2, VH / 2); vctx.textAlign = 'left'; return; }
         const { w, h, imageData } = videoFrame;
-        const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(imageData, 0, 0);
-        hist.push(c); if (hist.length > HIST) hist.shift();
-        const bass = bassOf(freqData);
-        const rows = 54, rh = VH / rows, srh = h / rows;
-        const tilt = Math.sin(vizRot * 2) * 0.5 + 0.5;          // which end is "now" drifts
+        let c = pool.pop() || document.createElement('canvas');
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+        c.getContext('2d').putImageData(imageData, 0, 0);
+        hist.push(c); if (hist.length > HIST) pool.push(hist.shift());
+        const energy = energyOf(freqData), bass = bassOf(freqData);
+        const rows = 108, rh = VH / rows, srh = h / rows;
+        const scan = 0.5 + 0.5 * Math.sin(vizRot * 1.5);          // the wave's position, 0..1 down the frame
+        const reach = 0.35 + energy * 0.5;                          // how far from the line the past reaches
+        const pw = VW * vizUserScale, px0 = (VW - pw) / 2;
         for (let r = 0; r < rows; r++) {
-          const f = Math.abs(r / (rows - 1) - tilt);
-          const idx = Math.min(hist.length - 1, Math.round(f * (hist.length - 1) * (0.6 + bass * 0.8)));
+          const dist = Math.abs(r / (rows - 1) - scan) / reach;      // 0 at the line
+          const age = clamp01(dist);
+          const idx = Math.round(age * (hist.length - 1));
           const src = hist[hist.length - 1 - idx];
-          const sx = (VW - VW * vizUserScale) / 2;
-          vctx.drawImage(src, 0, r * srh, w, srh, sx, r * rh, VW * vizUserScale, rh + 1);
+          const dx = Math.sin(r * 0.25 + vizRot * 4) * age * VW * 0.03 * (1 + bass);
+          vctx.drawImage(src, 0, r * srh, w, srh, px0 + dx, r * rh, pw, rh + 1);
+          if (age > 0.05) { vctx.fillStyle = `hsla(${(hueBase + 200) | 0},80%,50%,${(age * 0.35).toFixed(2)})`; vctx.fillRect(px0, r * rh, pw, rh + 1); }
         }
+        // the scan line and its glow
+        const y = scan * VH;
+        vctx.fillStyle = `hsla(${hueBase | 0},100%,85%,0.9)`; vctx.fillRect(px0, y - 1, pw, 2);
+        const g = vctx.createLinearGradient(0, y - VH * 0.06, 0, y + VH * 0.06);
+        g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, `hsla(${hueBase | 0},100%,80%,0.25)`); g.addColorStop(1, 'rgba(255,255,255,0)');
+        vctx.fillStyle = g; vctx.fillRect(px0, y - VH * 0.06, pw, VH * 0.12);
       },
     });
   })();
@@ -1253,51 +1284,121 @@
           if (ny <= 0) continue;                           // faces pointing up-screen are hidden
           vctx.fillStyle = `hsl(${hue | 0},60%,${(nx > 0 ? 18 : 26) + v * 20 | 0}%)`;
           vctx.beginPath(); vctx.moveTo(ax, ay); vctx.lineTo(bx, by); vctx.lineTo(bx, by - hgt); vctx.lineTo(ax, ay - hgt); vctx.closePath(); vctx.fill();
-          // windows
-          if (v > 0.15) { vctx.fillStyle = `hsla(50,100%,80%,${(v * 0.8).toFixed(2)})`; const rowsN = Math.floor(hgt / (cell * 0.3)); for (let r = 1; r < rowsN; r++) { const fy = r / rowsN; vctx.fillRect((ax + bx) / 2 - cell * 0.06, ay - hgt * fy + (by - ay) / 2, cell * 0.12, cell * 0.08); } }
+          // windows: a few per floor across the face, lit by loudness,
+          // some dark at random so it reads as offices, not a grid
+          if (v > 0.1) {
+            const floors = Math.floor(hgt / (cell * 0.22)), perFloor = 4;
+            for (let f = 1; f < floors; f++) for (let wnd = 0; wnd < perFloor; wnd++) {
+              const u = (wnd + 0.5) / perFloor, fy = f / floors;
+              if (hash(t.i * 7.1 + t.j * 3.3 + f * 1.7 + wnd * 0.9) > 0.35 + v * 0.6) continue;
+              const wx = ax + (bx - ax) * u, wy = ay + (by - ay) * u - hgt * fy;
+              vctx.fillStyle = `hsla(${(45 + hash(f + wnd) * 15) | 0},100%,${(65 + v * 25) | 0}%,${(0.5 + v * 0.5).toFixed(2)})`;
+              vctx.fillRect(wx - cell * 0.045, wy - cell * 0.06, cell * 0.09, cell * 0.08);
+            }
+          }
         }
         void faces;
       }
     },
   });
 
-  // Globe: a wireframe sphere, meridians and parallels, each ring
-  // bulging with its own band of the spectrum; spins with Speed.
-  viz.registerMode({
-    id: 'globe', label: 'Globe',
-    draw(ctx) {
-      const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale } = ctx;
-      fadeFrame(vctx, VW, VH, 0.35);
-      const R = Math.min(VW, VH) * 0.36 * vizUserScale, maxBin = Math.floor(freqData.length * 0.7);
-      const tilt = 0.4, spin = vizRot;
-      const P = (lat, lon) => {
-        const x = Math.cos(lat) * Math.cos(lon + spin), y = Math.sin(lat), z = Math.cos(lat) * Math.sin(lon + spin);
-        const y2 = y * Math.cos(tilt) - z * Math.sin(tilt), z2 = y * Math.sin(tilt) + z * Math.cos(tilt);
-        return [x, y2, z2];
-      };
-      vctx.lineWidth = 1.2;
-      const draw = (pts, hue, v) => {
-        vctx.beginPath();
-        let started = false;
-        for (const [x, y, z] of pts) {
-          const r = R * (1 + v * 0.25);
-          const sx = cx + x * r, sy = cy - y * r;
-          if (z < -0.05) { started = false; continue; }         // the far side
-          if (!started) { vctx.moveTo(sx, sy); started = true; } else vctx.lineTo(sx, sy);
+  // Globe: the Earth, spinning, lit from the front. The continents are
+  // coarse polygons painted once into an equirectangular map; every
+  // frame the visible disc is ray-cast back onto that map, so the far
+  // side is properly hidden. Each continent has a band of the spectrum:
+  // it glows with it, and the whole globe swells on the bass. A faint
+  // graticule rides on top.
+  (function () {
+    // [id, [lon, lat] ...] -- rough outlines, enough to be unmistakable
+    const LAND = [
+      [1, [-168, 66], [-140, 70], [-95, 80], [-70, 62], [-55, 47], [-75, 40], [-81, 31], [-80, 25], [-97, 26], [-105, 20], [-90, 15], [-77, 8], [-84, 10], [-105, 23], [-115, 30], [-125, 40], [-125, 49], [-135, 58], [-150, 60], [-165, 60]],
+      [2, [-55, 60], [-45, 60], [-20, 70], [-25, 80], [-60, 82], [-70, 76], [-60, 66]],
+      [3, [-77, 8], [-60, 10], [-50, 0], [-35, -5], [-40, -20], [-50, -30], [-60, -40], [-68, -52], [-72, -45], [-72, -30], [-80, -10], [-80, 0]],
+      [4, [-10, 36], [-8, 44], [0, 48], [10, 55], [20, 60], [30, 70], [60, 72], [90, 75], [120, 72], [150, 70], [180, 68], [175, 62], [160, 55], [140, 45], [120, 35], [120, 22], [108, 10], [100, 5], [95, 15], [88, 22], [78, 8], [72, 20], [58, 25], [50, 15], [42, 13], [35, 30], [28, 37], [22, 37], [15, 40], [0, 40]],
+      [5, [-17, 15], [-10, 32], [10, 37], [30, 31], [43, 12], [51, 12], [40, -5], [35, -25], [25, -34], [15, -30], [12, -15], [9, 0], [-5, 5]],
+      [6, [114, -22], [128, -14], [137, -12], [142, -11], [153, -27], [148, -38], [140, -37], [130, -32], [115, -34]],
+      [7, [-180, -68], [-120, -70], [-60, -66], [0, -69], [60, -66], [120, -66], [180, -68], [180, -90], [-180, -90]],
+      [8, [130, 31], [140, 36], [142, 42], [135, 35]],
+      [5, [44, -12], [50, -15], [48, -25], [44, -22]],
+      [4, [-6, 50], [-2, 58], [2, 53], [1, 50]],
+    ];
+    const MW = 360, MH = 180;
+    let map = null;
+    function landMap() {
+      if (map) return map;
+      const c = document.createElement('canvas'); c.width = MW; c.height = MH; const g = c.getContext('2d');
+      g.fillStyle = '#000'; g.fillRect(0, 0, MW, MH);
+      for (const [id, ...pts] of LAND) {
+        g.fillStyle = `rgb(${id * 25},0,0)`;
+        g.beginPath();
+        pts.forEach(([lon, lat], i) => { const x = (lon + 180) / 360 * MW, y = (90 - lat) / 180 * MH; if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); });
+        g.closePath(); g.fill();
+      }
+      map = g.getImageData(0, 0, MW, MH).data;
+      return map;
+    }
+    const disc = offscreen();
+    viz.registerMode({
+      id: 'globe', label: 'Globe',
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale } = ctx;
+        const M = landMap();
+        const bass = bassOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        const band = new Array(9).fill(0);
+        for (let id = 1; id <= 8; id++) band[id] = freqData[Math.floor(((id - 0.5) / 8) * maxBin)] / 255;
+        vctx.fillStyle = '#02030a'; vctx.fillRect(0, 0, VW, VH);
+        const R = Math.min(VW, VH) * 0.4 * vizUserScale * (1 + bass * 0.08);
+        const N = 200, { c, ctx: dc } = disc(N, N);
+        const img = dc.createImageData(N, N), d = img.data;
+        const tilt = 0.35, ct = Math.cos(tilt), st = Math.sin(tilt), spin = vizRot * 0.6;
+        const hue0 = hueBase;
+        for (let py = 0; py < N; py++) for (let px = 0; px < N; px++) {
+          const nx = (px + 0.5) / N * 2 - 1, ny = 1 - (py + 0.5) / N * 2;
+          const rr = nx * nx + ny * ny; if (rr > 1) continue;
+          const nz = Math.sqrt(1 - rr);
+          // undo the tilt, then the spin, to find where on the map this point is
+          const y = ny * ct + nz * st, z = -ny * st + nz * ct, x = nx;
+          const lat = Math.asin(Math.max(-1, Math.min(1, y))), lon = Math.atan2(z, x) - spin;
+          const u = ((lon / (Math.PI * 2)) % 1 + 1.5) % 1, v = 0.5 - lat / Math.PI;
+          const mi = ((Math.min(MH - 1, (v * MH) | 0)) * MW + Math.min(MW - 1, (u * MW) | 0)) * 4;
+          const id = Math.round(M[mi] / 25);
+          const light = 0.35 + 0.65 * Math.max(0, nx * -0.4 + ny * 0.3 + nz * 0.85);   // lit from upper-left-front
+          const o = (py * N + px) * 4;
+          if (id) {
+            const e = band[id], h = (hue0 + id * 38) % 360;
+            // a green-to-hot land colour: quiet land is mossy, loud land glows its hue
+            const [r, g, b] = hslToRgb(e > 0.15 ? h : 110, 0.55 + e * 0.45, (0.28 + e * 0.45) * light);
+            d[o] = r; d[o + 1] = g; d[o + 2] = b;
+          } else {
+            // the sea stays sea-coloured whatever the app's hue is doing
+            const [r, g, b] = hslToRgb(215, 0.7, 0.16 * light + 0.04);
+            d[o] = r; d[o + 1] = g; d[o + 2] = b;
+          }
+          d[o + 3] = 255;
         }
-        vctx.strokeStyle = `hsla(${hue | 0},100%,${(50 + v * 40) | 0}%,${(0.35 + v * 0.65).toFixed(2)})`; vctx.stroke();
-      };
-      const LAT = 9, LON = 12, SEG = 48;
-      for (let i = 1; i < LAT; i++) {
-        const lat = (i / LAT - 0.5) * Math.PI, v = freqData[Math.floor((i / LAT) * maxBin * 0.5)] / 255;
-        draw(Array.from({ length: SEG + 1 }, (_, k) => P(lat, (k / SEG) * Math.PI * 2)), hueBase + i * 20, v);
-      }
-      for (let j = 0; j < LON; j++) {
-        const lon = (j / LON) * Math.PI * 2, v = freqData[Math.floor((0.5 + j / LON * 0.5) * maxBin)] / 255;
-        draw(Array.from({ length: SEG + 1 }, (_, k) => P((k / SEG - 0.5) * Math.PI, lon)), hueBase + 180 + j * 12, v);
-      }
-    },
-  });
+        dc.putImageData(img, 0, 0);
+        vctx.save();
+        vctx.beginPath(); vctx.arc(cx, cy, R, 0, Math.PI * 2); vctx.clip();
+        vctx.imageSmoothingEnabled = true;
+        vctx.drawImage(c, cx - R, cy - R, R * 2, R * 2);
+        vctx.restore();
+        // atmosphere rim and a faint graticule
+        vctx.strokeStyle = 'hsla(200,90%,70%,0.55)'; vctx.lineWidth = Math.max(1.5, R * 0.012);
+        vctx.beginPath(); vctx.arc(cx, cy, R, 0, Math.PI * 2); vctx.stroke();
+        vctx.strokeStyle = 'rgba(255,255,255,0.12)'; vctx.lineWidth = 1;
+        const P = (lat, lon) => { const x = Math.cos(lat) * Math.cos(lon + spin), y = Math.sin(lat), z = Math.cos(lat) * Math.sin(lon + spin); return [x, y * ct - z * st, y * st + z * ct]; };
+        const ring = pts => { vctx.beginPath(); let on = false; for (const [x, y, z] of pts) { if (z < 0) { on = false; continue; } const sx = cx + x * R, sy = cy - y * R; if (!on) { vctx.moveTo(sx, sy); on = true; } else vctx.lineTo(sx, sy); } vctx.stroke(); };
+        for (let i = 1; i < 6; i++) ring(Array.from({ length: 49 }, (_, k) => P((i / 6 - 0.5) * Math.PI, (k / 48) * Math.PI * 2)));
+        for (let j = 0; j < 8; j++) ring(Array.from({ length: 49 }, (_, k) => P((k / 48 - 0.5) * Math.PI, (j / 8) * Math.PI * 2)));
+      },
+    });
+  })();
+  function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360; l = Math.max(0, Math.min(1, l));
+    const c = (1 - Math.abs(2 * l - 1)) * s, hp = h / 60, x = c * (1 - Math.abs(hp % 2 - 1)), m = l - c / 2;
+    const [r, g, b] = hp < 1 ? [c, x, 0] : hp < 2 ? [x, c, 0] : hp < 3 ? [0, c, x] : hp < 4 ? [0, x, c] : hp < 5 ? [x, 0, c] : [c, 0, x];
+    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
+  }
 
   // ══════════════════════════════════════════════════════════════════
   //  MORE TRANSITIONS
