@@ -801,6 +801,21 @@
       sc.beginPath(); sc.ellipse(hash(i * 1.7) * 64, hash(i * 2.9) * 36, r * 1.6, r, 0, 0, Math.PI * 2); sc.fill();
     }
     ctx.save(); ctx.filter = `blur(${Math.max(4, W / 90)}px)`; ctx.globalAlpha = 0.85; ctx.drawImage(small, 0, 0, W, H); ctx.restore();
+    // desktop icons down the left, two columns -- painted before the
+    // windows, which sit on top of them like they would on a real desktop
+    const s = fs * 2.2, colW = fs * 9.5;
+    DESKTOP_ICONS.forEach(([name, kind], i) => {
+      const col = Math.floor(i / 7), row = i % 7;
+      const ix = fs * 1.4 + col * colW, iy = fs * 1 + row * (H - fs * 4) / 7;
+      drawIcon(ctx, kind, ix, iy, s);
+      // the font is set per label: an icon (the 'e') changes it
+      ctx.font = `${fs * 0.85}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+      let label = name;
+      while (label.length > 3 && ctx.measureText(label).width > colW - fs * 0.8) label = label.slice(0, -2).replace(/…$/, '') + '…';
+      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(label, ix + s / 2 + 1, iy + s + fs * 0.35 + 1);
+      ctx.fillStyle = '#fff'; ctx.fillText(label, ix + s / 2, iy + s + fs * 0.35);
+    });
+    ctx.textAlign = 'left';
     // the windows left open underneath, oldest first
     const nb = win95Window(ctx, W * 0.42, H * 0.06, W * 0.5, H * 0.5, 'untitled - Notepad', fs, ['File', 'Edit', 'Search', 'Help'], true);
     ctx.fillStyle = '#fff'; ctx.fillRect(nb.x, nb.y, nb.w, nb.h);
@@ -817,19 +832,6 @@
     ctx.fillStyle = '#c0c0c0'; ctx.font = `${fs}px monospace`; ctx.textBaseline = 'top';
     ['Microsoft(R) Windows 95', '   (C)Copyright Microsoft Corp 1981-1996.', '', 'C:\\WINDOWS>cd ..', 'C:\\>dir /w *.avi', ' WEED.AVI      PARTY~1.AVI   TRACKING.AVI',
      '         3 file(s)    412,208,344 bytes', 'C:\\>weed.avi', 'Bad command or file name', 'C:\\>_'].forEach((l, i) => ctx.fillText(l, dos.x + fs * 0.3, dos.y + fs * 0.2 + i * fs * 1.25));
-    // desktop icons down the left, two columns
-    const s = fs * 2.2, colW = fs * 9.5;
-    DESKTOP_ICONS.forEach(([name, kind], i) => {
-      const col = Math.floor(i / 7), row = i % 7;
-      const ix = fs * 1.4 + col * colW, iy = fs * 1 + row * (H - fs * 4) / 7;
-      drawIcon(ctx, kind, ix, iy, s);
-      // the font is set per label: an icon (the 'e') changes it
-      ctx.font = `${fs * 0.85}px sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'top';
-      let label = name;
-      while (label.length > 3 && ctx.measureText(label).width > colW - fs * 0.8) label = label.slice(0, -2).replace(/…$/, '') + '…';
-      ctx.fillStyle = 'rgba(0,0,0,0.6)'; ctx.fillText(label, ix + s / 2 + 1, iy + s + fs * 0.35 + 1);
-      ctx.fillStyle = '#fff'; ctx.fillText(label, ix + s / 2, iy + s + fs * 0.35);
-    });
     ctx.textAlign = 'left';
     return c;
   }
