@@ -7,8 +7,10 @@
 // set of effects, and the template for adding more. Drop the <script>
 // tag in index.html to get the built-ins only.
 //
-// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, Joy Division
-// Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95
+// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, Joy Division,
+//              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe
+// Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
+//              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
   const viz = window.orbitViz;
   if (!viz || typeof viz.registerMode !== 'function') return;
@@ -1008,6 +1010,419 @@
         // the reboot: black, then the new picture fades up
         vctx.globalAlpha = 1 - (t - 0.85) / 0.15;
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, W, H);
+      }
+    },
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  //  MORE MODES
+  // ══════════════════════════════════════════════════════════════════
+
+  // Spectrogram: a waterfall -- each frame's spectrum is one column,
+  // scrolling left, loud bins hot and quiet ones cold. Low end at the
+  // bottom.
+  (function () {
+    const strip = offscreen();
+    viz.registerMode({
+      id: 'spectrogram', label: 'Spectrogram',
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, speed, vizUserScale } = ctx;
+        const SW = 256, SH = 128, { c, ctx: sc } = strip(SW, SH);
+        const step = Math.max(1, Math.round(speed));
+        // scroll left by `step` columns, then paint the new ones at the right
+        sc.drawImage(c, -step, 0);
+        const maxBin = Math.floor(freqData.length * 0.7);
+        const col = sc.createImageData(step, SH), d = col.data;
+        for (let y = 0; y < SH; y++) {
+          const k = 1 - y / (SH - 1);                          // top = high frequencies
+          const v = freqData[Math.floor(Math.pow(k, 1.6) * maxBin)] / 255;
+          const hue = (hueBase + 260 - v * 260) % 360, light = 8 + v * 62, sat = 90;
+          // hsl -> rgb, once per row
+          const cc = (1 - Math.abs(2 * light / 100 - 1)) * sat / 100, hp = hue / 60, x = cc * (1 - Math.abs(hp % 2 - 1)), m = light / 100 - cc / 2;
+          const [r, g, b] = hp < 1 ? [cc, x, 0] : hp < 2 ? [x, cc, 0] : hp < 3 ? [0, cc, x] : hp < 4 ? [0, x, cc] : hp < 5 ? [x, 0, cc] : [cc, 0, x];
+          for (let i = 0; i < step; i++) { const o = (y * step + i) * 4; d[o] = (r + m) * 255; d[o + 1] = (g + m) * 255; d[o + 2] = (b + m) * 255; d[o + 3] = 255; }
+        }
+        sc.putImageData(col, SW - step, 0);
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        vctx.imageSmoothingEnabled = true;
+        const w = VW * vizUserScale, h = VH * vizUserScale;
+        vctx.drawImage(c, (VW - w) / 2, (VH - h) / 2, w, h);
+      },
+    });
+  })();
+
+  // Stained glass: the picture as a Voronoi mosaic -- a few dozen seeds,
+  // each cell filled with the colour under its seed and leaded with a
+  // dark edge. The seeds tremble with the bass and drift with Speed.
+  (function () {
+    let seeds = [];
+    const cellsOff = offscreen();
+    viz.registerMode({
+      id: 'stainedglass', label: 'Stained glass',
+      init() { seeds = []; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale, vizRot } = ctx;
+        const N = Math.max(12, Math.round(70 / vizUserScale));
+        if (seeds.length !== N) seeds = Array.from({ length: N }, () => ({ x: Math.random(), y: Math.random(), dx: (Math.random() - 0.5) * 0.0015, dy: (Math.random() - 0.5) * 0.0015 }));
+        const bass = bassOf(freqData);
+        for (const p of seeds) {
+          p.x = (p.x + p.dx * speed + 1) % 1; p.y = (p.y + p.dy * speed + 1) % 1;
+        }
+        // nearest-seed on a coarse grid, then upscaled: cheap and it
+        // gives the glass its slightly chunky edges
+        const GW = 96, GH = 54, { c, ctx: gc } = cellsOff(GW, GH);
+        const img = gc.createImageData(GW, GH), d = img.data;
+        const jitter = bass * 0.03;
+        const sx = seeds.map((p, i) => p.x + Math.sin(vizRot * 3 + i) * jitter), sy = seeds.map((p, i) => p.y + Math.cos(vizRot * 2.3 + i * 1.7) * jitter);
+        const cols = seeds.map((p, i) => {
+          if (videoFrame) {
+            const px = Math.min(videoFrame.w - 1, (sx[i] * videoFrame.w) | 0), py = Math.min(videoFrame.h - 1, (sy[i] * videoFrame.h) | 0);
+            const o = (Math.max(0, py) * videoFrame.w + Math.max(0, px)) * 4, vd = videoFrame.imageData.data;
+            return [vd[o], vd[o + 1], vd[o + 2]];
+          }
+          const h = (hueBase + i * 37) % 360, l = 0.45 + 0.2 * Math.sin(i + vizRot);
+          const a = l * 255; return [a * (0.6 + 0.4 * Math.cos(h / 57)), a * (0.6 + 0.4 * Math.cos(h / 57 - 2.1)), a * (0.6 + 0.4 * Math.cos(h / 57 - 4.2))];
+        });
+        const owner = new Int16Array(GW * GH);
+        for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+          const fx = x / GW, fy = y / GH; let best = 0, bd = 9;
+          for (let i = 0; i < N; i++) { const ddx = fx - sx[i], ddy = (fy - sy[i]) * 0.5625; const dd = ddx * ddx + ddy * ddy; if (dd < bd) { bd = dd; best = i; } }
+          owner[y * GW + x] = best;
+          const o = (y * GW + x) * 4, cc = cols[best];
+          d[o] = cc[0]; d[o + 1] = cc[1]; d[o + 2] = cc[2]; d[o + 3] = 255;
+        }
+        // the leading: darken any cell pixel whose neighbour belongs to another seed
+        for (let y = 0; y < GH; y++) for (let x = 0; x < GW; x++) {
+          const i = y * GW + x;
+          if ((x < GW - 1 && owner[i + 1] !== owner[i]) || (y < GH - 1 && owner[i + GW] !== owner[i])) { const o = i * 4; d[o] *= 0.15; d[o + 1] *= 0.15; d[o + 2] *= 0.15; }
+        }
+        gc.putImageData(img, 0, 0);
+        vctx.imageSmoothingEnabled = false;
+        vctx.drawImage(c, 0, 0, VW, VH);
+        vctx.imageSmoothingEnabled = true;
+        // a glow across the glass
+        vctx.globalCompositeOperation = 'lighter';
+        const g = vctx.createRadialGradient(VW * 0.5, VH * 0.2, 0, VW * 0.5, VH * 0.2, VH);
+        g.addColorStop(0, `hsla(${hueBase | 0},80%,70%,${(0.12 + bass * 0.2).toFixed(2)})`); g.addColorStop(1, 'rgba(0,0,0,0)');
+        vctx.fillStyle = g; vctx.fillRect(0, 0, VW, VH);
+        vctx.globalCompositeOperation = 'source-over';
+      },
+    });
+  })();
+
+  // Fireworks: every beat launches a shell that bursts into a shower
+  // of sparks with gravity and trails; the bass sets the size.
+  (function () {
+    let sparks = [], shells = [], avg = 0, cooldown = 0;
+    viz.registerMode({
+      id: 'fireworks', label: 'Fireworks',
+      init() { sparks = []; shells = []; avg = 0; cooldown = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, speed, vizUserScale } = ctx;
+        const energy = energyOf(freqData), bass = bassOf(freqData);
+        avg = avg * 0.94 + energy * 0.06; cooldown = Math.max(0, cooldown - 1);
+        fadeFrame(vctx, VW, VH, 0.18);
+        if (energy > avg * 1.2 + 0.03 && cooldown === 0) {
+          // launch speed sized so the shell tops out somewhere in the
+          // upper half (apex = v² / 2g against the 2.2g shell gravity)
+          shells.push({ x: VW * (0.2 + Math.random() * 0.6), y: VH, vy: -(VH * 0.036 + Math.random() * VH * 0.012) * Math.sqrt(vizUserScale), hue: (hueBase + Math.random() * 120) % 360, size: 60 + bass * 160 });
+          cooldown = 6;
+        }
+        const g = VH * 0.0006;
+        vctx.lineCap = 'round';
+        for (let i = shells.length - 1; i >= 0; i--) {
+          const sh = shells[i];
+          sh.x += (Math.random() - 0.5) * 2; sh.y += sh.vy * speed; sh.vy += g * 2.2 * speed;
+          vctx.strokeStyle = `hsl(${sh.hue | 0},60%,85%)`; vctx.lineWidth = 2;
+          vctx.beginPath(); vctx.moveTo(sh.x, sh.y); vctx.lineTo(sh.x, sh.y + VH * 0.02); vctx.stroke();
+          if (sh.vy >= -g * 6) {
+            shells.splice(i, 1);
+            const n = Math.round(sh.size);
+            for (let k = 0; k < n; k++) {
+              const a = (k / n) * Math.PI * 2 + Math.random() * 0.2, v = (0.5 + Math.random()) * VH * 0.008 * Math.sqrt(vizUserScale);
+              sparks.push({ x: sh.x, y: sh.y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, hue: sh.hue + (Math.random() - 0.5) * 40, life: 1, decay: 0.006 + Math.random() * 0.012 });
+            }
+          }
+        }
+        for (let i = sparks.length - 1; i >= 0; i--) {
+          const p = sparks[i];
+          p.vx *= 0.985; p.vy = p.vy * 0.985 + g * speed; p.x += p.vx * speed; p.y += p.vy * speed; p.life -= p.decay * speed;
+          if (p.life <= 0 || p.y > VH + 10) { sparks.splice(i, 1); continue; }
+          vctx.strokeStyle = `hsla(${p.hue | 0},100%,${(55 + p.life * 40) | 0}%,${p.life.toFixed(2)})`; vctx.lineWidth = 1.5 + p.life * 1.5;
+          vctx.beginPath(); vctx.moveTo(p.x, p.y); vctx.lineTo(p.x - p.vx * 2, p.y - p.vy * 2); vctx.stroke();
+        }
+        if (sparks.length > 4000) sparks.splice(0, sparks.length - 4000);
+      },
+    });
+  })();
+
+  // Screensaver: the picture, as the DVD logo, bouncing off the edges.
+  // A corner hit flashes the whole screen; the bass bloats the logo.
+  (function () {
+    const frame = offscreen();
+    let box = null, flash = 0, hue = 0;
+    viz.registerMode({
+      id: 'screensaver', label: 'Screensaver',
+      init() { box = null; flash = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const bass = bassOf(freqData);
+        const w = VW * 0.28 * vizUserScale * (1 + bass * 0.15), h = w * 0.5625;
+        if (!box) { box = { x: VW * 0.3, y: VH * 0.3, vx: 2.2, vy: 1.7 }; hue = hueBase; }
+        box.x += box.vx * speed; box.y += box.vy * speed;
+        let hitX = false, hitY = false;
+        if (box.x <= 0 || box.x + w >= VW) { box.vx *= -1; box.x = Math.max(0, Math.min(VW - w, box.x)); hitX = true; hue = (hue + 67) % 360; }
+        if (box.y <= 0 || box.y + h >= VH) { box.vy *= -1; box.y = Math.max(0, Math.min(VH - h, box.y)); hitY = true; hue = (hue + 67) % 360; }
+        if (hitX && hitY) flash = 1;
+        vctx.fillStyle = flash > 0 ? `hsl(${hue | 0},100%,${(flash * 95) | 0}%)` : '#000';
+        vctx.fillRect(0, 0, VW, VH);
+        flash = Math.max(0, flash - 0.06);
+        // the logo: the picture tinted the current colour, in a rounded frame
+        vctx.save();
+        vctx.beginPath(); vctx.roundRect(box.x, box.y, w, h, w * 0.06); vctx.clip();
+        vctx.fillStyle = `hsl(${hue | 0},100%,50%)`; vctx.fillRect(box.x, box.y, w, h);
+        if (videoFrame) {
+          const { c, ctx: fc } = frame(videoFrame.w, videoFrame.h); fc.putImageData(videoFrame.imageData, 0, 0);
+          vctx.globalCompositeOperation = 'multiply'; vctx.drawImage(c, box.x, box.y, w, h);
+          vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.35; vctx.drawImage(c, box.x, box.y, w, h); vctx.globalAlpha = 1;
+        }
+        vctx.restore();
+        vctx.fillStyle = `hsl(${hue | 0},100%,75%)`; vctx.font = `bold ${Math.round(h * 0.28)}px sans-serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+        vctx.fillText('WEED', box.x + w / 2, box.y + h * 0.5); vctx.textAlign = 'left';
+        vctx.font = `${Math.round(h * 0.13)}px sans-serif`; vctx.textAlign = 'center'; vctx.fillText('V I D E O', box.x + w / 2, box.y + h * 0.8); vctx.textAlign = 'left';
+      },
+    });
+  })();
+
+  // Slit-scan: every row of the picture comes from a different moment
+  // -- the top from now, the bottom from a second ago -- so anything
+  // that moves smears through time. The bass tilts the scan.
+  (function () {
+    const HIST = 30; let hist = [];
+    viz.registerMode({
+      id: 'slitscan', label: 'Slit-scan',
+      init() { hist = []; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, vizRot, vizUserScale } = ctx;
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        if (!videoFrame) { vctx.fillStyle = `hsl(${hueBase | 0},60%,40%)`; vctx.font = `${Math.round(VH / 20)}px monospace`; vctx.textAlign = 'center'; vctx.fillText('— no video playing —', VW / 2, VH / 2); vctx.textAlign = 'left'; return; }
+        const { w, h, imageData } = videoFrame;
+        const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').putImageData(imageData, 0, 0);
+        hist.push(c); if (hist.length > HIST) hist.shift();
+        const bass = bassOf(freqData);
+        const rows = 54, rh = VH / rows, srh = h / rows;
+        const tilt = Math.sin(vizRot * 2) * 0.5 + 0.5;          // which end is "now" drifts
+        for (let r = 0; r < rows; r++) {
+          const f = Math.abs(r / (rows - 1) - tilt);
+          const idx = Math.min(hist.length - 1, Math.round(f * (hist.length - 1) * (0.6 + bass * 0.8)));
+          const src = hist[hist.length - 1 - idx];
+          const sx = (VW - VW * vizUserScale) / 2;
+          vctx.drawImage(src, 0, r * srh, w, srh, sx, r * rh, VW * vizUserScale, rh + 1);
+        }
+      },
+    });
+  })();
+
+  // Skyline: the spectrum as a city in isometric view -- one tower per
+  // band, windows lit by loudness, the camera drifting round the block.
+  viz.registerMode({
+    id: 'skyline', label: 'Skyline',
+    draw(ctx) {
+      const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale } = ctx;
+      vctx.fillStyle = '#05030c'; vctx.fillRect(0, 0, VW, VH);
+      const N = 12, maxBin = Math.floor(freqData.length * 0.7);
+      const cell = Math.min(VW, VH) * 0.075 * vizUserScale, ang = vizRot * 0.4;
+      const cs = Math.cos(ang), sn = Math.sin(ang);
+      const proj = (gx, gy, z) => { const rx = gx * cs - gy * sn, ry = gx * sn + gy * cs; return [cx + rx * cell, cy + ry * cell * 0.5 - z + cell * 2.5]; };
+      // draw back to front along the view direction
+      const order = [];
+      for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const gx = i - N / 2 + 0.5, gy = j - N / 2 + 0.5; order.push({ i, j, gx, gy, depth: gx * sn + gy * cs }); }
+      order.sort((a, b) => a.depth - b.depth);
+      for (const t of order) {
+        const v = freqData[Math.floor(((t.i * N + t.j) / (N * N)) * maxBin)] / 255;
+        const hgt = v * cell * 6 + cell * 0.2, hue = (hueBase + v * 80 + t.i * 4) % 360;
+        const [x0, y0] = proj(t.gx - 0.4, t.gy - 0.4, 0), [x1, y1] = proj(t.gx + 0.4, t.gy - 0.4, 0), [x2, y2] = proj(t.gx + 0.4, t.gy + 0.4, 0), [x3, y3] = proj(t.gx - 0.4, t.gy + 0.4, 0);
+        const faces = [[[x0, y0], [x1, y1], [x2, y2], [x3, y3]]];
+        // top
+        vctx.fillStyle = `hsl(${hue | 0},70%,${(35 + v * 45) | 0}%)`;
+        vctx.beginPath(); vctx.moveTo(x0, y0 - hgt); vctx.lineTo(x1, y1 - hgt); vctx.lineTo(x2, y2 - hgt); vctx.lineTo(x3, y3 - hgt); vctx.closePath(); vctx.fill();
+        // the two visible sides, picked by which way they face
+        const sides = [[[x1, y1], [x2, y2]], [[x2, y2], [x3, y3]], [[x3, y3], [x0, y0]], [[x0, y0], [x1, y1]]];
+        for (const [[ax, ay], [bx, by]] of sides) {
+          const nx = by - ay, ny = ax - bx;               // outward-ish normal in screen space
+          if (ny <= 0) continue;                           // faces pointing up-screen are hidden
+          vctx.fillStyle = `hsl(${hue | 0},60%,${(nx > 0 ? 18 : 26) + v * 20 | 0}%)`;
+          vctx.beginPath(); vctx.moveTo(ax, ay); vctx.lineTo(bx, by); vctx.lineTo(bx, by - hgt); vctx.lineTo(ax, ay - hgt); vctx.closePath(); vctx.fill();
+          // windows
+          if (v > 0.15) { vctx.fillStyle = `hsla(50,100%,80%,${(v * 0.8).toFixed(2)})`; const rowsN = Math.floor(hgt / (cell * 0.3)); for (let r = 1; r < rowsN; r++) { const fy = r / rowsN; vctx.fillRect((ax + bx) / 2 - cell * 0.06, ay - hgt * fy + (by - ay) / 2, cell * 0.12, cell * 0.08); } }
+        }
+        void faces;
+      }
+    },
+  });
+
+  // Globe: a wireframe sphere, meridians and parallels, each ring
+  // bulging with its own band of the spectrum; spins with Speed.
+  viz.registerMode({
+    id: 'globe', label: 'Globe',
+    draw(ctx) {
+      const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale } = ctx;
+      fadeFrame(vctx, VW, VH, 0.35);
+      const R = Math.min(VW, VH) * 0.36 * vizUserScale, maxBin = Math.floor(freqData.length * 0.7);
+      const tilt = 0.4, spin = vizRot;
+      const P = (lat, lon) => {
+        const x = Math.cos(lat) * Math.cos(lon + spin), y = Math.sin(lat), z = Math.cos(lat) * Math.sin(lon + spin);
+        const y2 = y * Math.cos(tilt) - z * Math.sin(tilt), z2 = y * Math.sin(tilt) + z * Math.cos(tilt);
+        return [x, y2, z2];
+      };
+      vctx.lineWidth = 1.2;
+      const draw = (pts, hue, v) => {
+        vctx.beginPath();
+        let started = false;
+        for (const [x, y, z] of pts) {
+          const r = R * (1 + v * 0.25);
+          const sx = cx + x * r, sy = cy - y * r;
+          if (z < -0.05) { started = false; continue; }         // the far side
+          if (!started) { vctx.moveTo(sx, sy); started = true; } else vctx.lineTo(sx, sy);
+        }
+        vctx.strokeStyle = `hsla(${hue | 0},100%,${(50 + v * 40) | 0}%,${(0.35 + v * 0.65).toFixed(2)})`; vctx.stroke();
+      };
+      const LAT = 9, LON = 12, SEG = 48;
+      for (let i = 1; i < LAT; i++) {
+        const lat = (i / LAT - 0.5) * Math.PI, v = freqData[Math.floor((i / LAT) * maxBin * 0.5)] / 255;
+        draw(Array.from({ length: SEG + 1 }, (_, k) => P(lat, (k / SEG) * Math.PI * 2)), hueBase + i * 20, v);
+      }
+      for (let j = 0; j < LON; j++) {
+        const lon = (j / LON) * Math.PI * 2, v = freqData[Math.floor((0.5 + j / LON * 0.5) * maxBin)] / 255;
+        draw(Array.from({ length: SEG + 1 }, (_, k) => P((k / SEG - 0.5) * Math.PI, lon)), hueBase + 180 + j * 12, v);
+      }
+    },
+  });
+
+  // ══════════════════════════════════════════════════════════════════
+  //  MORE TRANSITIONS
+  // ══════════════════════════════════════════════════════════════════
+
+  // Blinds: venetian slats of the old picture tilt away, top to bottom
+  // with a slight lag down the window.
+  viz.registerTransition({
+    id: 'blinds', label: 'Blinds',
+    draw({ vctx, old, oldW, oldH, W, H, t }) {
+      const n = 12, sh = H / n, ssh = oldH / n;
+      for (let i = 0; i < n; i++) {
+        const k = clamp01(t * 1.4 - (i / n) * 0.4);
+        const open = Math.cos(k * Math.PI / 2);             // 1 flat .. 0 edge-on
+        if (open <= 0.02) continue;
+        vctx.save();
+        vctx.translate(0, i * sh + sh / 2); vctx.scale(1, open); vctx.translate(0, -sh / 2);
+        vctx.globalAlpha = 0.4 + 0.6 * open;
+        vctx.drawImage(old, 0, i * ssh, oldW, ssh, 0, 0, W, sh);
+        vctx.restore();
+      }
+    },
+  });
+
+  // Flip tiles: a grid of tiles, each spinning on its own axis to show
+  // the new picture behind, in a wave from one corner.
+  viz.registerTransition({
+    id: 'fliptiles', label: 'Flip tiles',
+    draw({ vctx, old, oldW, oldH, W, H, t, seed }) {
+      const cols = 8, rows = 5, tw = W / cols, th = H / rows, sw = oldW / cols, sh = oldH / rows;
+      const fromLeft = hash(seed) > 0.5;
+      for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+        const d = ((fromLeft ? c : cols - 1 - c) + r) / (cols + rows - 2);
+        const k = clamp01((t - d * 0.5) / 0.5);
+        const sx = Math.cos(k * Math.PI);                    // 1 .. -1
+        if (sx <= 0) continue;                               // past edge-on: the new picture
+        vctx.save();
+        vctx.translate(c * tw + tw / 2, r * th + th / 2); vctx.scale(sx, 1);
+        vctx.globalAlpha = 0.5 + 0.5 * sx;
+        vctx.drawImage(old, c * sw, r * sh, sw, sh, -tw / 2, -th / 2, tw, th);
+        vctx.restore();
+      }
+    },
+  });
+
+  // CRT off: the old picture collapses to a bright horizontal line,
+  // the line shrinks to a dot, the dot fades. Then the new picture.
+  viz.registerTransition({
+    id: 'crtoff', label: 'CRT off',
+    draw({ vctx, old, W, H, t }) {
+      vctx.fillStyle = '#000';
+      if (t < 0.45) {
+        const k = t / 0.45, h = H * Math.pow(1 - k, 3) + 3;
+        vctx.fillRect(0, 0, W, H);
+        vctx.save(); vctx.translate(0, H / 2); vctx.scale(1, h / H); vctx.translate(0, -H / 2);
+        vctx.filter = `brightness(${(1 + k * 2).toFixed(2)})`;
+        vctx.drawImage(old, 0, 0, W, H);
+        vctx.restore();
+      } else if (t < 0.8) {
+        const k = (t - 0.45) / 0.35, w = W * Math.pow(1 - k, 2) + 4;
+        vctx.fillRect(0, 0, W, H);
+        vctx.fillStyle = '#fff'; vctx.fillRect((W - w) / 2, H / 2 - 1.5, w, 3);
+      } else {
+        const k = (t - 0.8) / 0.2;
+        vctx.globalAlpha = 1 - k; vctx.fillRect(0, 0, W, H); vctx.globalAlpha = 1;
+        vctx.fillStyle = `rgba(255,255,255,${(1 - k).toFixed(2)})`; vctx.beginPath(); vctx.arc(W / 2, H / 2, 3 + k * 6, 0, Math.PI * 2); vctx.fill();
+      }
+    },
+  });
+
+  // Droplet: a ring of distortion spreads from the centre through the
+  // old picture -- concentric bands pushed in and out like a water
+  // surface -- and the picture drains away behind it.
+  viz.registerTransition({
+    id: 'droplet', label: 'Droplet',
+    draw({ vctx, old, W, H, t }) {
+      const rings = 28, maxR = Math.hypot(W, H) / 2, cx = W / 2, cy = H / 2;
+      const front = t * maxR * 1.2;
+      vctx.globalAlpha = 1 - t * t;
+      for (let i = rings - 1; i >= 0; i--) {
+        const r0 = (i / rings) * maxR, r1 = ((i + 1) / rings) * maxR;
+        const d = (r0 - front) / (maxR * 0.25);
+        const disp = Math.exp(-d * d) * Math.sin(d * 6) * 0.12;   // a wave packet around the front
+        const sc = 1 + disp;
+        vctx.save();
+        vctx.beginPath(); vctx.arc(cx, cy, r1, 0, Math.PI * 2); if (i > 0) { vctx.arc(cx, cy, r0, 0, Math.PI * 2, true); } vctx.clip();
+        vctx.translate(cx, cy); vctx.scale(sc, sc); vctx.translate(-cx, -cy);
+        vctx.drawImage(old, 0, 0, W, H);
+        vctx.restore();
+      }
+    },
+  });
+
+  // Blur: the old picture goes soft and washes out.
+  viz.registerTransition({
+    id: 'blur', label: 'Blur',
+    draw({ vctx, old, W, H, t }) {
+      vctx.globalAlpha = 1 - t * t;
+      vctx.filter = `blur(${(t * Math.max(8, W / 60)).toFixed(1)}px) brightness(${(1 + t * 0.6).toFixed(2)})`;
+      const k = 1 + t * 0.08;
+      vctx.translate(W / 2, H / 2); vctx.scale(k, k);
+      vctx.drawImage(old, -W / 2, -H / 2, W, H);
+    },
+  });
+
+  // Slide: the old picture slides off one side, the direction picked per run.
+  viz.registerTransition({
+    id: 'slide', label: 'Slide',
+    draw({ vctx, old, W, H, t, seed }) {
+      const dir = Math.floor(hash(seed) * 4), e = 1 - Math.pow(1 - t, 3);
+      const dx = dir === 0 ? -W * e : dir === 1 ? W * e : 0, dy = dir === 2 ? -H * e : dir === 3 ? H * e : 0;
+      vctx.drawImage(old, dx, dy, W, H);
+    },
+  });
+
+  // Flash: a hard white cut -- the old picture blows out to white, the
+  // new one fades up from it.
+  viz.registerTransition({
+    id: 'flash', label: 'Flash',
+    draw({ vctx, old, W, H, t }) {
+      if (t < 0.3) {
+        vctx.drawImage(old, 0, 0, W, H);
+        vctx.globalAlpha = t / 0.3; vctx.fillStyle = '#fff'; vctx.fillRect(0, 0, W, H);
+      } else {
+        vctx.globalAlpha = 1 - (t - 0.3) / 0.7; vctx.fillStyle = '#fff'; vctx.fillRect(0, 0, W, H);
       }
     },
   });

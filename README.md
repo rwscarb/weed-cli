@@ -187,7 +187,7 @@ The player's 🌀 button opens the **Orbit Visualizer**: a canvas driven by
 the track's audio (Web Audio analyser) and a low-res sample of its
 picture. Eleven built-in modes — Tunnel, Bars, Mirror, Scope, Spiral,
 Pixels, ASCII (six character sets, natural or neon), Plasma, Kaleido,
-Particles, Freefall — plus the ten in `web/orbit_extras.js` (next
+Particles, Freefall — plus the seventeen in `web/orbit_extras.js` (next
 section). Click the lit mode again for the plain video. Speed, React and
 Zoom retune every mode; every setting persists in the browser.
 
@@ -232,8 +232,11 @@ mode selector; a registered transition gets a Fade option and a turn in
 "Random". A plugin that throws is logged once and disabled without
 taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
 built entirely on that API and adds Halftone, Lava, Terrain, Rain,
-Lissajous, Ripples, Cube, VHS, Win95 and Joy Division, plus the Melt, Dissolve, Iris,
-Shatter, Wave, Spin, Zoom blur, RGB split, VHS and Win95 transitions; `web/orbit_plugin_example.js`
+Lissajous, Ripples, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
+glass, Fireworks, Screensaver, Slit-scan, Skyline and Globe, plus the
+Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS,
+Win95, Blinds, Flip tiles, CRT off, Droplet, Blur, Slide and Flash
+transitions; `web/orbit_plugin_example.js`
 is a minimal one to copy.
 
 ### Docker
@@ -453,7 +456,7 @@ just designed:
 - Kademlia DHT discovery, survives the announcing node going offline
 - Local web UI with live progress, QR onboarding, HTTP range streaming,
   optional two-tier token auth, and the guest party page with voting
-- Orbit Visualizer: 21 modes and 16 transitions behind a plugin API,
+- Orbit Visualizer: 28 modes and 23 transitions behind a plugin API,
   MJPEG network stream (VLC/Roku), Web MIDI control with keymap files,
   video swap — 44 Playwright tests against real Chromium (`tests/e2e/`)
 - Containerized node (`Dockerfile.node`, `docker-compose.node.yml`),
