@@ -7,7 +7,7 @@
 // set of effects, and the template for adding more. Drop the <script>
 // tag in index.html to get the built-ins only.
 //
-// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, Joy Division,
+// Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
@@ -319,7 +319,7 @@
     });
   })();
 
-  // Joy Division: Unknown Pleasures. Stacked white traces on black, each
+  // J Division: Unknown Pleasures. Stacked white traces on black, each
   // one a pulse of the spectrum shaped by a bell so it's busy in the
   // middle and flat at the sides, each trace blacking out whatever sits
   // behind it. New traces arrive at the bottom and the stack climbs.
@@ -342,7 +342,7 @@
       return out;
     }
     viz.registerMode({
-      id: 'joydivision', label: 'Joy Division',
+      id: 'joydivision', label: 'J Division',
       init() { rows = []; frameNo = 0; },
       draw(ctx) {
         const { vctx, VW, VH, cx, freqData, speed, vizUserScale } = ctx;
