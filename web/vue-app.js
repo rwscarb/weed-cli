@@ -380,10 +380,11 @@ const app = createApp({
       for (const t of this.party.tracks) present[this.indexLetter(t)] = true;
       return present;
     },
-    // what the DOM overlays show: the last six messages under 20 s old
+    // what the DOM overlays show: the last six messages under 45 s old
+    // (the canvas overlay in orbit_visualizer.js uses the same window)
     chatRecent() {
       const now = Date.now();
-      return this.chat.messages.filter(m => now - m.ts * 1000 < 20000).slice(-6);
+      return this.chat.messages.filter(m => now - m.ts * 1000 < 45000).slice(-6);
     },
     swapPickerStyle() {
       return {

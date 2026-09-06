@@ -1175,7 +1175,7 @@ window.orbitViz = (function () {
     // of transitions too, and inside the canvas (not the DOM) so every
     // viewer of the stream -- VLC, a Roku, the guest page's picture --
     // sees it.
-    const CHAT_SHOW_MS = 20000, CHAT_FADE_MS = 4000, CHAT_MAX = 6;
+    const CHAT_SHOW_MS = 45000, CHAT_FADE_MS = 5000, CHAT_MAX = 6;
     function drawChat() {
       const now = Date.now();
       const live = s.chatMessages.filter(m => now - m.ts * 1000 < CHAT_SHOW_MS).slice(-CHAT_MAX);
