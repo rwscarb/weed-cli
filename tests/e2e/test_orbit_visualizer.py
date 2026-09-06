@@ -436,3 +436,36 @@ def test_midi_keymap_exports_to_a_file_and_imports_back(page, golden_path_server
     assert next(b for b in exported if b['id'] == 'k1')['key'] == 'n*:60'
     assert next(b for b in exported if b['id'] == 'k3')['key'] is None
     assert page.evaluate("() => { try { window.orbitMidi.importKeymap({ hello: 1 }); return 'accepted'; } catch (e) { return e.message; } }") == 'not a weed Orbit keymap file'
+
+
+def test_an_undecided_encoder_on_an_action_row_fires_on_its_first_click(page, golden_path_server):
+    """Ryan: "I'm having to turn a knob 2 times to have it take effect
+    when bound to video only (toggle)". The encoder auto-detection held
+    the first few step-looking values of an undecided knob -- right for
+    a slider, pointless for an action, where a held click is a click
+    that did nothing. An action row now takes the very first click."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile(r'^Pad 12')))   # video only (toggle)
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 14, 1])")          # learned, fresh encoder, one click seen
+    lit = lambda: page.evaluate("() => document.querySelectorAll('#vizModes .active').length")
+    assert lit() == 1
+    page.evaluate("() => window.__midi.send([0xB0, 14, 1])")          # the first real click: video only
+    assert lit() == 0
+    page.evaluate("() => window.__midi.send([0xB0, 14, 1])")          # and straight back
+    assert lit() == 1
+    # a parameter row still gets the protective hold: one lone click on
+    # an undecided knob must not slam Speed to an end stop
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile(r'^K1$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
+    page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
+    assert page.locator('#speedVal').inner_text() == '1.0x'

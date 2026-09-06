@@ -256,7 +256,7 @@ window.orbitMidi = (function () {
   }
 
   // ── applying a control to a target ──────────────────────────────
-  function fire(b, kind, v, ccKey) {
+  function fire(b, kind, v, ccKey, forceRel) {
     const viz = window.orbitViz;
     if (!viz) return;
     const t = b.target;
@@ -283,7 +283,7 @@ window.orbitMidi = (function () {
       // click -- and, for the actions that have an opposite, fires that
       // on a counter-clockwise click, so one knob walks both ways.
       if (kind === 'note') viz.trigger(t);
-      else if (isRelative(b, ccKey)) {
+      else if (forceRel || isRelative(b, ccKey)) {
         const step = stepOf(v);
         if (step > 0) viz.trigger(t);
         else if (step < 0 && OPPOSITE[t]) viz.trigger(OPPOSITE[t]);
@@ -347,10 +347,16 @@ window.orbitMidi = (function () {
       return;
     }
     const b = find(kind === 'note' ? 'n' : 'c', ch, n);
-    if (b && kind === 'cc' && undecided(b, ccKey, v)) {
+    const isAction = b && !b.target.startsWith('param:') && !b.target.startsWith('select:');
+    if (b && kind === 'cc' && undecided(b, ccKey, v) && !isAction) {
+      // a parameter: holding a lone step-looking value is what keeps an
+      // undecided knob from slamming a slider to an end stop
       pendingSteps[ccKey] = (pendingSteps[ccKey] || 0) + stepOf(v);
     } else if (b) {
-      fire(b, kind, v, ccKey);
+      // an action row takes a step-looking value as a click straight
+      // away: the worst an absolute knob could do here is fire once,
+      // while holding it meant the first two or three clicks did nothing
+      fire(b, kind, v, ccKey, isAction && kind === 'cc' && isStep(v) && detectedRel[ccKey] === undefined);
     }
     if (kind === 'cc') lastCC[ccKey] = v;
     render();
