@@ -242,42 +242,100 @@
     },
   });
 
-  // Ripples: every beat drops a ring in the pond; rings expand, thin
-  // out and fade, a pulsing core in the middle riding the bass.
+  // Ripples, as a 33⅓: a black LP turning at record speed, its grooves
+  // lit band by band by the spectrum, a beat sending a bright ripple
+  // out across them from the label to the rim. The label carries the
+  // track's title and spins with the disc; a tonearm tracks inward
+  // with the track's own progress. The bass rocks the platter.
   (function () {
-    let rings = [], avg = 0, cooldown = 0;
+    let rings = [], avg = 0, cooldown = 0, angle = 0, lastNow = 0;
+    const player = () => document.querySelector('#global-player video:not(.swap-video)');
     viz.registerMode({
-      id: 'ripples', label: 'Ripples',
-      init() { rings = []; avg = 0; cooldown = 0; },
+      id: 'ripples', label: 'Vinyl 33',
+      init() { rings = []; avg = 0; cooldown = 0; angle = 0; lastNow = 0; },
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale, vizRot } = ctx;
-        const energy = energyOf(freqData), bass = bassOf(freqData);
-        avg = avg * 0.94 + energy * 0.06;
-        cooldown = Math.max(0, cooldown - 1);
-        // a beat: noticeably louder than the recent average, not too soon after the last
-        if (energy > avg * 1.25 + 0.04 && cooldown === 0) { rings.push({ r: 0, hue: (hueBase + rings.length * 37) % 360, w: 2 + energy * 8 }); cooldown = 8; }
-        fadeFrame(vctx, VW, VH, 0.22);
-        const maxR = Math.hypot(VW, VH) * 0.55;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
+        const now = performance.now();
+        if (lastNow) angle += ((now - lastNow) / 1000) * (2 * Math.PI * 33.333 / 60) * speed;   // 33⅓ rpm, Speed scales it
+        lastNow = now;
+        const energy = energyOf(freqData), bass = bassOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        avg = avg * 0.94 + energy * 0.06; cooldown = Math.max(0, cooldown - 1);
+        if (energy > avg * 1.2 + 0.04 && cooldown === 0) { rings.push({ r: 0, w: 1 + energy * 3 }); cooldown = 8; }
+        vctx.fillStyle = '#0a0a0c'; vctx.fillRect(0, 0, VW, VH);
+        const R = Math.min(VW, VH) * 0.46 * vizUserScale * (1 + bass * 0.015), RL = R * 0.36, RH = R * 0.018;
+        vctx.save();
+        vctx.translate(cx, cy);
+        // the platter: near-black, a whisper of a sheen that turns with it
+        vctx.beginPath(); vctx.arc(0, 0, R, 0, Math.PI * 2);
+        const disc = vctx.createRadialGradient(0, 0, RL, 0, 0, R);
+        disc.addColorStop(0, '#16161a'); disc.addColorStop(1, '#0c0c0f');
+        vctx.fillStyle = disc; vctx.fill();
+        vctx.save(); vctx.clip();
+        vctx.rotate(angle);
+        const sheen = vctx.createLinearGradient(-R, -R, R, R);
+        sheen.addColorStop(0.42, 'rgba(255,255,255,0)'); sheen.addColorStop(0.5, 'rgba(255,255,255,0.07)'); sheen.addColorStop(0.58, 'rgba(255,255,255,0)');
+        vctx.fillStyle = sheen; vctx.fillRect(-R, -R, R * 2, R * 2);
+        vctx.restore();
+        // the grooves: one ring per band, lit by its loudness
+        const n = Math.max(24, Math.floor((R - RL) / Math.max(2, R * 0.012)));
+        vctx.lineWidth = 1;
+        for (let i = 0; i < n; i++) {
+          const f = i / (n - 1), r = R - f * (R - RL) * 0.98;
+          const v = freqData[Math.floor(f * maxBin)] / 255;          // outer grooves = low end
+          vctx.beginPath(); vctx.arc(0, 0, r, 0, Math.PI * 2);
+          vctx.strokeStyle = v > 0.04 ? `hsla(${(hueBase + f * 60) | 0},70%,${(25 + v * 55) | 0}%,${(0.12 + v * 0.6).toFixed(2)})` : 'rgba(255,255,255,0.06)';
+          vctx.stroke();
+        }
+        // the ripples: a beat's ring runs out across the grooves
         vctx.lineCap = 'round';
         for (let i = rings.length - 1; i >= 0; i--) {
-          const g = rings[i]; g.r += (2.5 + g.r * 0.02) * speed * vizUserScale;
-          const life = 1 - g.r / maxR; if (life <= 0) { rings.splice(i, 1); continue; }
-          vctx.beginPath(); vctx.arc(cx, cy, g.r, 0, Math.PI * 2);
-          vctx.strokeStyle = `hsla(${g.hue | 0},100%,60%,${life.toFixed(2)})`; vctx.lineWidth = g.w * life + 0.5; vctx.stroke();
+          const g = rings[i]; g.r += (R * 0.012) * speed;
+          const r = RL + g.r; if (r > R) { rings.splice(i, 1); continue; }
+          const life = 1 - g.r / (R - RL);
+          vctx.beginPath(); vctx.arc(0, 0, r, 0, Math.PI * 2);
+          vctx.strokeStyle = `hsla(${hueBase | 0},100%,80%,${(life * 0.9).toFixed(2)})`; vctx.lineWidth = g.w * life + 0.5; vctx.stroke();
         }
-        // the core: a ring of spokes sized by the bass
-        const core = Math.min(VW, VH) * 0.06 * vizUserScale * (1 + bass * 1.5);
-        vctx.beginPath();
-        for (let i = 0; i <= 64; i++) {
-          const th = (i / 64) * Math.PI * 2 + vizRot;
-          const v = freqData[Math.floor((i / 64) * freqData.length * 0.5)] / 255;
-          const r = core * (1 + v * 0.8);
-          const x = cx + Math.cos(th) * r, y = cy + Math.sin(th) * r;
-          if (i === 0) vctx.moveTo(x, y); else vctx.lineTo(x, y);
-        }
-        vctx.closePath();
-        vctx.fillStyle = `hsla(${(hueBase + 180) | 0},100%,60%,0.5)`; vctx.fill();
-        vctx.strokeStyle = `hsl(${(hueBase + 180) | 0},100%,80%)`; vctx.lineWidth = 2; vctx.stroke();
+        // the label, spinning with the disc
+        vctx.save(); vctx.rotate(angle);
+        vctx.beginPath(); vctx.arc(0, 0, RL, 0, Math.PI * 2);
+        vctx.fillStyle = `hsl(${hueBase | 0},60%,${(38 + bass * 12) | 0}%)`; vctx.fill();
+        vctx.lineWidth = Math.max(1, RL * 0.02); vctx.strokeStyle = 'rgba(0,0,0,0.5)'; vctx.stroke();
+        vctx.beginPath(); vctx.arc(0, 0, RL * 0.82, 0, Math.PI * 2); vctx.strokeStyle = 'rgba(255,255,255,0.25)'; vctx.lineWidth = 1; vctx.stroke();
+        const fs = Math.max(8, RL * 0.13);
+        vctx.fillStyle = 'rgba(255,255,255,0.9)'; vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+        vctx.font = `bold ${fs}px serif`; vctx.fillText('WEED RECORDS', 0, -RL * 0.45);
+        const titleEl = document.querySelector('#global-player .player-title');
+        let title = (titleEl ? titleEl.textContent : '').trim().replace(/\.(mp4|m4v|mkv|webm|mov|avi|mp3|m4a|flac|ogg|wav)$/i, '');
+        vctx.font = `${fs * 0.85}px sans-serif`;
+        while (title.length > 3 && vctx.measureText(title).width > RL * 1.5) title = title.slice(0, -2) + '…';
+        vctx.fillText(title || '—', 0, -RL * 0.2);
+        vctx.font = `${fs * 0.7}px sans-serif`; vctx.fillText('SIDE A', 0, RL * 0.32);
+        vctx.font = `bold ${fs * 0.8}px sans-serif`; vctx.fillText('33⅓ RPM', 0, RL * 0.55);
+        vctx.textAlign = 'left';
+        vctx.restore();
+        // the spindle hole
+        vctx.beginPath(); vctx.arc(0, 0, RH, 0, Math.PI * 2); vctx.fillStyle = '#0a0a0c'; vctx.fill();
+        vctx.restore();
+        // the tonearm, from a pivot off the top-right of the platter,
+        // its needle riding inward with the track
+        const v = player();
+        const progress = v && v.duration > 0 ? Math.min(1, v.currentTime / v.duration) : ((now / 240000) % 1);
+        const rNeedle = R * 0.97 - progress * (R * 0.97 - RL * 1.05);
+        const px = cx + R * 0.95, py = cy - R * 1.0;                  // pivot
+        // the needle sits on the disc at radius rNeedle, at arm's reach
+        // from the pivot: the arm's length is the pivot's distance to
+        // the spindle, so the two circles meet where the needle goes
+        const armLen = Math.hypot(px - cx, py - cy);
+        const t = Math.atan2(cy - py, cx - px);
+        const cosA = Math.max(-1, Math.min(1, (2 * armLen * armLen - rNeedle * rNeedle) / (2 * armLen * armLen)));
+        const a = t + Math.acos(cosA);
+        const nx = px + Math.cos(a) * armLen, ny = py + Math.sin(a) * armLen;
+        vctx.lineCap = 'round';
+        vctx.beginPath(); vctx.arc(px, py, R * 0.08, 0, Math.PI * 2); vctx.fillStyle = '#2a2a30'; vctx.fill();
+        vctx.strokeStyle = '#8a8a92'; vctx.lineWidth = Math.max(3, R * 0.02); vctx.beginPath(); vctx.moveTo(px, py); vctx.lineTo(nx, ny); vctx.stroke();
+        vctx.strokeStyle = '#c8c8d0'; vctx.lineWidth = Math.max(1.5, R * 0.008); vctx.beginPath(); vctx.moveTo(px, py); vctx.lineTo(nx, ny); vctx.stroke();
+        vctx.beginPath(); vctx.arc(nx, ny, R * 0.035, 0, Math.PI * 2); vctx.fillStyle = '#d9d9e0'; vctx.fill();
+        vctx.beginPath(); vctx.arc(nx, ny, R * 0.012, 0, Math.PI * 2); vctx.fillStyle = `hsl(${hueBase | 0},90%,60%)`; vctx.fill();
       },
     });
   })();
