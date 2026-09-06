@@ -1302,34 +1302,52 @@
     },
   });
 
-  // Globe: the Earth, spinning, lit from the front. The continents are
-  // coarse polygons painted once into an equirectangular map; every
-  // frame the visible disc is ray-cast back onto that map, so the far
-  // side is properly hidden. Each continent has a band of the spectrum:
-  // it glows with it, and the whole globe swells on the bass. A faint
-  // graticule rides on top.
+  // Globe: the Earth, spinning, lit from the front. The coastlines come
+  // from Natural Earth's 110m land set (web/land.json, simplified to a
+  // few thousand points), painted once into an equirectangular map;
+  // every frame the visible disc is ray-cast back onto that map, so the
+  // far side is properly hidden. Land is split into eight regions by
+  // where it is (the Americas, Greenland, Europe, Africa, Asia,
+  // Australia and Antarctica), each with a band of the spectrum: it
+  // glows with it, its coast shivers with the waveform, and the whole
+  // globe swells on the bass. A faint graticule rides on top. Until the
+  // file arrives (or if it can't), a coarse hand-drawn set stands in.
   (function () {
-    // [id, [lon, lat] ...] -- rough outlines, enough to be unmistakable
-    const LAND = [
-      [1, [-168, 66], [-140, 70], [-95, 80], [-70, 62], [-55, 47], [-75, 40], [-81, 31], [-80, 25], [-97, 26], [-105, 20], [-90, 15], [-77, 8], [-84, 10], [-105, 23], [-115, 30], [-125, 40], [-125, 49], [-135, 58], [-150, 60], [-165, 60]],
-      [2, [-55, 60], [-45, 60], [-20, 70], [-25, 80], [-60, 82], [-70, 76], [-60, 66]],
-      [3, [-77, 8], [-60, 10], [-50, 0], [-35, -5], [-40, -20], [-50, -30], [-60, -40], [-68, -52], [-72, -45], [-72, -30], [-80, -10], [-80, 0]],
-      [4, [-10, 36], [-8, 44], [0, 48], [10, 55], [20, 60], [30, 70], [60, 72], [90, 75], [120, 72], [150, 70], [180, 68], [175, 62], [160, 55], [140, 45], [120, 35], [120, 22], [108, 10], [100, 5], [95, 15], [88, 22], [78, 8], [72, 20], [58, 25], [50, 15], [42, 13], [35, 30], [28, 37], [22, 37], [15, 40], [0, 40]],
-      [5, [-17, 15], [-10, 32], [10, 37], [30, 31], [43, 12], [51, 12], [40, -5], [35, -25], [25, -34], [15, -30], [12, -15], [9, 0], [-5, 5]],
-      [6, [114, -22], [128, -14], [137, -12], [142, -11], [153, -27], [148, -38], [140, -37], [130, -32], [115, -34]],
-      [7, [-180, -68], [-120, -70], [-60, -66], [0, -69], [60, -66], [120, -66], [180, -68], [180, -90], [-180, -90]],
-      [8, [130, 31], [140, 36], [142, 42], [135, 35]],
-      [5, [44, -12], [50, -15], [48, -25], [44, -22]],
-      [4, [-6, 50], [-2, 58], [2, 53], [1, 50]],
+    const COARSE = [
+      [[-168, 66], [-140, 70], [-95, 80], [-70, 62], [-55, 47], [-75, 40], [-81, 31], [-80, 25], [-97, 26], [-105, 20], [-90, 15], [-77, 8], [-84, 10], [-105, 23], [-115, 30], [-125, 40], [-125, 49], [-135, 58], [-150, 60], [-165, 60]],
+      [[-55, 60], [-45, 60], [-20, 70], [-25, 80], [-60, 82], [-70, 76], [-60, 66]],
+      [[-77, 8], [-60, 10], [-50, 0], [-35, -5], [-40, -20], [-50, -30], [-60, -40], [-68, -52], [-72, -45], [-72, -30], [-80, -10], [-80, 0]],
+      [[-10, 36], [-8, 44], [0, 48], [10, 55], [20, 60], [30, 70], [60, 72], [90, 75], [120, 72], [150, 70], [180, 68], [175, 62], [160, 55], [140, 45], [120, 35], [120, 22], [108, 10], [100, 5], [95, 15], [88, 22], [78, 8], [72, 20], [58, 25], [50, 15], [42, 13], [35, 30], [28, 37], [22, 37], [15, 40], [0, 40]],
+      [[-17, 15], [-10, 32], [10, 37], [30, 31], [43, 12], [51, 12], [40, -5], [35, -25], [25, -34], [15, -30], [12, -15], [9, 0], [-5, 5]],
+      [[114, -22], [128, -14], [137, -12], [142, -11], [153, -27], [148, -38], [140, -37], [130, -32], [115, -34]],
+      [[-180, -68], [-120, -70], [-60, -66], [0, -69], [60, -66], [120, -66], [180, -68], [180, -90], [-180, -90]],
     ];
-    const MW = 360, MH = 180;
-    let map = null;
+    let polys = COARSE, loaded = false, map = null;
+    function loadLand() {
+      if (loaded) return; loaded = true;
+      fetch('land.json').then(r => (r.ok ? r.json() : null)).then(data => {
+        if (Array.isArray(data) && data.length) { polys = data; map = null; }
+      }).catch(() => { /* the coarse set stays */ });
+    }
+    // which band a piece of land belongs to, by where it is
+    function regionOf(lon, lat) {
+      if (lat < -60) return 7;                                   // Antarctica
+      if (lon < -30) {
+        if (lat > 59 && lon > -75) return 2;                     // Greenland
+        return lat > 12 ? 1 : 3;                                 // North / South America
+      }
+      if (lon > 110 && lat < -10) return 6;                      // Australia, New Zealand
+      if (lon < 60 && lat > 35) return 4;                        // Europe
+      if (lon < 34 || (lon < 52 && lat < 12)) return lat > -40 ? 5 : 7;   // Africa
+      return 8;                                                  // Asia, Arabia, the islands
+    }
+    const MW = 720, MH = 360;
     function landMap() {
       if (map) return map;
       const c = document.createElement('canvas'); c.width = MW; c.height = MH; const g = c.getContext('2d');
       g.fillStyle = '#000'; g.fillRect(0, 0, MW, MH);
-      for (const [id, ...pts] of LAND) {
-        g.fillStyle = `rgb(${id * 25},0,0)`;
+      g.fillStyle = '#fff';
+      for (const pts of polys) {
         g.beginPath();
         pts.forEach(([lon, lat], i) => { const x = (lon + 180) / 360 * MW, y = (90 - lat) / 180 * MH; if (i === 0) g.moveTo(x, y); else g.lineTo(x, y); });
         g.closePath(); g.fill();
@@ -1342,6 +1360,7 @@
       id: 'globe', label: 'Globe',
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale } = ctx;
+        loadLand();
         const M = landMap();
         const bass = bassOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
         const band = new Array(9).fill(0);
@@ -1361,7 +1380,7 @@
           const lat = Math.asin(Math.max(-1, Math.min(1, y))), lon = Math.atan2(z, x) - spin;
           const u = ((lon / (Math.PI * 2)) % 1 + 1.5) % 1, v = 0.5 - lat / Math.PI;
           const mi = ((Math.min(MH - 1, (v * MH) | 0)) * MW + Math.min(MW - 1, (u * MW) | 0)) * 4;
-          const id = Math.round(M[mi] / 25);
+          const id = M[mi] > 127 ? regionOf(lon * 180 / Math.PI - Math.floor((lon / (2 * Math.PI)) + 0.5) * 360, lat * 180 / Math.PI) : 0;
           const light = 0.35 + 0.65 * Math.max(0, nx * -0.4 + ny * 0.3 + nz * 0.85);   // lit from upper-left-front
           const o = (py * N + px) * 4;
           if (id) {
@@ -1397,35 +1416,32 @@
         const wave = ctx.waveData, wn = wave.length, energy = energyOf(freqData);
         const amp = R * 0.07 * (0.5 + energy * 2);      // a good shiver: several percent of the globe at a normal level
         vctx.lineWidth = Math.max(1, R * 0.006); vctx.lineJoin = 'round';
+        const D = Math.PI / 180;
         let k = 0;
-        for (const [id, ...pts] of LAND) {
-          if (id === 7) continue;                                   // Antarctica's edge is the map's, not a coast
-          // walk the outline in ~2° steps so the trace has room to wiggle
-          const path = [];
+        const strokeRun = (id) => { const e = band[id], h = (hue0 + id * 38) % 360; vctx.strokeStyle = `hsla(${h | 0},100%,${(70 + e * 25) | 0}%,${(0.55 + e * 0.45).toFixed(2)})`; vctx.shadowColor = `hsla(${h | 0},100%,70%,0.8)`; vctx.shadowBlur = R * 0.02 * (1 + e * 2); vctx.stroke(); };
+        for (const pts of polys) {
+          if (pts.length < 4) continue;
+          // long edges (the coarse set, or a straight run of coast) get
+          // extra points so the trace has room to wiggle
+          const path = [], reg = [];
           for (let i = 0; i < pts.length; i++) {
             const [lon0, lat0] = pts[i], [lon1, lat1] = pts[(i + 1) % pts.length];
-            const steps = Math.max(1, Math.round(Math.hypot(lon1 - lon0, lat1 - lat0) / 2));
-            for (let sIdx = 0; sIdx < steps; sIdx++) { const f = sIdx / steps; path.push(P((lat0 + (lat1 - lat0) * f) * Math.PI / 180, (lon0 + (lon1 - lon0) * f) * Math.PI / 180)); }
+            const steps = Math.max(1, Math.min(8, Math.round(Math.hypot(lon1 - lon0, lat1 - lat0) / 2.5)));
+            for (let sIdx = 0; sIdx < steps; sIdx++) { const f = sIdx / steps; const lon = lon0 + (lon1 - lon0) * f, lat = lat0 + (lat1 - lat0) * f; path.push(P(lat * D, lon * D)); reg.push(regionOf(lon, lat)); }
           }
-          const e = band[id], h = (hue0 + id * 38) % 360;
-          vctx.strokeStyle = `hsla(${h | 0},100%,${(70 + e * 25) | 0}%,${(0.55 + e * 0.45).toFixed(2)})`;
-          vctx.shadowColor = `hsla(${h | 0},100%,70%,0.8)`; vctx.shadowBlur = R * 0.02 * (1 + e * 2);
-          vctx.beginPath();
-          let on = false;
+          let on = false, cur = -1;
           for (let i = 0; i < path.length; i++) {
-            const [x, y, z] = path[i];
-            if (z < 0.02) { on = false; k++; continue; }
-            const [px, py] = [cx + x * R, cy - y * R];
+            const [x, y, z] = path[i], id = reg[i];
+            if (z < 0.02 || id === 7) { if (on) strokeRun(cur); on = false; k += 5; continue; }
+            if (on && id !== cur) { strokeRun(cur); on = false; }
+            const px = cx + x * R, py = cy - y * R;
             const [nx0, ny0] = path[(i + 1) % path.length], [nx1, ny1] = path[(i - 1 + path.length) % path.length];
-            // screen-space normal from the neighbours' direction
             let tx = nx0 - nx1, ty = -(ny0 - ny1); const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
-            // stride through the waveform so neighbouring coast points
-            // get different samples: a jagged trace, not a smooth offset
             const disp = (wave[(k += 5) % wn] / 128 - 1) * amp;
             const qx = px + ty * disp, qy = py - tx * disp;
-            if (!on) { vctx.moveTo(qx, qy); on = true; } else vctx.lineTo(qx, qy);
+            if (!on) { vctx.beginPath(); vctx.moveTo(qx, qy); on = true; cur = id; } else vctx.lineTo(qx, qy);
           }
-          vctx.stroke();
+          if (on) strokeRun(cur);
         }
         vctx.shadowBlur = 0;
       },

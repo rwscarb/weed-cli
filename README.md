@@ -236,7 +236,8 @@ Lissajous, Ripples, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
 glass, Fireworks, Screensaver, Slit-scan, Skyline and Globe, plus the
 Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS,
 Win95, Blinds, Flip tiles, CRT off, Droplet, Blur, Slide and Flash
-transitions; `web/orbit_plugin_example.js`
+transitions (Globe's coastlines are Natural Earth's public-domain 110m
+land set, simplified into `web/land.json`); `web/orbit_plugin_example.js`
 is a minimal one to copy.
 
 ### Docker
