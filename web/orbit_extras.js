@@ -1390,6 +1390,44 @@
         const ring = pts => { vctx.beginPath(); let on = false; for (const [x, y, z] of pts) { if (z < 0) { on = false; continue; } const sx = cx + x * R, sy = cy - y * R; if (!on) { vctx.moveTo(sx, sy); on = true; } else vctx.lineTo(sx, sy); } vctx.stroke(); };
         for (let i = 1; i < 6; i++) ring(Array.from({ length: 49 }, (_, k) => P((i / 6 - 0.5) * Math.PI, (k / 48) * Math.PI * 2)));
         for (let j = 0; j < 8; j++) ring(Array.from({ length: 49 }, (_, k) => P((k / 48 - 0.5) * Math.PI, (j / 8) * Math.PI * 2)));
+        // the coastlines as an oscilloscope trace: the waveform runs
+        // along every shore, each point pushed off the coast along its
+        // normal by the sample under it, so the borders shiver with the
+        // sound the way Mirror's centre line does
+        const wave = ctx.waveData, wn = wave.length, energy = energyOf(freqData);
+        const amp = R * 0.07 * (0.5 + energy * 2);      // a good shiver: several percent of the globe at a normal level
+        vctx.lineWidth = Math.max(1, R * 0.006); vctx.lineJoin = 'round';
+        let k = 0;
+        for (const [id, ...pts] of LAND) {
+          if (id === 7) continue;                                   // Antarctica's edge is the map's, not a coast
+          // walk the outline in ~2° steps so the trace has room to wiggle
+          const path = [];
+          for (let i = 0; i < pts.length; i++) {
+            const [lon0, lat0] = pts[i], [lon1, lat1] = pts[(i + 1) % pts.length];
+            const steps = Math.max(1, Math.round(Math.hypot(lon1 - lon0, lat1 - lat0) / 2));
+            for (let sIdx = 0; sIdx < steps; sIdx++) { const f = sIdx / steps; path.push(P((lat0 + (lat1 - lat0) * f) * Math.PI / 180, (lon0 + (lon1 - lon0) * f) * Math.PI / 180)); }
+          }
+          const e = band[id], h = (hue0 + id * 38) % 360;
+          vctx.strokeStyle = `hsla(${h | 0},100%,${(70 + e * 25) | 0}%,${(0.55 + e * 0.45).toFixed(2)})`;
+          vctx.shadowColor = `hsla(${h | 0},100%,70%,0.8)`; vctx.shadowBlur = R * 0.02 * (1 + e * 2);
+          vctx.beginPath();
+          let on = false;
+          for (let i = 0; i < path.length; i++) {
+            const [x, y, z] = path[i];
+            if (z < 0.02) { on = false; k++; continue; }
+            const [px, py] = [cx + x * R, cy - y * R];
+            const [nx0, ny0] = path[(i + 1) % path.length], [nx1, ny1] = path[(i - 1 + path.length) % path.length];
+            // screen-space normal from the neighbours' direction
+            let tx = nx0 - nx1, ty = -(ny0 - ny1); const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+            // stride through the waveform so neighbouring coast points
+            // get different samples: a jagged trace, not a smooth offset
+            const disp = (wave[(k += 5) % wn] / 128 - 1) * amp;
+            const qx = px + ty * disp, qy = py - tx * disp;
+            if (!on) { vctx.moveTo(qx, qy); on = true; } else vctx.lineTo(qx, qy);
+          }
+          vctx.stroke();
+        }
+        vctx.shadowBlur = 0;
       },
     });
   })();
