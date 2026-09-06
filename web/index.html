@@ -567,6 +567,9 @@
               :disabled="!player.signerPubkey || library.subscriptions.has(player.signerPubkey)"
               :title="!player.signerPubkey ? 'publisher unknown for this download' : (library.subscriptions.has(player.signerPubkey) ? 'Subscribed' : 'Subscribe')"
               @click.stop="subscribe(player.signerPubkey)">{{ player.signerPubkey && library.subscriptions.has(player.signerPubkey) ? '★' : '☆' }}</button>
+      <!-- the same picker Discover/Downloads rows open, for whatever's playing -->
+      <button type="button" class="icon-btn playlist-add-btn" v-if="player.contentHash" title="Add to playlist"
+              @click.stop="openPlaylistPicker($event, library.downloads[player.contentHash] || { content_hash: player.contentHash, title: player.title, signer_pubkey: player.signerPubkey })">♫+</button>
       <button type="button" class="icon-btn copy-stream-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
       <!-- video swap: another download's picture over this track's audio (see vue-app.js setVideoSwap) -->
       <button type="button" class="icon-btn swap-btn" :class="{active: player.swap}"

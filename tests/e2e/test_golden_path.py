@@ -613,3 +613,21 @@ def test_party_view_alphabetical_index_jumps_by_letter(page, golden_path_server,
     first_q = page.locator('.party-tracks li[data-letter="Q"]').first
     box = first_q.bounding_box()
     assert abs(box['y'] - (sticky['y'] + sticky['height'])) < 12
+
+
+def test_player_header_stacks_the_marquee_above_the_buttons_with_an_add_to_playlist(page, golden_path_server):
+    """Ryan: "move the marquee above the buttons and add a button to add
+    to playlist." The title row sits above the controls row, and the
+    header's ♫+ opens the same picker the table rows use, for whatever
+    is playing."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    title = page.locator('#global-player .player-title').bounding_box()
+    controls = page.locator('#global-player .player-controls').bounding_box()
+    assert title['y'] + title['height'] <= controls['y'] + 1, (title, controls)
+    page.click('#global-player .player-controls .playlist-add-btn')
+    page.wait_for_selector('#playlist-picker:not(.hidden)')
+    assert page.evaluate("vm => vm.playlistPicker.item.content_hash", vm) == golden_path_server['content_hash']
+    page.fill('#playlist-picker .playlist-picker-new input', 'from the player')
+    page.click('#playlist-picker .playlist-picker-new button[type=submit]')
+    page.wait_for_function("vm => vm.library.playlists.some(p => p.name === 'from the player' && p.items.length === 1)", arg=vm)

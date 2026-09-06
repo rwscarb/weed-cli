@@ -658,9 +658,12 @@ td button {
 
 .player-header {
   display: flex;
+  /* two rows: the title (marquee) on its own line above, the buttons
+     below -- the title used to fight the buttons for one row */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.25rem 0.5rem;
   padding: 0.35rem 0.5rem;
   background: var(--bg);
   border-bottom: 1px solid var(--border);
@@ -756,7 +759,10 @@ td button {
 .player-controls {
   display: flex;
   gap: 0.25rem;
-  flex: none;
+  /* the whole second row, buttons ranged right */
+  flex: 0 0 100%;
+  justify-content: flex-end;
+  flex-wrap: wrap;
 }
 
 .player-controls button {
