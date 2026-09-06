@@ -2049,6 +2049,25 @@ code {
 .random-pool-item input { margin: 0; }
 #randomPoolBtn { font-size: 0.85rem; padding: 0 0.35rem; }
 
+/* ── party chat ──────────────────────────────────────────────────── */
+/* over the picture: bottom-left stack, newest last, clicks pass through */
+.chat-overlay { position: absolute; left: 0.6rem; bottom: 0.6rem; right: 30%; display: flex; flex-direction: column; gap: 0.25rem; pointer-events: none; z-index: 3; }
+.chat-line { align-self: flex-start; max-width: 100%; background: rgba(0,0,0,0.55); color: #fff; border-radius: 6px; padding: 0.15rem 0.5rem; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-admin { color: #7ee8a2; }
+.chat-guest { color: #ffd166; }
+.party-stream-off { position: relative; min-height: 6rem; }
+.party-chat { display: flex; flex-direction: column; gap: 0.4rem; }
+.party-chat h3 { display: flex; align-items: center; gap: 0.6rem; }
+.chat-list { max-height: 14rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.2rem; padding: 0.4rem 0.5rem; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; font-size: 0.85rem; }
+.chat-msg { overflow-wrap: anywhere; }
+.chat-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+/* a bare row, not the global form card (column, padded, panel-coloured) */
+.chat-form { display: flex; flex-direction: row; align-items: center; gap: 0.4rem; padding: 0; background: none; border: none; border-radius: 0; max-width: none; }
+.chat-form .chat-name { flex: 0 0 7rem; min-width: 0; }
+.chat-form .chat-input { flex: 1 1 auto; min-width: 0; }
+.chat-error { color: #e06c75; font-size: 0.85rem; }
+.admin-chat { max-width: 40rem; margin: 0.75rem 0 1.25rem; }
+
 /* ── MIDI controller panel (orbit_midi.js) ───────────────────────── */
 #orbit-egg-dialog .midi-panel { flex-direction: column; align-items: stretch; gap: 0.4rem; }
 .midi-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); flex-wrap: wrap; }

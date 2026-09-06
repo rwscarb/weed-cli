@@ -517,3 +517,52 @@ def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, go
     page.locator('#swap-picker .playlist-picker-item-add', has_text='none').click()
     page.wait_for_function("vm => vm.player.swap === null", arg=vm)
     assert page.evaluate("() => JSON.parse(localStorage.getItem('weed.player.swaps'))") == {}
+
+
+def test_party_chat_posts_from_the_guest_page_and_overlays_the_picture(page, golden_path_server, monkeypatch):
+    """Ryan: "a togglable chat feature where users can post messages
+    overlaying the video." Off by default (no chat box for guests); the
+    admin's Party tab switch turns it on; a guest's message shows in the
+    list and, with no stream running, over the picture box. The admin
+    sees it in the Party tab too."""
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
+    monkeypatch.setattr(web_ui, 'CHAT_MIN_INTERVAL', 0.0)
+    with web_ui._chat_lock:
+        web_ui._chat_messages.clear(); web_ui._chat_last_post.clear()
+    with web_ui._lock:
+        web_ui._party_settings()['chat'] = False
+
+    with page.expect_response(lambda r: '/api/chat' in r.url and r.status == 200):
+        page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+    page.wait_for_selector('#party-view')
+    assert page.locator('.party-chat').count() == 0
+
+    # the admin switches it on (server-side, as the Party tab's Save would)
+    with web_ui._lock:
+        web_ui._party_settings()['chat'] = True
+    page.wait_for_selector('.party-chat', timeout=10_000)   # the next poll picks it up
+    page.fill('.party-chat .chat-name', 'dave')
+    page.fill('.party-chat .chat-input', 'turn it up')
+    page.click('.party-chat button[type=submit]')
+    page.wait_for_selector('.party-chat .chat-msg:has-text("turn it up")')
+    assert page.locator('.party-chat .chat-msg b').first.inner_text() == 'dave'
+    # no stream in this fixture: the overlay rides on the picture box
+    overlay = page.locator('.party-top .chat-overlay .chat-line')
+    assert overlay.count() == 1 and 'dave: turn it up' in overlay.first.inner_text()
+    assert page.evaluate("() => localStorage.getItem('weed.chat.name')") == 'dave'
+
+    # the admin page: the switch reflects the setting and the message is there
+    page.goto(golden_path_server['web_url'] + '/?token=admin-tok')
+    page.wait_for_selector('#tabs')
+    page.locator('#tabs .tab-btn', has_text='Party').click()
+    page.wait_for_selector('.admin-chat .chat-msg:has-text("turn it up")', timeout=10_000)
+    # the switch fills from /api/party, a separate poll from the chat's
+    page.wait_for_function("() => document.getElementById('party-chat-toggle').checked", timeout=10_000)
+    # same browser as the guest above, so the remembered name is "dave";
+    # blank it and the server's default for an admin applies
+    page.fill('.admin-chat .chat-name', '')
+    page.fill('.admin-chat .chat-input', 'no')
+    page.click('.admin-chat button[type=submit]')
+    page.wait_for_selector('.admin-chat .chat-msg:has-text("no")')
+    assert page.locator('.admin-chat .chat-msg b').last.inner_text() == 'host'

@@ -77,13 +77,24 @@ AUTH_COOKIE_MAX_AGE = 30 * 24 * 3600
 # track rather than one per click; nothing else is keyed on it
 GUEST_COOKIE = 'weed_guest'
 _party_votes = {}      # content_hash -> set of guest ids (in memory; a restart clears the tally)
+# the party chat: a short in-memory ring of {id, name, text, ts, role}.
+# Guests and the admin post; the visualizer draws the last few over the
+# picture (so the stream carries them) and the guest page lists them.
+# Off unless the admin turns it on in the Party tab (party['chat']).
+CHAT_KEEP = 200
+CHAT_MAX_TEXT = 200
+CHAT_MIN_INTERVAL = 1.0   # seconds between posts, per person
+_chat_messages = []
+_chat_seq = 0
+_chat_last_post = {}      # guest id (or 'admin') -> last post time
+_chat_lock = threading.Lock()
 
 
 def _party_settings():
     """Caller must hold _lock. The library's 'party' dict, created on
     demand -- a library written (or a test fixture built) before this
     key existed simply doesn't have it."""
-    return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False})
+    return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False, 'chat': False})
 _orbit_ws_since = 0.0  # when the current stream started -- the party page keys its <img> on it
 # Optional second listener, plain HTTP, serving *only* the stream
 # endpoints (/api/orbit-view, /api/orbit-stream, /api/stream/<job>).
@@ -863,7 +874,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET endpoints a guest (stream token) may use; everything else under
     # /api/ is admin-only. The stream endpoints also take ?token=.
-    _GUEST_GET = ('/api/orbit-view', '/api/orbit-stream', '/api/config', '/api/party')
+    _GUEST_GET = ('/api/orbit-view', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -910,6 +921,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(cfg)
         if path == '/api/party':
             return self._handle_party()
+        if path == '/api/chat':
+            return self._handle_chat_get(qs)
         if path == '/api/discover':
             results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
             return self._json({'results': results})
@@ -998,7 +1011,7 @@ class Handler(BaseHTTPRequestHandler):
         # /api/login is how a browser *gets* the cookie (the unlock
         # prompt); voting is the one thing a guest may POST; everything
         # else needs the admin token already
-        if path == '/api/party/vote':
+        if path in ('/api/party/vote', '/api/chat'):
             if not self._guest_ok():
                 return self._deny()
         elif path != '/api/login' and not self._authorized():
@@ -1036,6 +1049,7 @@ class Handler(BaseHTTPRequestHandler):
         handlers = {
             '/api/party/vote': self._handle_party_vote, '/api/party/config': self._handle_party_config,
             '/api/party/played': self._handle_party_played,
+            '/api/chat': self._handle_chat_post, '/api/chat/clear': self._handle_chat_clear,
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
             '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
@@ -1339,7 +1353,7 @@ class Handler(BaseHTTPRequestHandler):
         plain = self._stream_plain_base()
         self._json({
             'role': self._role(), 'title': party.get('title') or '', 'links': party.get('links') or [],
-            'autoplay': bool(party.get('autoplay')),
+            'autoplay': bool(party.get('autoplay')), 'chat': bool(party.get('chat')),
             'now_playing': now_playing,
             'stream': {
                 'active': active, 'since': _orbit_ws_since,
@@ -1386,8 +1400,62 @@ class Handler(BaseHTTPRequestHandler):
                 party['links'] = links[:20]
             if 'autoplay' in body:
                 party['autoplay'] = bool(body.get('autoplay'))
+            if 'chat' in body:
+                party['chat'] = bool(body.get('chat'))
             _save_library()
             self._json({'ok': True, 'party': dict(party)})
+
+    # ── party chat ──────────────────────────────────────────────────
+    def _handle_chat_get(self, qs):
+        """GET /api/chat?since=<id>: whether chat is on, plus every message
+        newer than <since> (all of the ring when omitted)."""
+        gid, extra = self._ensure_guest_id()
+        try:
+            since = int((qs.get('since') or ['0'])[0])
+        except ValueError:
+            since = 0
+        with _lock:
+            enabled = bool(_party_settings().get('chat'))
+        with _chat_lock:
+            msgs = [m for m in _chat_messages if m['id'] > since]
+        self._json({'enabled': enabled, 'messages': msgs, 'you': 'host' if self._role() == 'admin' else 'guest-' + gid[:4]},
+                   headers=extra)
+
+    def _handle_chat_post(self, body):
+        """POST /api/chat {text, name?}: one message. Refused while chat is
+        off, over-long, empty, or faster than one a second per person."""
+        global _chat_seq
+        with _lock:
+            enabled = bool(_party_settings().get('chat'))
+        if not enabled:
+            return self._json({'error': 'chat is off'}, status=403)
+        gid, extra = self._ensure_guest_id()
+        role = self._role()
+        who = 'admin' if role == 'admin' else gid
+        text = ' '.join(str(body.get('text') or '').split())
+        if not text:
+            return self._json({'error': 'empty message'}, status=400)
+        if len(text) > CHAT_MAX_TEXT:
+            return self._json({'error': f'message too long (max {CHAT_MAX_TEXT} characters)'}, status=400)
+        name = ' '.join(str(body.get('name') or '').split())[:24] or ('host' if role == 'admin' else 'guest-' + gid[:4])
+        now = time.time()
+        with _chat_lock:
+            last = _chat_last_post.get(who, 0)
+            if now - last < CHAT_MIN_INTERVAL:
+                return self._json({'error': 'slow down'}, status=429)
+            _chat_last_post[who] = now
+            _chat_seq += 1
+            msg = {'id': _chat_seq, 'name': name, 'text': text, 'ts': now, 'role': role or 'admin'}
+            _chat_messages.append(msg)
+            del _chat_messages[:-CHAT_KEEP]
+        self._json({'ok': True, 'message': msg}, headers=extra)
+
+    def _handle_chat_clear(self, body):
+        """Admin: wipe the ring."""
+        with _chat_lock:
+            n = len(_chat_messages)
+            _chat_messages.clear()
+        self._json({'ok': True, 'cleared': n})
 
     def _handle_party_played(self, body):
         """Admin: a voted track got played -- clear its tally so the next

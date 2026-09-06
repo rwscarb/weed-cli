@@ -40,7 +40,28 @@
       <img :key="party.stream.since" :src="party.stream.url + '?_=' + party.stream.since" alt="live visualizer">
       <a v-if="party.stream.player_url" class="party-player-link" :href="party.stream.player_url" target="_blank" rel="noopener">open in a player</a>
     </div>
-    <div class="party-stream-off" v-else>the live visualizer isn't streaming right now</div>
+    <div class="party-stream-off" v-else>
+      the live visualizer isn't streaming right now
+      <!-- with a stream running, the picture itself carries the chat -->
+      <div class="chat-overlay" v-if="chat.enabled && chatRecent.length">
+        <div class="chat-line" v-for="m in chatRecent" :key="m.id"><b :class="'chat-' + m.role">{{ m.name }}:</b> {{ m.text }}</div>
+      </div>
+    </div>
+  </div>
+  <div class="party-chat" v-if="chat.enabled">
+    <h3>chat</h3>
+    <div class="chat-list" ref="partyChatList">
+      <div class="chat-msg" v-for="m in chat.messages" :key="m.id">
+        <span class="chat-time">{{ chatTime(m.ts) }}</span> <b :class="'chat-' + m.role">{{ m.name }}</b> {{ m.text }}
+      </div>
+      <div class="muted" v-if="!chat.messages.length">nothing yet — say something</div>
+    </div>
+    <form class="chat-form" @submit.prevent="sendChat">
+      <input type="text" class="chat-name" v-model="chat.name" maxlength="24" :placeholder="chat.you || 'name'">
+      <input type="text" class="chat-input" v-model="chat.input" maxlength="200" placeholder="message" autocomplete="off">
+      <button type="submit" :disabled="!chat.input.trim()">send</button>
+    </form>
+    <div class="chat-error" v-if="chat.error">{{ chat.error }}</div>
   </div>
   <h3>vote for what plays next</h3>
   <ul class="party-tracks" v-if="party.tracks.length">
@@ -455,9 +476,28 @@
         <input type="checkbox" v-model="partyForm.autoplay" @change="partyForm._touched = true">
         When a track ends, play the top-voted one next
       </label>
+      <label class="checkbox">
+        <input type="checkbox" id="party-chat-toggle" v-model="partyForm.chat" @change="partyForm._touched = true">
+        Guest chat — messages overlay the picture (and the stream, via the visualizer's 💬)
+      </label>
       <button type="submit">Save</button>
       <span class="party-saved">{{ partySaved }}</span>
     </form>
+    <div class="party-chat admin-chat" v-if="chat.enabled">
+      <h3>Chat <button type="button" class="icon-btn" title="wipe the chat" @click="clearChat">✕ clear</button></h3>
+      <div class="chat-list" ref="chatList">
+        <div class="chat-msg" v-for="m in chat.messages" :key="m.id">
+          <span class="chat-time">{{ chatTime(m.ts) }}</span> <b :class="'chat-' + m.role">{{ m.name }}</b> {{ m.text }}
+        </div>
+        <div class="muted" v-if="!chat.messages.length">nothing yet</div>
+      </div>
+      <form class="chat-form" @submit.prevent="sendChat">
+        <input type="text" class="chat-name" v-model="chat.name" maxlength="24" placeholder="host">
+        <input type="text" class="chat-input" v-model="chat.input" maxlength="200" placeholder="message" autocomplete="off">
+        <button type="submit" :disabled="!chat.input.trim()">send</button>
+      </form>
+      <div class="chat-error" v-if="chat.error">{{ chat.error }}</div>
+    </div>
     <h3>Votes</h3>
     <div class="table-wrap"><table id="party-votes-table">
       <thead><tr><th>Track</th><th>Votes</th><th></th></tr></thead>
@@ -563,6 +603,11 @@
          (pointer-events: none -- the real controls underneath still work) -->
     <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
            @loadedmetadata="syncSwapVideo"></video>
+    <!-- party chat over the picture (the visualizer draws its own into
+         the canvas; this is for the plain player window) -->
+    <div class="chat-overlay" v-if="chat.enabled && chat.overlay && chatRecent.length">
+      <div class="chat-line" v-for="m in chatRecent" :key="m.id"><b :class="'chat-' + m.role">{{ m.name }}:</b> {{ m.text }}</div>
+    </div>
     <div v-if="player.isAudio" id="audio-transport" @click.stop>
       <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
               :title="player.isPlaying ? 'Pause' : 'Play'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
@@ -707,6 +752,9 @@
           <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
         </label>
         <button id="vizMidiBtn" class="icon-btn" title="MIDI controller — pads pick modes, knobs turn the sliders (Web MIDI)">🎹</button>
+        <button id="vizChatBtn" class="icon-btn" :class="{active: chat.overlay}" v-if="chat.enabled"
+                :title="chat.overlay ? 'Chat overlay on — messages are drawn over the picture (and into the stream)' : 'Chat overlay off'"
+                @click="toggleChatOverlay">💬</button>
         <button id="vizFsBtn" class="icon-btn" title="Fullscreen (F)" @click="toggleOrbitFullscreen">⛶</button>
       </div>
     </header>

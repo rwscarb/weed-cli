@@ -278,6 +278,9 @@ window.orbitViz = (function () {
       // like pan/zoom a per-view gesture and not saved
       vizUserRot: 0,
       dragMode: null,           // 'pan' | 'rotate' | 'zoom' while a drag is in progress
+      // the party chat, drawn over the picture (and so into the stream):
+      // vue-app.js pushes the list and the on/off through setChat()
+      chatMessages: [], chatOn: false,
       // PIXELS mode's own rotation/pulse state -- separate from vizRot
       // above (shared by tunnel/scope/spiral at a fixed rate) since this
       // ring's whole point is spinning *faster when the audio is more
@@ -1164,7 +1167,48 @@ window.orbitViz = (function () {
         drawScene();
       }
       if (s.trans) drawTransition();
+      if (s.chatOn && s.chatMessages.length) drawChat();
     }
+
+    // The last few chat messages, bottom-left, newest at the bottom,
+    // each fading out after CHAT_SHOW_MS. Drawn last so it rides on top
+    // of transitions too, and inside the canvas (not the DOM) so every
+    // viewer of the stream -- VLC, a Roku, the guest page's picture --
+    // sees it.
+    const CHAT_SHOW_MS = 20000, CHAT_FADE_MS = 4000, CHAT_MAX = 6;
+    function drawChat() {
+      const now = Date.now();
+      const live = s.chatMessages.filter(m => now - m.ts * 1000 < CHAT_SHOW_MS).slice(-CHAT_MAX);
+      if (!live.length) return;
+      const fs = Math.max(11, Math.round(s.VH / 30)), pad = fs * 0.45, lh = fs * 1.35;
+      const maxW = s.VW * 0.6;
+      vctx.save();
+      vctx.font = `${fs}px sans-serif`; vctx.textBaseline = 'middle';
+      let y = s.VH - pad * 2 - lh / 2;
+      for (let i = live.length - 1; i >= 0; i--) {
+        const m = live[i];
+        const age = now - m.ts * 1000;
+        const alpha = age > CHAT_SHOW_MS - CHAT_FADE_MS ? (CHAT_SHOW_MS - age) / CHAT_FADE_MS : 1;
+        const name = (m.name || '?') + ': ';
+        vctx.font = `bold ${fs}px sans-serif`;
+        const nw = vctx.measureText(name).width;
+        vctx.font = `${fs}px sans-serif`;
+        let text = m.text || '';
+        while (text.length > 1 && nw + vctx.measureText(text).width > maxW) text = text.slice(0, -2) + '…';
+        const w = nw + vctx.measureText(text).width + pad * 2;
+        vctx.globalAlpha = alpha * 0.55; vctx.fillStyle = '#000';
+        vctx.beginPath(); vctx.roundRect(pad, y - lh / 2, w, lh, fs * 0.35); vctx.fill();
+        vctx.globalAlpha = alpha;
+        vctx.fillStyle = m.role === 'admin' ? '#7ee8a2' : '#ffd166'; vctx.font = `bold ${fs}px sans-serif`;
+        vctx.fillText(name, pad * 2, y);
+        vctx.fillStyle = '#fff'; vctx.font = `${fs}px sans-serif`;
+        vctx.fillText(text, pad * 2 + nw, y);
+        y -= lh + fs * 0.25;
+        if (y < lh) break;
+      }
+      vctx.restore();
+    }
+    s.setChat = function (messages, on) { s.chatMessages = Array.isArray(messages) ? messages : []; s.chatOn = !!on; };
 
     function drawScene() {
       // slow independent color drift -- a steady drift gives the same
@@ -1904,6 +1948,9 @@ window.orbitViz = (function () {
     // run the configured transition from whatever's on the canvas now
     transition: () => { if (state) state.snapshotForTransition(); },
     debugState: () => (state ? state.transitionDebug() : null),
+    // the party chat overlay -- vue-app.js keeps the list polled and
+    // pushes it here with the overlay's on/off
+    setChat: (messages, on) => { if (state) state.setChat(messages, on); },
     // external controllers (orbit_midi.js) -- see s.control/s.trigger
     control: (param, v01) => { if (state) state.control(param, v01); },
     controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),

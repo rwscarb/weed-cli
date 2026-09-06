@@ -59,8 +59,15 @@ const app = createApp({
                stream: { active: false, since: 0, url: '/api/orbit-view', player_url: null } },
       partyUrl: '',          // admin: the guest link (lan url + stream token)
       partyStreamToken: '',
-      partyForm: { title: '', links: '', autoplay: false },
+      partyForm: { title: '', links: '', autoplay: false, chat: false },
       partySaved: '',
+      // the party chat (web_ui.py /api/chat): polled every few seconds
+      // by admin and guest alike; overlay = draw the last few over the
+      // picture (the visualizer canvas, so the stream carries it; a DOM
+      // layer on the player window and the guest page otherwise)
+      chat: { enabled: false, messages: [], lastId: 0, input: '', error: '',
+              name: localStorage.getItem('weed.chat.name') || '',
+              you: '', overlay: localStorage.getItem('weed.chat.overlay') !== '0' },
       // 'http://host:port' of the plain-HTTP stream listener when the
       // server has one (web_ui.py STREAM_PLAIN_PORT) -- the URL a TV or
       // Roku app can actually open when the UI itself is on self-signed
@@ -356,6 +363,11 @@ const app = createApp({
         right: this.qr.right != null ? this.qr.right + 'px' : 'auto',
       };
     },
+    // what the DOM overlays show: the last six messages under 20 s old
+    chatRecent() {
+      const now = Date.now();
+      return this.chat.messages.filter(m => now - m.ts * 1000 < 20000).slice(-6);
+    },
     swapPickerStyle() {
       return {
         top: this.swapPicker.top + 'px',
@@ -455,6 +467,7 @@ const app = createApp({
         }
         this.$nextTick(() => {
           window.orbitViz.init();
+          this._pushChatToViz();
           this.startOrbitVizFeed();
         });
       } else {
@@ -540,6 +553,8 @@ const app = createApp({
       this.partyMode = true;
       await this.refreshParty();
       setInterval(this.refreshParty, 5000);
+      this.refreshChat();
+      setInterval(this.refreshChat, 3000);
       return;
     }
     // config is fetched first so a guest never hits this (admin-only)
@@ -547,6 +562,8 @@ const app = createApp({
     this.pubkey = pubkey;
     this.refreshParty();
     setInterval(this.refreshParty, 5000);
+    this.refreshChat();
+    setInterval(this.refreshChat, 3000);
     if (config.default_relay) {
       this.discoverRelays = config.default_relay;
       this.hostForm.relays = config.default_relay;
@@ -1429,11 +1446,57 @@ const app = createApp({
       const p = await this.apiGet('/api/party');
       if (p.error) return;
       this.party = p;
+      this.chat.enabled = !!p.chat;
       if (!this.partyForm._touched) {
         this.partyForm.title = p.title || '';
         this.partyForm.links = (p.links || []).map(l => (l.label ? l.label + ' | ' : '') + l.url).join('\n');
         this.partyForm.autoplay = !!p.autoplay;
+        this.partyForm.chat = !!p.chat;
       }
+    },
+    // ── party chat ────────────────────────────────────────────────────
+    async refreshChat() {
+      const r = await this.apiGet('/api/chat?since=' + this.chat.lastId);
+      if (r.error) return;
+      this.chat.enabled = !!r.enabled;
+      if (r.you) this.chat.you = r.you;
+      for (const m of r.messages || []) {
+        if (!this.chat.messages.some(x => x.id === m.id)) this.chat.messages.push(m);
+        if (m.id > this.chat.lastId) this.chat.lastId = m.id;
+      }
+      if (this.chat.messages.length > 200) this.chat.messages.splice(0, this.chat.messages.length - 200);
+      this._pushChatToViz();
+    },
+    _pushChatToViz() {
+      if (window.orbitViz && window.orbitViz.isActive()) window.orbitViz.setChat(this.chat.messages, this.chat.overlay && this.chat.enabled);
+    },
+    async sendChat() {
+      const text = this.chat.input.trim();
+      if (!text) return;
+      const name = this.chat.name.trim();
+      try { localStorage.setItem('weed.chat.name', name); } catch (e) { /* private mode */ }
+      const r = await this.apiPost('/api/chat', { text, name });
+      if (r.error) { this.chat.error = r.error; setTimeout(() => { this.chat.error = ''; }, 2500); return; }
+      this.chat.input = '';
+      if (r.message && !this.chat.messages.some(x => x.id === r.message.id)) {
+        this.chat.messages.push(r.message);
+        this.chat.lastId = Math.max(this.chat.lastId, r.message.id);
+      }
+      this._pushChatToViz();
+      this.$nextTick(() => { const el = this.$refs.chatList || this.$refs.partyChatList; if (el) el.scrollTop = el.scrollHeight; });
+    },
+    toggleChatOverlay() {
+      this.chat.overlay = !this.chat.overlay;
+      try { localStorage.setItem('weed.chat.overlay', this.chat.overlay ? '1' : '0'); } catch (e) { /* private mode */ }
+      this._pushChatToViz();
+    },
+    async clearChat() {
+      const r = await this.apiPost('/api/chat/clear', {});
+      if (r.ok) { this.chat.messages = []; this._pushChatToViz(); }
+    },
+    chatTime(ts) {
+      const d = new Date(ts * 1000);
+      return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
     },
     async vote(track) {
       const r = await this.apiPost('/api/party/vote', { content_hash: track.content_hash });
@@ -1446,7 +1509,7 @@ const app = createApp({
                         : { label: '', url: line };
       });
       const r = await this.apiPost('/api/party/config',
-        { title: this.partyForm.title, links, autoplay: this.partyForm.autoplay });
+        { title: this.partyForm.title, links, autoplay: this.partyForm.autoplay, chat: this.partyForm.chat });
       this.partySaved = r.ok ? 'saved' : ('error: ' + (r.error || 'unknown'));
       this.partyForm._touched = false;
       setTimeout(() => { this.partySaved = ''; }, 2000);

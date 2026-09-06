@@ -23,6 +23,8 @@ output (not simulated) — see [Status](#status) for what's verified.
   - [CLI](#cli)
   - [Interactive shell](#interactive-shell)
   - [Web UI](#web-ui)
+  - [Orbit Visualizer](#orbit-visualizer)
+  - [Orbit Visualizer plugins](#orbit-visualizer-plugins)
   - [Docker](#docker)
 - [Core mechanisms](#core-mechanisms)
 - [The integrated node](#the-integrated-node)
@@ -153,9 +155,17 @@ browser opened with that token gets the **party view** and nothing
 else — the live Orbit stream, what's playing, a vote on which
 downloaded track plays next (one vote per person per track, toggleable),
 and whatever links you set. The admin's **Party** tab holds the guest
-link and its QR code, the title and links, the live tally with a ▶ per
-track, and an "auto-play the top vote when a track ends" switch.
+link and its QR code, the title and links, the live tally with a ▶ and
+a ♫+ (add to playlist) per track, and an "auto-play the top vote when a
+track ends" switch. The guest page itself is bare: the live picture and
+"now playing" pinned to the top, the vote list scrolling beneath.
 Guests can't host, download, like, subscribe, or read the library.
+Switch on **guest chat** in the Party tab and everyone gets a message
+box: the last few messages are drawn over the picture — into the
+visualizer's canvas, so the stream carries them to VLC, a Roku and the
+guest page's picture alike (the visualizer's 💬 toggles that), and as
+an overlay on the plain player window. Messages live in memory only
+(the last 200), one per second per person, 200 characters each.
 
 `--stream-plain-port` adds a plain-HTTP listener that serves *only* the
 stream endpoints (the Orbit MJPEG stream and downloaded files), for
@@ -169,17 +179,44 @@ Includes real HTTP range support (`/api/stream/<job_id>`) so a
 `<video>` tag can seek a completed download instead of downloading it
 blind.
 
-The visualizer's 🎹 panel binds an AKAI MPK mini (or any Web MIDI
-controller) to modes, transitions and sliders; **export** saves the
-keymap as a `.json` file and **import** loads one, so a layout travels
-between browsers and machines.
+### Orbit Visualizer
 
-The player's ⇄ button is **video swap**: pick another download whose
-picture stands in for the current track's — for an mp3 or a
-static-image video, so the visualizer (and the player window) have real
-footage. The audio stays with the track; the borrowed video loops on its
-own, follows play/pause, and the choice is remembered per track in the
-browser.
+The player's 🌀 button opens the **Orbit Visualizer**: a canvas driven by
+the track's audio (Web Audio analyser) and a low-res sample of its
+picture. Eleven built-in modes — Tunnel, Bars, Mirror, Scope, Spiral,
+Pixels, ASCII (six character sets, natural or neon), Plasma, Kaleido,
+Particles, Freefall — plus the ten in `web/orbit_extras.js` (next
+section). Click the lit mode again for the plain video. Speed, React and
+Zoom retune every mode; every setting persists in the browser.
+
+- **Fade**: the transition between modes and between tracks — Burn,
+  Warp, Glitch, Pixelate, Crossfade, Wipe, the plugin ones, or Random
+  (the ⚄ button picks which ones Random may draw from), with a length
+  slider. A transition can declare its own length multiple (Win95's
+  crash runs at 3×).
+- **Navigation**, Blender-style: scroll zooms, left-drag pans,
+  middle-drag rotates, shift+middle pans, ctrl+middle zooms,
+  double-click resets. `f` fullscreen, ←/→ cycle modes (fullscreen),
+  shift+1-9,0 jump to a mode, ↑/↓ ASCII brightness, `[`/`]` resolution.
+- **Network stream** (📡): the canvas goes out as MJPEG on
+  `/api/orbit-view` for VLC (`vlc --demux=mjpeg --network-caching=300
+  <url>`; 🔗 copies the URL, token included), a Roku IP-camera viewer,
+  or the guest party page. Resolution and JPEG quality are selectable;
+  the ⏱ slider delays the local audio by up to 10 s to line up with a
+  laggy viewer. The stream keeps running while the visualizer is closed,
+  minimised to PIP, or in a background tab. Picture only — audio stays
+  wherever the browser is playing it.
+- **MIDI** (🎹): an AKAI MPK mini or any Web MIDI controller
+  (Chrome/Edge/Firefox). Pads pick modes and fire actions, knobs turn
+  the sliders or sweep through modes/transitions/character sets;
+  endless encoders are detected on their own. Every row, plugin modes
+  and transitions included, has a Learn button; **export** saves the
+  keymap as a `.json` file and **import** loads one.
+- **Video swap** (⇄ on the player): another download's picture stands
+  in for the current track's — for an mp3 or a static-image video, so
+  the visuals have real footage. Audio stays with the track; the
+  borrowed video loops on its own, follows play/pause, and the pairing
+  is remembered per track.
 
 ### Orbit Visualizer plugins
 
@@ -412,8 +449,13 @@ just designed:
 - Transitive trust through the subscribe graph
 - NAT traversal via relay-mediated tunneling, with TLS and heartbeat
 - Kademlia DHT discovery, survives the announcing node going offline
-- Local web UI with live progress, QR onboarding, and HTTP range streaming
-- Containerized node (`Dockerfile.node`, `docker-compose.node.yml`)
+- Local web UI with live progress, QR onboarding, HTTP range streaming,
+  optional two-tier token auth, and the guest party page with voting
+- Orbit Visualizer: 21 modes and 16 transitions behind a plugin API,
+  MJPEG network stream (VLC/Roku), Web MIDI control with keymap files,
+  video swap — 44 Playwright tests against real Chromium (`tests/e2e/`)
+- Containerized node (`Dockerfile.node`, `docker-compose.node.yml`),
+  with `web/` bind-mounted so frontend edits need no rebuild
 
 ## Known limitations
 
@@ -452,3 +494,7 @@ mechanisms hold up:
   and votes are anonymous per browser cookie — enough to put a
   LAN-bound UI behind something and hand guests a safe subset, not a
   reason to face it at the internet.
+- The Orbit stream is picture only, as MJPEG: fine for VLC, an
+  IP-camera app or the party page, but no audio travels with it and
+  there's no HLS/MP4 endpoint, so a stock Roku or smart-TV player
+  can't take it directly.

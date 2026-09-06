@@ -660,3 +660,50 @@ def test_request_with_no_origin_header_is_allowed(web_server):
     through (see web_ui.py's _check_origin docstring)."""
     status, resp = http_post_json(f'{web_server}/api/like', {'content_hash': 'd' * 64})
     assert status == 200
+
+
+def test_party_chat_is_gated_rate_limited_and_polled_by_id(web_server, monkeypatch):
+    """The party chat: off until the admin turns it on, one message a
+    second per person, 200 characters, guests and admin both post, the
+    ring is polled by id, and only the admin can wipe it."""
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-secret')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-secret')
+    monkeypatch.setattr(web_ui, 'CHAT_MIN_INTERVAL', 0.3)
+    with web_ui._chat_lock:
+        web_ui._chat_messages.clear(); web_ui._chat_last_post.clear()
+    guest = {'Authorization': 'Bearer guest-secret'}
+    admin = {'Authorization': 'Bearer admin-secret'}
+
+    # off by default: readable, but nobody can post
+    status, headers, body = _raw_get(f'{web_server}/api/chat', guest)
+    assert status == 200 and json.loads(body) == {'enabled': False, 'messages': [], 'you': json.loads(body)['you']}
+    assert json.loads(body)['you'].startswith('guest-')
+    assert _raw_post(f'{web_server}/api/chat', {'text': 'hi'}, guest)[0] == 403
+    assert _raw_post(f'{web_server}/api/chat', {'text': 'hi'}, admin)[0] == 403
+    assert _raw_post(f'{web_server}/api/chat', {'text': 'hi'})[0] == 401     # no token at all
+
+    status, _, r = _raw_post(f'{web_server}/api/party/config', {'chat': True}, admin)
+    assert status == 200 and r['party']['chat'] is True
+    assert json.loads(_raw_get(f'{web_server}/api/party', guest)[2])['chat'] is True
+
+    voter = {**guest, 'Cookie': headers['set-cookie'].split(';')[0]}
+    status, _, r = _raw_post(f'{web_server}/api/chat', {'text': '  turn   it up  ', 'name': 'dave'}, voter)
+    assert status == 200 and r['message']['name'] == 'dave' and r['message']['text'] == 'turn it up' and r['message']['role'] == 'guest'
+    first_id = r['message']['id']
+    assert _raw_post(f'{web_server}/api/chat', {'text': 'again'}, voter)[0] == 429          # too fast
+    assert _raw_post(f'{web_server}/api/chat', {'text': '   '}, admin)[0] == 400
+    assert _raw_post(f'{web_server}/api/chat', {'text': 'x' * 201}, admin)[0] == 400
+    status, _, r = _raw_post(f'{web_server}/api/chat', {'text': 'no'}, admin)
+    assert status == 200 and r['message']['name'] == 'host' and r['message']['role'] == 'admin'
+
+    _, _, body = _raw_get(f'{web_server}/api/chat', voter)
+    msgs = json.loads(body)['messages']
+    assert [m['text'] for m in msgs] == ['turn it up', 'no']
+    _, _, body = _raw_get(f'{web_server}/api/chat?since={first_id}', voter)
+    assert [m['text'] for m in json.loads(body)['messages']] == ['no']
+
+    assert _raw_post(f'{web_server}/api/chat/clear', {}, voter)[0] == 401
+    status, _, r = _raw_post(f'{web_server}/api/chat/clear', {}, admin)
+    assert status == 200 and r['cleared'] == 2
+    assert json.loads(_raw_get(f'{web_server}/api/chat', voter)[2])['messages'] == []
