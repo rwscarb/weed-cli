@@ -49,7 +49,7 @@
     </div>
   </div>
   <div class="party-chat" v-if="chat.enabled">
-    <h3>chat</h3>
+    <h3>wall</h3>
     <div class="chat-list" ref="partyChatList">
       <div class="chat-msg" v-for="m in chat.messages" :key="m.id">
         <span class="chat-time">{{ chatTime(m.ts) }}</span> <b :class="'chat-' + m.role">{{ m.name }}</b> {{ m.text }}
