@@ -1980,20 +1980,40 @@ window.orbitViz = (function () {
     drawViz();
 
     // Fullscreen
+    // The whole dialog goes fullscreen, not just #vizSection, so the
+    // header's transport (Back, 🤖, the pools, stream, 🔊, 🎹, 💬) is
+    // there too. In fullscreen the header, the control rows and the
+    // hint float over a full-bleed canvas (style.css :fullscreen rules)
+    // and fade out after a few seconds without the mouse moving; any
+    // movement or key brings them back. Overlays rather than a layout
+    // change so the canvas never resizes on show/hide -- a resize would
+    // wipe the feedback modes' trails.
+    const fsTarget = vizSection.closest('#orbit-egg-dialog') || vizSection;
     function toggleVizFullscreen() {
       if (!document.fullscreenElement) {
-        (vizSection.requestFullscreen || vizSection.webkitRequestFullscreen).call(vizSection);
+        (fsTarget.requestFullscreen || fsTarget.webkitRequestFullscreen).call(fsTarget);
       } else {
         (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       }
     }
     s.toggleVizFullscreen = toggleVizFullscreen;
+    const FS_IDLE_MS = 3000;
+    let fsIdleTimer = null;
+    function fsWake() {
+      if (document.fullscreenElement !== fsTarget) return;
+      fsTarget.classList.remove('ui-idle');
+      clearTimeout(fsIdleTimer);
+      fsIdleTimer = setTimeout(() => fsTarget.classList.add('ui-idle'), FS_IDLE_MS);
+    }
+    on(fsTarget, 'mousemove', fsWake);
+    on(fsTarget, 'pointerdown', fsWake);
+    on(document, 'keydown', fsWake);
 
     function setBackgrounded(bg) {
       s.backgrounded = !!bg;
-      // a fullscreen vizSection that just went visibility:hidden would
+      // a fullscreen dialog that just went visibility:hidden would
       // leave the user staring at a black fullscreen surface
-      if (bg && document.fullscreenElement === vizSection) {
+      if (bg && (document.fullscreenElement === fsTarget || document.fullscreenElement === vizSection)) {
         (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       }
     }
@@ -2002,6 +2022,8 @@ window.orbitViz = (function () {
     on(document, 'fullscreenchange', () => {
       resizeVizCanvas();
       if (vizFsBtn) vizFsBtn.textContent = document.fullscreenElement ? '✕' : '⛶';
+      if (document.fullscreenElement === fsTarget) fsWake();
+      else { clearTimeout(fsIdleTimer); fsTarget.classList.remove('ui-idle'); }
     });
     on(document, 'keydown', function (e) {
       if (s.backgrounded) return;

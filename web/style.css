@@ -1294,9 +1294,30 @@ td button {
      the element, which is the case whenever the stream is off */
   object-fit: contain;
 }
-#orbit-egg-dialog #vizSection:fullscreen, #orbit-egg-dialog #vizSection:-webkit-full-screen {
-  background: #000; padding: 0.5rem 0.85rem;
+/* Fullscreen is the whole dialog (orbit_visualizer.js toggleVizFullscreen):
+   a full-bleed canvas with the header, the control rows and the hint
+   floating over it, faded out while .ui-idle (no mouse for a few
+   seconds). Overlays, not layout, so the canvas never resizes. */
+#orbit-egg-dialog:fullscreen {
+  top: 0; left: 0; transform: none; width: 100%; height: 100%;
+  border: 0; border-radius: 0; box-shadow: none; background: #000;
 }
+#orbit-egg-dialog:fullscreen header,
+#orbit-egg-dialog:fullscreen .viz-controls,
+#orbit-egg-dialog:fullscreen .hint {
+  position: absolute; left: 0; right: 0; z-index: 2;
+  background: rgba(14, 16, 20, 0.86); backdrop-filter: blur(6px);
+  transition: opacity 0.35s ease;
+}
+#orbit-egg-dialog:fullscreen header { top: 0; border-bottom: 1px solid var(--border); }
+#orbit-egg-dialog:fullscreen .viz-controls { top: 2.4rem; max-height: 45vh; overflow: auto; padding: 0.3rem 0.85rem; }
+#orbit-egg-dialog:fullscreen .hint { bottom: 0; padding: 0.3rem 0.85rem; margin: 0; }
+#orbit-egg-dialog:fullscreen #vizSection { padding: 0; position: static; }
+#orbit-egg-dialog:fullscreen #vizCanvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; z-index: 1; }
+#orbit-egg-dialog:fullscreen.ui-idle header,
+#orbit-egg-dialog:fullscreen.ui-idle .viz-controls,
+#orbit-egg-dialog:fullscreen.ui-idle .hint { opacity: 0; pointer-events: none; }
+#orbit-egg-dialog:fullscreen.ui-idle { cursor: none; }
 #orbit-egg-dialog .hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem; flex-shrink: 0; }
 
 #host-result, #reputation-result {

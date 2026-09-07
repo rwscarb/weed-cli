@@ -198,7 +198,9 @@ Zoom retune every mode; every setting persists in the browser.
   crash runs at 3×).
 - **Navigation**, Blender-style: scroll zooms, left-drag pans,
   middle-drag rotates, shift+middle pans, ctrl+middle zooms,
-  double-click resets. `f` fullscreen, ←/→ cycle modes (fullscreen),
+  double-click resets. `f` fullscreen (the whole dialog: the header's
+  controls and the rows float over a full-bleed canvas and fade out
+  after a few seconds without the mouse), ←/→ cycle modes (fullscreen),
   shift+1-9,0 jump to a mode, ↑/↓ ASCII brightness, `[`/`]` resolution.
 - **Network stream** (📡): the canvas goes out as MJPEG on
   `/api/orbit-view` for VLC (`vlc --demux=mjpeg --network-caching=300
