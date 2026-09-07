@@ -2217,7 +2217,17 @@ const app = createApp({
     _ensureOrbitAnalyser() {
       if (this._orbitAnalyser) return this._orbitAnalyser;
       const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioContextClass();
+      // 'playback', not the default 'interactive': this context only
+      // carries the player's audio to the speakers (and to the stream
+      // recorder), nothing here reacts to user input, so it can take
+      // the bigger audio buffer. The interactive hint's tiny buffer
+      // glitches under load spikes -- a visualizer that does extra work
+      // on every drum hit (Fireworks volleys, VHS blue-outs, Autopilot
+      // switching through a transition) plus the JPEG capture at 30fps
+      // is exactly that, and the result was pops and dropped fragments
+      // on the beats. The visualizer reads the analyser a few tens of
+      // milliseconds later, which nobody can see.
+      const ctx = new AudioContextClass({ latencyHint: 'playback' });
       const source = ctx.createMediaElementSource(this.$refs.playerVideo);
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
