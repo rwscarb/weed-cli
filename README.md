@@ -218,7 +218,11 @@ Zoom retune every mode; every setting persists in the browser.
 - **MIDI** (🎹): an AKAI MPK mini or any Web MIDI controller
   (Chrome/Edge/Firefox). Pads pick modes and fire actions, knobs turn
   the sliders or sweep through modes/transitions/character sets;
-  endless encoders are detected on their own. Every row, plugin modes
+  endless encoders are detected on their own. Knobs have a detent at a
+  parameter's home value (rotation straight, zoom and speed 1x), so the
+  middle of a pot or an encoder click that crosses it lands exactly
+  there; on the selector rows an encoder moves one entry per three
+  clicks, so a nudge doesn't run through several. Every row, plugin modes
   and transitions included, has a Learn button; **export** saves the
   keymap as a `.json` file and **import** loads one.
 - **Autopilot** (🤖 in the visualizer's header, or a MIDI pad): the

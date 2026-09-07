@@ -275,12 +275,21 @@ window.orbitMidi = (function () {
         // a pad on a selector steps forward through the list
         idx = (Math.max(0, cur) + 1) % list.length;
       } else if (isRelative(b, ccKey)) {
-        // an encoder steps exactly one entry per click (a fast spin, which
-        // sends bigger steps, moves several), clamped at the ends. It used
-        // to nudge a 0..1 position by 2% and pick by position, which with
-        // 28 modes gave some entries one click and others two -- and a
-        // quick turn could hop straight over one.
-        idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + stepOf(v)));
+        // an encoder moves one entry per SELECT_CLICKS clicks, clamped at
+        // the ends, never skipping one. Not one entry per message: the
+        // MPK's encoders send several messages for the smallest twist,
+        // and one-per-message ran the ASCII chars knob through two or
+        // three sets on a nudge. Clicks accumulate per row, a change of
+        // direction resets the count, and a fast spin (bigger steps)
+        // still counts its size so it gets down the list quicker.
+        const step = stepOf(v);
+        let acc = selectAcc[b.id] || 0;
+        if (acc * step < 0) acc = 0;
+        acc += step;
+        const move = Math.trunc(acc / SELECT_CLICKS);
+        selectAcc[b.id] = acc - move * SELECT_CLICKS;
+        if (!move) return;
+        idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + move));
         if (idx === cur) return;
       } else {
         idx = Math.min(list.length - 1, Math.floor(knobPosition(b, v, ccKey) * list.length));
@@ -311,19 +320,42 @@ window.orbitMidi = (function () {
     transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:' },
     asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:' },
   };
+  // encoder clicks per entry on a selector row (see fire)
+  const SELECT_CLICKS = 3;
+  const selectAcc = {};       // binding id -> clicks accumulated toward the next entry
+  // Detents. A parameter's home value (rotation straight, zoom 1x,
+  // speed 1x) is hard to land on exactly: a pot's middle is 64/127, not
+  // 0.5, and an encoder's 2% clicks from wherever a mouse drag left the
+  // value never hit it. So a small dead zone around the home value: a
+  // pot within a few values of it reads as exactly the detent, and an
+  // encoder click that reaches or crosses it stops on it -- the next
+  // click moves off again, so passing through costs one click.
+  const DETENT_ZONE = 0.03;   // about 4 of a pot's 127 values either side
+  function detentOf(b) {
+    const viz = window.orbitViz;
+    return b.target.startsWith('param:') && viz.controlDetent ? viz.controlDetent(b.target.slice(6)) : null;
+  }
   function knobPosition(b, v, ccKey) {
     // absolute: the knob's 0..127 is the position. relative (ticked, or
     // auto-detected): 1..63 is +n steps, 65..127 is -(128-n) steps,
     // nudging a remembered position -- 2% per click, so a full sweep is
     // about 50 clicks, and a fast spin (the encoder sends bigger steps)
     // gets there quicker
-    if (!isRelative(b, ccKey)) return v / 127;
+    const d = detentOf(b);
+    if (!isRelative(b, ccKey)) {
+      const pos = v / 127;
+      return d !== null && Math.abs(pos - d) <= DETENT_ZONE ? d : pos;
+    }
     // first nudge starts from where the parameter actually is
     const cur = relValue[b.id] !== undefined ? relValue[b.id]
               : (b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
     const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
     pendingSteps[ccKey] = 0;
-    const next = Math.min(1, Math.max(0, cur + steps / 50));
+    let next = Math.min(1, Math.max(0, cur + steps / 50));
+    if (d !== null && steps !== 0 && Math.abs(cur - d) > 1e-9) {
+      const crossed = (cur < d && next >= d) || (cur > d && next <= d);
+      if (crossed || Math.abs(next - d) <= DETENT_ZONE / 2) next = d;
+    }
     relValue[b.id] = next;
     return next;
   }

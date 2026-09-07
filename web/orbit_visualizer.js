@@ -1819,6 +1819,17 @@ window.orbitViz = (function () {
       const pos = scale === 'log' ? Math.log(cur / lo) / Math.log(hi / lo) : (cur - lo) / (hi - lo);
       return Math.min(1, Math.max(0, pos));
     };
+    // a parameter's home value as 0..1 -- the spot a knob should be able
+    // to land on exactly (rotation straight, zoom 1x, speed 1x ...).
+    // orbit_midi.js puts a small dead zone around it. null for the
+    // parameters that have no natural home.
+    const CONTROL_DETENTS = { speed: 1, reactivity: 1, zoom: 1, rotate: 0, asciiBrightness: 1, buildingWidth: 1, buildingHeight: 1 };
+    s.controlDetent = function (param) {
+      const range = CONTROL_RANGES[param], home = CONTROL_DETENTS[param];
+      if (!range || home === undefined) return null;
+      const [lo, hi, scale] = range;
+      return scale === 'log' ? Math.log(home / lo) / Math.log(hi / lo) : (home - lo) / (hi - lo);
+    };
     s.trigger = function (action) {
       if (action.startsWith('mode:')) {
         const mode = action.slice(5);
@@ -2068,6 +2079,7 @@ window.orbitViz = (function () {
     // external controllers (orbit_midi.js) -- see s.control/s.trigger
     control: (param, v01) => { if (state) state.control(param, v01); },
     controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),
+    controlDetent: (param) => (state ? state.controlDetent(param) : null),
     trigger: (action) => { if (state) state.trigger(action); },
     modes: allModes,
     transitions: allTransitions,

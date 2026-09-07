@@ -471,13 +471,15 @@ def test_an_undecided_encoder_on_an_action_row_fires_on_its_first_click(page, go
     assert page.locator('#speedVal').inner_text() == '1.0x'
 
 
-def test_an_encoder_on_the_mode_selector_steps_exactly_one_mode_per_click(page, golden_path_server):
-    """Ryan: "Tunnel is getting skipped by my mode sweep knob". The
-    selector used to map an encoder onto a 0..1 position in 2% nudges and
-    pick by position, so with 28 modes some got one click and some two,
-    and a quick turn could hop over one. An encoder now moves exactly one
-    entry per click, clamped at both ends, so every mode is reachable
-    and Tunnel is the hard stop at the top of the list."""
+def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_server):
+    """Ryan: "Tunnel is getting skipped by my mode sweep knob", then "the
+    smallest turn of the knob causes change to multiple char sets". The
+    selector used to map an encoder onto a 0..1 position and pick by
+    position, so some modes took one click and some two and a quick turn
+    could hop over one. Now every three clicks move exactly one entry,
+    clamped at both ends: nothing is ever skipped, and a nudge that sends
+    a message or two changes nothing. A fast spin (bigger steps) counts
+    its size, so it still gets down the list."""
     page.add_init_script("""
       const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
       window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
@@ -493,17 +495,81 @@ def test_an_encoder_on_the_mode_selector_steps_exactly_one_mode_per_click(page, 
     # settle the detector as relative with a few clicks, then start from a known mode
     for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
     page.click('[data-viz="ascii"]')
-    seen = []
-    for _ in range(8):
-        page.evaluate("() => window.__midi.send([0xB0, 20, 127])")     # one counter-clockwise click
-        seen.append(page.evaluate("() => window.orbitViz.current().mode"))
+    current = lambda: page.evaluate("() => window.orbitViz.current().mode")
     start = modes.index('ascii')
-    assert seen == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel']
-    for _ in range(3):
-        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # clockwise
-    assert page.evaluate("() => window.orbitViz.current().mode") == modes[3]
-    page.evaluate("() => window.__midi.send([0xB0, 20, 3])")           # a fast spin: three entries at once
-    assert page.evaluate("() => window.orbitViz.current().mode") == modes[6]
+    seen = []
+    for _ in range(24):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 127])")     # one counter-clockwise click
+        seen.append(current())
+    # three clicks per entry, so the mode changes on every third message and only then
+    assert seen[:6] == [modes[start], modes[start], modes[start - 1], modes[start - 1], modes[start - 1], modes[start - 2]], seen[:6]
+    assert seen[2::3] == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel'], seen[2::3]
+    for _ in range(2):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # a direction change starts a fresh count
+    assert current() == 'tunnel'
+    page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
+    assert current() == modes[1]
+    page.evaluate("() => window.__midi.send([0xB0, 20, 6])")           # a fast spin: two entries at once
+    assert current() == modes[3]
+
+
+def test_knobs_have_a_detent_at_home_and_ascii_sets_take_a_deliberate_twist(page, golden_path_server):
+    """Ryan: "some of the knobs can be difficult to get back to exactly
+    (e.g. center for rotation). Can we implement a small deadzone ... or
+    in e.g. switching chars mode in ASCII, it's too sensitive". A pot's
+    middle is 64/127, not 0.5, and an encoder's clicks from wherever a
+    drag left the rotation never hit zero. Now a pot within a few values
+    of the home reads as exactly the home, an encoder click that crosses
+    it stops on it, and the ASCII chars selector moves one set per three
+    clicks."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    rot = lambda: page.evaluate("() => window.orbitViz.controlPosition('rotate')")   # 0.5 is straight
+    # a pot on Rotate: the values around the middle all read as exactly straight
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Rotate$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 30, 100])")        # learned; a mid value settles it as a pot
+    page.evaluate("() => window.__midi.send([0xB0, 30, 100])")
+    assert rot() > 0.7
+    for v in (64, 62, 66, 67, 61):
+        page.evaluate(f"() => window.__midi.send([0xB0, 30, {v}])")
+        assert rot() == 0.5, (v, rot())
+    page.evaluate("() => window.__midi.send([0xB0, 30, 70])")
+    assert rot() > 0.5
+    # an encoder on Rotate, from an angle a mouse drag left it at: clicks toward straight stop exactly on it
+    page.evaluate("() => window.orbitViz.control('rotate', 0.53)")
+    row.locator('button', has_text='learn').click()
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 31, 127])")   # settles as relative; 4 clicks down cross the detent
+    assert rot() == 0.5
+    page.evaluate("() => window.__midi.send([0xB0, 31, 127])")        # the next click leaves it
+    assert rot() < 0.5
+    page.evaluate("() => window.__midi.send([0xB0, 31, 1])")          # and one back lands on it again
+    assert rot() == 0.5
+    page.evaluate("() => window.__midi.send([0xB0, 31, 1])")
+    assert rot() > 0.5
+    # ASCII chars on an encoder: one set per three clicks
+    page.click('[data-viz="ascii"]')
+    ramps = page.evaluate("() => window.orbitViz.asciiRamps()")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^ASCII chars')))
+    row.locator('button', has_text='learn').click()
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 32, 1])")     # settle; the 4th counts as the first click
+    ramp = lambda: page.evaluate("() => window.orbitViz.current().asciiRamp")
+    first = ramp()
+    page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
+    assert ramp() == first
+    page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
+    assert ramp() == ramps[ramps.index(first) + 1]
+    for _ in range(2): page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
+    assert ramp() == ramps[ramps.index(first) + 1]
+    page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
+    assert ramp() == ramps[ramps.index(first) + 2]
 
 
 def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_path_server):
