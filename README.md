@@ -219,8 +219,8 @@ Zoom retune every mode; every setting persists in the browser.
   holds a mode for a while, drops back to the plain video, then picks a
   fresh mode -- energetic ones when the music is up, calmer ones when it
   isn't -- with a punchy or gentle transition to match the hit, and when
-  a track ends with nothing queued it plays the download you've heard
-  least recently.
+  a track ends with nothing queued it draws the next download by
+  lottery, weighted toward the least-played and longest-rested.
 - **Video swap** (⇄ on the player): another download's picture stands
   in for the current track's — for an mp3 or a static-image video, so
   the visuals have real footage. Audio stays with the track; the

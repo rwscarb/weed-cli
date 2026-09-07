@@ -1986,12 +1986,25 @@ const app = createApp({
         next.content_hash, next.signer_pubkey || rec.signer_pubkey,
         { items: q.items, index: q.index + 1, playlistId: q.playlistId });
     },
+    // A weighted lottery over every other download: play count carries
+    // the most weight (a track heard five times has about a twelfth of
+    // the pull of one never heard), and how long ago it last played adds
+    // some more (anything a day or more old counts as fully rested), so
+    // fresh and neglected tracks come up first while nothing is ever
+    // ruled out entirely.
     autopilotPick() {
       const all = Object.values(this.library.downloads).filter(d => d.job_id && d.content_hash !== this.player.contentHash);
       if (!all.length) return null;
-      const oldest = Math.min(...all.map(d => d.last_played || 0));
-      const pool = all.filter(d => (d.last_played || 0) === oldest);
-      return pool[Math.floor(Math.random() * pool.length)];
+      const now = Date.now() / 1000;
+      const weight = d => {
+        const plays = Math.max(0, d.play_count || 0);
+        const ageHours = d.last_played ? (now - d.last_played) / 3600 : 48;
+        return Math.pow(1 + plays, -1.5) * (0.2 + 0.8 * Math.min(1, ageHours / 24));
+      };
+      const weights = all.map(weight), total = weights.reduce((a, b) => a + b, 0);
+      let r = Math.random() * total;
+      for (let i = 0; i < all.length; i++) { r -= weights[i]; if (r <= 0) return all[i]; }
+      return all[all.length - 1];
     },
     // Manual Prev/Next (the player header's ⏮/⏭, see index.html) --
     // distinct from onPlayerEnded's own auto-advance above rather than

@@ -663,5 +663,11 @@ def test_autopilot_keeps_the_music_going_when_nothing_is_queued(page, golden_pat
     assert page.evaluate("vm => vm.player.jobId", vm) == job_id            # autopilot off: nothing happens
     page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: true }))")
     assert page.evaluate("() => window.orbitViz.autopilot()") is True
+    # play count weighs in: a never-played track should win the lottery
+    # far more often than one heard ten times a moment ago, and the
+    # track that just ended is never picked
+    page.evaluate("([vm, jid]) => { vm.library.downloads['c'.repeat(64)].play_count = 10; vm.library.downloads['c'.repeat(64)].last_played = Date.now() / 1000; }", [vm, job_id])
+    picks = page.evaluate("vm => { const out = {}; for (let i = 0; i < 400; i++) { const p = vm.autopilotPick(); out[p.title] = (out[p.title] || 0) + 1; } return out; }", vm)
+    assert 'Test Clip' not in picks and picks.get('Never played', 0) > 300, picks
     page.evaluate("vm => { vm.player.queue = null; vm.onPlayerEnded(); }", vm)
-    assert page.evaluate("vm => vm.player.title", vm) == 'Never played'
+    assert page.evaluate("vm => vm.player.title", vm) in ('Never played', 'Played earlier')
