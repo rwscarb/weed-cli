@@ -217,8 +217,9 @@ Zoom retune every mode; every setting persists in the browser.
 - **Video swap** (⇄ on the player): another download's picture stands
   in for the current track's — for an mp3 or a static-image video, so
   the visuals have real footage. Audio stays with the track; the
-  borrowed video loops on its own, follows play/pause, and the pairing
-  is remembered per track.
+  borrowed video loops on its own, follows play/pause, has its own seek
+  slider in the picker, and the pairing is remembered per track. The
+  picker has a search box for big libraries.
 
 ### Orbit Visualizer plugins
 

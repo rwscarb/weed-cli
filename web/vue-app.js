@@ -216,8 +216,10 @@ const app = createApp({
         // contentHash, title } or null; remembered per track in
         // localStorage (see setVideoSwap/applySavedSwap).
         swap: null,
+        // the swapped video's own clock, for the seek slider in the ⇄ picker
+        swapTime: 0, swapDuration: 0,
       },
-      swapPicker: { visible: false, top: 0, left: null, right: null },
+      swapPicker: { visible: false, top: 0, left: null, right: null, query: '' },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
@@ -400,6 +402,12 @@ const app = createApp({
       return Object.values(this.library.downloads)
         .filter(d => d.content_hash !== this.player.contentHash && d.job_id && !AUDIO.test(d.path || ''))
         .sort((a, b) => (a.title || a.content_hash).localeCompare(b.title || b.content_hash));
+    },
+    // the picker's search box narrows the candidates by title
+    swapCandidatesFiltered() {
+      const q = this.swapPicker.query.trim().toLowerCase();
+      if (!q) return this.swapCandidates;
+      return this.swapCandidates.filter(d => (this.displayTitle(d.title) || d.title || d.content_hash).toLowerCase().includes(q));
     },
     playlistPickerStyle() {
       return {
@@ -824,6 +832,7 @@ const app = createApp({
       const sv = this.$refs.swapVideo;
       if (!rec) {
         this.player.swap = null;
+        this.player.swapTime = 0; this.player.swapDuration = 0;
         if (sv) { sv.pause(); sv.removeAttribute('src'); sv.load(); }
         return;
       }
@@ -865,6 +874,21 @@ const app = createApp({
       if (rect.left + popupWidth > window.innerWidth) { this.swapPicker.left = null; this.swapPicker.right = window.innerWidth - rect.right; }
       else { this.swapPicker.right = null; this.swapPicker.left = rect.left + window.scrollX; }
       this.swapPicker.visible = true;
+      this.$nextTick(() => { const el = this.$refs.swapSearch; if (el) el.focus(); });
+    },
+    // the swapped video's clock: it runs on its own loop, so it gets its
+    // own seek slider rather than the track's
+    onSwapTime() {
+      const sv = this.$refs.swapVideo;
+      if (!sv) return;
+      this.player.swapTime = sv.currentTime || 0;
+      this.player.swapDuration = isFinite(sv.duration) ? sv.duration : 0;
+    },
+    swapSeek(val) {
+      const sv = this.$refs.swapVideo, t = parseFloat(val);
+      if (!sv || !isFinite(t)) return;
+      sv.currentTime = t;
+      this.player.swapTime = t;
     },
     // Every real "start watching this" funnels through openPlayer above
     // (Discover's ▶ Play, a Downloads row, a playlist item, onPlayerEnded's

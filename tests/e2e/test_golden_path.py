@@ -512,8 +512,25 @@ def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, go
     page.evaluate("([vm, jid, h]) => vm.openPlayer(jid, 'Test Clip', h, null)", [vm, job_id, golden_path_server['content_hash']])
     page.wait_for_function("vm => vm.player.swap && vm.player.swap.title === 'Other Footage'", arg=vm)
 
-    # "none" forgets it
+    # the picker's search box narrows the list; the swapped video has
+    # its own seek slider (its clock, not the track's)
+    page.evaluate("([vm, jid]) => { for (const [h, t] of [['c', 'Lava lamp loop.mp4'], ['d', 'Road trip 1997.mkv']]) vm.library.downloads[h.repeat(64)] = { content_hash: h.repeat(64), job_id: jid, title: t, path: '/x/' + t, signer_pubkey: null }; }", [vm, job_id])
     page.click('#global-player .swap-btn')
+    page.wait_for_selector('#swap-picker:not(.hidden)')
+    assert page.locator('#swap-picker .playlist-picker-item-add').count() == 4      # none + 3
+    page.fill('#swap-picker .swap-search', 'lava')
+    names = page.evaluate("() => [...document.querySelectorAll('#swap-picker .playlist-picker-item-name')].map(e => e.textContent)")
+    assert [n for n in names if 'none' not in n] == ['Lava lamp loop.mp4']
+    page.fill('#swap-picker .swap-search', 'zzz')
+    assert page.locator('#swap-picker .playlist-picker-empty', has_text='nothing matches').count() == 1
+    page.fill('#swap-picker .swap-search', '')
+    assert page.locator('#swap-picker .swap-seek').count() == 1
+    page.evaluate("vm => { vm.player.swapDuration = 120; }", vm)       # the fake clip never decodes; stand in for metadata
+    page.locator('#swap-picker .swap-seek-slider').evaluate('(el) => { el.value = 42; el.dispatchEvent(new Event("input")); }')
+    assert page.evaluate("vm => vm.player.swapTime", vm) == 42
+    assert page.evaluate("vm => vm.$refs.swapVideo.currentTime", vm) == 42
+
+    # "none" forgets it
     page.locator('#swap-picker .playlist-picker-item-add', has_text='none').click()
     page.wait_for_function("vm => vm.player.swap === null", arg=vm)
     assert page.evaluate("() => JSON.parse(localStorage.getItem('weed.player.swaps'))") == {}

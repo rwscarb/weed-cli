@@ -224,7 +224,6 @@ window.orbitViz = (function () {
     const plasmaOff = document.createElement('canvas');
     plasmaOff.width = PLASMA_W; plasmaOff.height = PLASMA_H;
     const plasmaOffCtx = plasmaOff.getContext('2d');
-    const idleNote = document.getElementById('idleNote');
     const asciiControls = document.getElementById('asciiControls');
     const asciiResSlider = document.getElementById('asciiResSlider');
     const asciiResVal = document.getElementById('asciiResVal');
@@ -1901,8 +1900,10 @@ window.orbitViz = (function () {
       // idle from playing. Real aggregate energy across the spectrum
       // can.
       const energy = freq.reduce((a, b) => a + b, 0);
-      if (energy > 400 && !s.hasSignal) { s.hasSignal = true; idleNote.style.display = 'none'; }
-      else if (energy <= 100 && s.hasSignal) { s.hasSignal = false; idleNote.style.display = ''; }
+      // (the "just idling" note this used to show/hide is gone; the flag
+      // stays for anything that wants to know whether audio is present)
+      if (energy > 400 && !s.hasSignal) s.hasSignal = true;
+      else if (energy <= 100 && s.hasSignal) s.hasSignal = false;
     };
     s.pushVideoFrame = function (w, h, data) {
       if (vpixOff.width !== w || vpixOff.height !== h) { vpixOff.width = w; vpixOff.height = h; }

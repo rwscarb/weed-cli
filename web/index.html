@@ -617,7 +617,7 @@
     <!-- the video swap's picture, muted and looping over the track's own
          (pointer-events: none -- the real controls underneath still work) -->
     <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
-           @loadedmetadata="syncSwapVideo"></video>
+           @loadedmetadata="syncSwapVideo(); onSwapTime()" @durationchange="onSwapTime" @timeupdate="onSwapTime"></video>
     <!-- party chat over the picture (the visualizer draws its own into
          the canvas; this is for the plain player window) -->
     <div class="chat-overlay" v-if="chat.enabled && chat.overlay && chatRecent.length">
@@ -649,13 +649,24 @@
 
 <div id="swap-picker" ref="swapPicker" class="qr-popup playlist-picker swap-picker" :class="{hidden: !swapPicker.visible}" :style="swapPickerStyle">
   <div class="playlist-picker-title">Video swap — picture from another download</div>
+  <!-- the swapped video's own timeline: scrub it without touching the track -->
+  <div class="swap-seek" v-if="player.swap">
+    <div class="swap-seek-title">⇄ {{ displayTitle(player.swap.title) }}</div>
+    <div class="swap-seek-row">
+      <span class="audio-time">{{ formatAudioTime(player.swapTime) }}</span>
+      <input type="range" class="swap-seek-slider" min="0" :max="player.swapDuration || 0" step="0.5"
+             :value="player.swapTime" :disabled="!player.swapDuration" @input="swapSeek($event.target.value)" title="Seek the swapped video">
+      <span class="audio-time">{{ formatAudioTime(player.swapDuration) }}</span>
+    </div>
+  </div>
+  <input type="text" ref="swapSearch" class="swap-search" v-model="swapPicker.query" placeholder="search downloads…" autocomplete="off">
   <div class="playlist-picker-list">
     <div class="playlist-picker-item" v-if="player.swap">
       <button type="button" class="playlist-picker-item-add" title="Back to this track's own picture" @click="setVideoSwap(null)">
         <span class="playlist-picker-item-name">✕ none (own picture)</span>
       </button>
     </div>
-    <div class="playlist-picker-item" v-for="d in swapCandidates" :key="d.content_hash"
+    <div class="playlist-picker-item" v-for="d in swapCandidatesFiltered" :key="d.content_hash"
          :class="{'playlist-picker-item-active': player.swap && player.swap.contentHash === d.content_hash}">
       <button type="button" class="playlist-picker-item-add" :title="'Use the picture from ' + (d.title || shortHash(d.content_hash))"
               @click="setVideoSwap(d)">
@@ -664,6 +675,7 @@
       </button>
     </div>
     <div v-if="!swapCandidates.length" class="playlist-picker-empty muted">no other downloads with a picture</div>
+    <div v-else-if="!swapCandidatesFiltered.length" class="playlist-picker-empty muted">nothing matches</div>
   </div>
 </div>
 <div id="playlist-picker" ref="playlistPicker" class="qr-popup playlist-picker" :class="{hidden: !playlistPicker.visible}"
@@ -774,7 +786,6 @@
       </div>
     </header>
     <div id="vizSection">
-      <div class="idle-note" id="idleNote">reacts to whatever's playing in the weed player — nothing playing right now, so this is just idling</div>
       <!-- viz-controls: three rows — mode buttons / global sliders /
            mode-specific sliders. Narrow viewports turn #vizModes into
            a horizontally scroll-snapping spin wheel instead of wrapping

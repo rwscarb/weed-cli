@@ -847,7 +847,13 @@ td button {
 /* an audio track with a swap keeps the full picture area; its transport
    bar becomes an overlay along the bottom instead of the whole box */
 #global-player.swap-audio #audio-transport { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: rgba(20,20,20,0.85); }
-.swap-picker { min-width: 220px; max-width: 320px; }
+.swap-picker { min-width: 240px; max-width: 340px; }
+.swap-search { width: 100%; box-sizing: border-box; margin: 0 0 0.4rem; font-size: 0.8rem; }
+.swap-seek { margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
+.swap-seek-title { font-size: 0.8rem; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 0.2rem; }
+.swap-seek-row { display: flex; align-items: center; gap: 0.35rem; }
+.swap-seek-slider { flex: 1 1 auto; min-width: 0; }
+.swap-picker .playlist-picker-list { max-height: 14rem; overflow-y: auto; }
 #global-player .swap-btn.active { color: var(--accent); }
 
 #global-player.audio-mode .player-video-wrap {
@@ -1287,7 +1293,6 @@ td button {
   background: #000; padding: 0.5rem 0.85rem;
 }
 #orbit-egg-dialog .hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem; flex-shrink: 0; }
-#orbit-egg-dialog .idle-note { font-size: 0.8rem; color: var(--muted); margin-bottom: 0.5rem; flex-shrink: 0; }
 
 #host-result, #reputation-result {
   margin-top: 0.75rem;
