@@ -221,8 +221,10 @@ Zoom retune every mode; every setting persists in the browser.
   endless encoders are detected on their own. Knobs have a detent at a
   parameter's home value (rotation straight, zoom and speed 1x), so the
   middle of a pot or an encoder click that crosses it lands exactly
-  there; on the selector rows an encoder moves one entry per three
-  clicks, so a nudge doesn't run through several. Every row, plugin modes
+  there; its width is the panel's **detent** field, 0 to turn it off.
+  Each selector row has a **clicks** field, how many encoder clicks move
+  one entry (mode and fade style default to 1, ASCII chars to 3 so a
+  nudge doesn't run through several sets). Every row, plugin modes
   and transitions included, has a Learn button; **export** saves the
   keymap as a `.json` file and **import** loads one.
 - **Autopilot** (🤖 in the visualizer's header, or a MIDI pad): the

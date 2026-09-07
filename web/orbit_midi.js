@@ -109,6 +109,27 @@ window.orbitMidi = (function () {
     return rows;
   }
   let savedRows = [];         // what localStorage had, kept so a plugin row registered later still finds its key
+  // Encoder clicks per entry on a selector row, per row and editable in
+  // the panel: the mode sweep wants one click per mode, while the ASCII
+  // chars knob at one per click ran through two or three sets on the
+  // smallest twist (the MPK's encoders send several messages for it).
+  const DEFAULT_CLICKS = { 'select:asciiRamp': 3 };
+  function clicksOf(d, saved) {
+    if (!d.target.startsWith('select:')) return undefined;
+    const n = parseInt(saved, 10);
+    return n >= 1 && n <= 12 ? n : (DEFAULT_CLICKS[d.target] || 1);
+  }
+  // Detent width, in knob values (of 127) either side of a parameter's
+  // home -- see knobPosition. 0 turns detents off. Panel setting.
+  const DETENT_KEY = 'weed.orbit.midi.detent';
+  let detentZone = 4;
+  try { const v = parseInt(localStorage.getItem(DETENT_KEY), 10); if (v >= 0 && v <= 12) detentZone = v; } catch (e) { /* private mode */ }
+  function setDetent(n) {
+    n = parseInt(n, 10);
+    if (!(n >= 0 && n <= 12)) return;
+    detentZone = n;
+    try { localStorage.setItem(DETENT_KEY, String(n)); } catch (e) { /* quota */ }
+  }
   let bindings = load();
   let access = null;          // MIDIAccess once granted
   let status = 'idle';        // idle | unsupported | denied | connected
@@ -150,10 +171,10 @@ window.orbitMidi = (function () {
   // Keys saved before the kind prefix existed get one.
   function withSaved(d) {
     const s = savedRows.find(x => x && x.id === d.id);
-    if (!s || typeof s.key !== 'string') return { ...d };
+    if (!s || typeof s.key !== 'string') return { ...d, clicks: clicksOf(d, s && s.clicks) };
     let key = s.key;
     if (!/^[nc]/.test(key)) key = (d.id.startsWith('k') ? 'c' : 'n') + key;
-    return { ...d, key, relative: !!s.relative };
+    return { ...d, key, relative: !!s.relative, clicks: clicksOf(d, s.clicks) };
   }
   function load() {
     try {
@@ -180,7 +201,7 @@ window.orbitMidi = (function () {
     try {
       // rows for plugins that aren't loaded right now keep their saved
       // entry, so their key is still there when the plugin comes back
-      const live = bindings.map(b => ({ id: b.id, key: b.key, relative: !!b.relative }));
+      const live = bindings.map(b => ({ id: b.id, key: b.key, relative: !!b.relative, ...(b.clicks ? { clicks: b.clicks } : {}) }));
       const liveIds = new Set(live.map(b => b.id));
       const dormant = savedRows.filter(x => x && /^(mode|fade):/.test(x.id) && !liveIds.has(x.id) && x.key);
       savedRows = [...live, ...dormant];
@@ -198,7 +219,8 @@ window.orbitMidi = (function () {
     return {
       format: KEYMAP_FORMAT, version: 1, exported: new Date().toISOString(),
       device: deviceNames().join(', ') || null,
-      bindings: bindings.map(b => ({ id: b.id, target: b.target, label: b.label, key: b.key, relative: !!b.relative })),
+      bindings: bindings.map(b => ({ id: b.id, target: b.target, label: b.label, key: b.key, relative: !!b.relative, ...(b.clicks ? { clicks: b.clicks } : {}) })),
+      detent: detentZone,
     };
   }
   function downloadKeymap() {
@@ -218,17 +240,18 @@ window.orbitMidi = (function () {
   function importKeymap(data) {
     if (typeof data === 'string') data = JSON.parse(data);
     if (!data || data.format !== KEYMAP_FORMAT || !Array.isArray(data.bindings)) throw new Error('not a weed Orbit keymap file');
-    const rows = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d, key: null, relative: false }));
+    const rows = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d, key: null, relative: false, clicks: clicksOf(d) }));
     let bound = 0;
     const dormant = [];
     for (const f of data.bindings) {
       if (!f || typeof f.id !== 'string') continue;
       const key = typeof f.key === 'string' && /^[nc](\*|\d+):\d+$/.test(f.key) ? f.key : null;
       const row = rows.find(r => r.id === f.id) || rows.find(r => f.target && r.target === f.target);
-      if (row) { row.key = key; row.relative = !!f.relative; if (key) bound++; }
+      if (row) { row.key = key; row.relative = !!f.relative; row.clicks = clicksOf(row, f.clicks); if (key) bound++; }
       else if (key && /^(mode|fade):/.test(f.id)) dormant.push({ id: f.id, key, relative: !!f.relative });
     }
     bindings = rows; savedRows = dormant; learning = null;
+    if (data.detent !== undefined) setDetent(data.detent);
     save(); render();
     return bound;
   }
@@ -275,19 +298,17 @@ window.orbitMidi = (function () {
         // a pad on a selector steps forward through the list
         idx = (Math.max(0, cur) + 1) % list.length;
       } else if (isRelative(b, ccKey)) {
-        // an encoder moves one entry per SELECT_CLICKS clicks, clamped at
-        // the ends, never skipping one. Not one entry per message: the
-        // MPK's encoders send several messages for the smallest twist,
-        // and one-per-message ran the ASCII chars knob through two or
-        // three sets on a nudge. Clicks accumulate per row, a change of
-        // direction resets the count, and a fast spin (bigger steps)
-        // still counts its size so it gets down the list quicker.
-        const step = stepOf(v);
+        // an encoder moves one entry per b.clicks clicks (the row's own
+        // setting, see clicksOf), clamped at the ends, never skipping
+        // one. Clicks accumulate per row, a change of direction resets
+        // the count, and a fast spin (bigger steps) still counts its size
+        // so it gets down the list quicker.
+        const step = stepOf(v), per = b.clicks || 1;
         let acc = selectAcc[b.id] || 0;
         if (acc * step < 0) acc = 0;
         acc += step;
-        const move = Math.trunc(acc / SELECT_CLICKS);
-        selectAcc[b.id] = acc - move * SELECT_CLICKS;
+        const move = Math.trunc(acc / per);
+        selectAcc[b.id] = acc - move * per;
         if (!move) return;
         idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + move));
         if (idx === cur) return;
@@ -320,20 +341,19 @@ window.orbitMidi = (function () {
     transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:' },
     asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:' },
   };
-  // encoder clicks per entry on a selector row (see fire)
-  const SELECT_CLICKS = 3;
-  const selectAcc = {};       // binding id -> clicks accumulated toward the next entry
+  const selectAcc = {};       // binding id -> encoder clicks accumulated toward the next entry
   // Detents. A parameter's home value (rotation straight, zoom 1x,
   // speed 1x) is hard to land on exactly: a pot's middle is 64/127, not
   // 0.5, and an encoder's 2% clicks from wherever a mouse drag left the
   // value never hit it. So a small dead zone around the home value: a
-  // pot within a few values of it reads as exactly the detent, and an
-  // encoder click that reaches or crosses it stops on it -- the next
-  // click moves off again, so passing through costs one click.
-  const DETENT_ZONE = 0.03;   // about 4 of a pot's 127 values either side
+  // pot within detentZone values of it reads as exactly the detent, and
+  // an encoder click that reaches or crosses it stops on it -- the next
+  // click moves off again, so passing through costs one click. The
+  // panel's "detent" field sets the width; 0 switches this off.
   function detentOf(b) {
     const viz = window.orbitViz;
-    return b.target.startsWith('param:') && viz.controlDetent ? viz.controlDetent(b.target.slice(6)) : null;
+    if (!detentZone || !b.target.startsWith('param:') || !viz.controlDetent) return null;
+    return viz.controlDetent(b.target.slice(6));
   }
   function knobPosition(b, v, ccKey) {
     // absolute: the knob's 0..127 is the position. relative (ticked, or
@@ -341,10 +361,10 @@ window.orbitMidi = (function () {
     // nudging a remembered position -- 2% per click, so a full sweep is
     // about 50 clicks, and a fast spin (the encoder sends bigger steps)
     // gets there quicker
-    const d = detentOf(b);
+    const d = detentOf(b), zone = detentZone / 127;
     if (!isRelative(b, ccKey)) {
       const pos = v / 127;
-      return d !== null && Math.abs(pos - d) <= DETENT_ZONE ? d : pos;
+      return d !== null && Math.abs(pos - d) <= zone + 1e-9 ? d : pos;
     }
     // first nudge starts from where the parameter actually is
     const cur = relValue[b.id] !== undefined ? relValue[b.id]
@@ -354,7 +374,7 @@ window.orbitMidi = (function () {
     let next = Math.min(1, Math.max(0, cur + steps / 50));
     if (d !== null && steps !== 0 && Math.abs(cur - d) > 1e-9) {
       const crossed = (cur < d && next >= d) || (cur > d && next <= d);
-      if (crossed || Math.abs(next - d) <= DETENT_ZONE / 2) next = d;
+      if (crossed || Math.abs(next - d) <= zone / 2) next = d;
     }
     relValue[b.id] = next;
     return next;
@@ -452,15 +472,17 @@ window.orbitMidi = (function () {
       exportBtn: document.getElementById('midiExportBtn'),
       importBtn: document.getElementById('midiImportBtn'),
       importFile: document.getElementById('midiImportFile'),
+      detent: document.getElementById('midiDetent'),
       last: document.getElementById('midiLast'),
     };
+    if (els.detent) { els.detent.value = detentZone; els.detent.onchange = () => { setDetent(els.detent.value); els.detent.value = detentZone; }; }
     if (els.btn) els.btn.onclick = () => {
       panel.classList.toggle('mode-controls-hidden');
       els.btn.classList.toggle('active', !panel.classList.contains('mode-controls-hidden'));
       if (!panel.classList.contains('mode-controls-hidden') && !access) connect();
     };
     if (els.connect) els.connect.onclick = connect;
-    if (els.reset) els.reset.onclick = () => { savedRows = []; bindings = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d })); learning = null; save(); render(); };
+    if (els.reset) els.reset.onclick = () => { savedRows = []; bindings = [...DEFAULTS, ...pluginRows()].map(d => ({ ...d, clicks: clicksOf(d) })); learning = null; save(); render(); };
     if (els.exportBtn) els.exportBtn.onclick = () => { const name = downloadKeymap(); last = 'saved ' + name; render(); };
     if (els.importBtn && els.importFile) {
       els.importBtn.onclick = () => { els.importFile.value = ''; els.importFile.click(); };
@@ -518,6 +540,17 @@ window.orbitMidi = (function () {
         rel.append(cb, document.createTextNode(auto && !b.relative ? 'rel (auto)' : 'rel'));
         ctl.appendChild(rel);
       }
+      if (b.clicks) {
+        // selector rows: how many encoder clicks move one entry
+        const per = document.createElement('label'); per.className = 'midi-clicks';
+        per.title = 'encoder clicks per entry: 1 moves on every click, more makes a small twist do nothing';
+        const n = document.createElement('input'); n.type = 'number'; n.min = 1; n.max = 12; n.step = 1; n.value = b.clicks;
+        // only a real change resets the count: the browser fires change
+        // again when render() pulls a focused field out of the DOM
+        n.onchange = () => { const c = clicksOf(b, n.value); n.value = c; if (c !== b.clicks) { b.clicks = c; selectAcc[b.id] = 0; save(); } };
+        per.append(n, document.createTextNode('clicks'));
+        ctl.appendChild(per);
+      }
       const learn = document.createElement('button');
       learn.type = 'button'; learn.className = 'icon-btn'; learn.textContent = learning === b.id ? 'cancel' : 'learn';
       learn.title = 'click, then hit the pad/key or turn the knob to use for this';
@@ -538,6 +571,7 @@ window.orbitMidi = (function () {
     mount, connect,
     // for tests / debugging
     bindings: () => bindings.map(b => ({ ...b })),
+    selectAcc: () => ({ ...selectAcc }),
     status: () => status,
     // orbit_visualizer.js calls this when a plugin mode/transition is
     // registered or removed while the panel is up, so its row appears
@@ -546,6 +580,9 @@ window.orbitMidi = (function () {
     // keymap files -- the panel's export/import buttons use these
     exportKeymap,
     importKeymap,
+    // the detent width (knob values either side of a parameter's home)
+    detent: () => detentZone,
+    setDetent: (n) => { setDetent(n); if (els && els.detent) els.detent.value = detentZone; },
     _onMessage: onMessage,
   };
 })();

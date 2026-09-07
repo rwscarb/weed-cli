@@ -1217,8 +1217,12 @@ window.orbitViz = (function () {
       } else {
         const modes = allModes();
         const up = auto.energyAvg > 0.3;
-        let cands = modes.filter(m => (up ? UP_MODES.includes(m) : !UP_MODES.includes(m)) && !auto.recent.includes(m));
-        if (cands.length < 3) cands = modes.filter(m => !auto.recent.includes(m));
+        // never the mode that's up right now either: the one picked by
+        // hand before Autopilot went on isn't in `recent`, and coming
+        // straight back to it after the plain-video gap reads as a repeat
+        const fresh = m => !auto.recent.includes(m) && m !== s.vizMode;
+        let cands = modes.filter(m => (up ? UP_MODES.includes(m) : !UP_MODES.includes(m)) && fresh(m));
+        if (cands.length < 3) cands = modes.filter(fresh);
         if (!cands.length) cands = modes;
         const mode = cands[Math.floor(Math.random() * cands.length)];
         auto.recent = [...auto.recent, mode].slice(-6);

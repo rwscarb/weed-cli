@@ -472,14 +472,14 @@ def test_an_undecided_encoder_on_an_action_row_fires_on_its_first_click(page, go
 
 
 def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_server):
-    """Ryan: "Tunnel is getting skipped by my mode sweep knob", then "the
-    smallest turn of the knob causes change to multiple char sets". The
-    selector used to map an encoder onto a 0..1 position and pick by
-    position, so some modes took one click and some two and a quick turn
-    could hop over one. Now every three clicks move exactly one entry,
-    clamped at both ends: nothing is ever skipped, and a nudge that sends
-    a message or two changes nothing. A fast spin (bigger steps) counts
-    its size, so it still gets down the list."""
+    """Ryan: "Tunnel is getting skipped by my mode sweep knob", then, after
+    a three-clicks-per-entry pass, "it now takes 3 clicks to get one
+    change from mode (sweep to choose)". The selector used to map an
+    encoder onto a 0..1 position and pick by position, so some modes took
+    one click and some two and a quick turn could hop over one. Now every
+    click moves exactly one entry by default, clamped at both ends, and
+    the row's own "clicks" field raises that for a knob that's too
+    twitchy. A fast spin (bigger steps) counts its size."""
     page.add_init_script("""
       const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
       window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
@@ -498,19 +498,28 @@ def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_se
     current = lambda: page.evaluate("() => window.orbitViz.current().mode")
     start = modes.index('ascii')
     seen = []
-    for _ in range(24):
+    for _ in range(8):
         page.evaluate("() => window.__midi.send([0xB0, 20, 127])")     # one counter-clockwise click
         seen.append(current())
-    # three clicks per entry, so the mode changes on every third message and only then
-    assert seen[:6] == [modes[start], modes[start], modes[start - 1], modes[start - 1], modes[start - 1], modes[start - 2]], seen[:6]
-    assert seen[2::3] == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel'], seen[2::3]
-    for _ in range(2):
-        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # a direction change starts a fresh count
-    assert current() == 'tunnel'
-    page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
-    assert current() == modes[1]
-    page.evaluate("() => window.__midi.send([0xB0, 20, 6])")           # a fast spin: two entries at once
+    assert seen == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel']
+    for _ in range(3):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # clockwise
     assert current() == modes[3]
+    page.evaluate("() => window.__midi.send([0xB0, 20, 3])")           # a fast spin: three entries at once
+    assert current() == modes[6]
+    # the row's clicks field: at 3, only every third click moves, and it persists
+    row.locator('.midi-clicks input').fill('3')
+    row.locator('.midi-clicks input').dispatch_event('change')
+    for n, expect in ((1, modes[6]), (2, modes[6]), (3, modes[7]), (4, modes[7]), (5, modes[7]), (6, modes[8])):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
+        assert current() == expect, (n, current())
+    page.evaluate("() => window.__midi.send([0xB0, 20, 127])")        # a direction change starts a fresh count
+    page.evaluate("() => window.__midi.send([0xB0, 20, 127])")
+    assert current() == modes[8]
+    saved = page.evaluate("() => JSON.parse(localStorage.getItem('weed.orbit.midi'))")
+    assert next(r for r in saved if r['id'] == 'selMode')['clicks'] == 3
+    assert next(r for r in saved if r['id'] == 'selChars')['clicks'] == 3    # the ASCII chars default
+    assert page.evaluate("() => window.orbitMidi.exportKeymap().bindings.find(b => b.id === 'selMode').clicks") == 3
 
 
 def test_knobs_have_a_detent_at_home_and_ascii_sets_take_a_deliberate_twist(page, golden_path_server):
@@ -543,6 +552,14 @@ def test_knobs_have_a_detent_at_home_and_ascii_sets_take_a_deliberate_twist(page
         assert rot() == 0.5, (v, rot())
     page.evaluate("() => window.__midi.send([0xB0, 30, 70])")
     assert rot() > 0.5
+    # the panel's detent field: at 0 the middle value is just 64/127 again; back at 4 it snaps
+    page.fill('#midiDetent', '0'); page.dispatch_event('#midiDetent', 'change')
+    page.evaluate("() => window.__midi.send([0xB0, 30, 64])")
+    assert rot() != 0.5 and abs(rot() - 0.5) < 0.01
+    assert page.evaluate("() => localStorage.getItem('weed.orbit.midi.detent')") == '0'
+    page.fill('#midiDetent', '4'); page.dispatch_event('#midiDetent', 'change')
+    page.evaluate("() => window.__midi.send([0xB0, 30, 65])")
+    assert rot() == 0.5
     # an encoder on Rotate, from an angle a mouse drag left it at: clicks toward straight stop exactly on it
     page.evaluate("() => window.orbitViz.control('rotate', 0.53)")
     row.locator('button', has_text='learn').click()

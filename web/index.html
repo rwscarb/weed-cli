@@ -888,6 +888,11 @@
             <button type="button" class="icon-btn" id="midiExportBtn" title="save this keymap as a .json file">export</button>
             <button type="button" class="icon-btn" id="midiImportBtn" title="load a keymap .json (replaces the current bindings)">import</button>
             <input type="file" id="midiImportFile" accept="application/json,.json" hidden>
+            <!-- dead zone around a parameter's home value (rotation
+                 straight, zoom/speed 1x), in knob values; 0 = off -->
+            <label class="midi-detent" title="dead zone around a knob's home value (rotation straight, zoom and speed 1x), in knob values of 127 either side; 0 turns it off">
+              <input type="number" id="midiDetent" min="0" max="12" step="1"> detent
+            </label>
             <span class="midi-last" id="midiLast"></span>
           </div>
           <div id="midiBindings"></div>
