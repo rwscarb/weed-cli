@@ -260,10 +260,22 @@ class _LiveContainerRelay:
     entire first blob (Ogg, whose header pages the muxer emits together)
     -- is cached as the init segment. A reader that subscribes after that
     point is handed the cached init segment immediately, then held back
-    until the next blob that contains a boundary marker, and started from
-    that marker, discarding the partial bytes before it. A reader that
-    subscribed before the init segment was complete simply receives every
-    blob verbatim, the way the streamer's own recorder produced them.
+    until a clean start and started from it, discarding the partial bytes
+    before it. A reader that subscribed before the init segment was
+    complete simply receives every blob verbatim, the way the streamer's
+    own recorder produced them.
+
+    What counts as a clean start differs by container. Ogg: the next
+    'OggS' page. WebM: Chrome's muxer only opens a new Cluster every ~30s
+    of audio, so waiting for one could leave a late reader silent for
+    half a minute. Instead the WebM feed is run through an incremental
+    EBML element scanner (_scan) that tracks Cluster / Timecode /
+    SimpleBlock boundaries across blobs, and a late reader is started at
+    the next SimpleBlock: it gets the init segment, then a synthesized
+    Cluster header (unknown size + a Timecode equal to the real cluster's,
+    so the blocks' relative timecodes stay right), then the stream from
+    that SimpleBlock's first byte on. Until a cluster Timecode has been
+    seen, or if the scanner loses sync, it falls back to the next Cluster.
 
     Pure Python over byte strings, no sockets: feed() the incoming blobs,
     subscribe() to get a queue.Queue to read from (None on it means the
@@ -275,6 +287,10 @@ class _LiveContainerRelay:
 
     WEBM_EBML = b'\x1a\x45\xdf\xa3'      # EBML header, the very first 4 bytes of a WebM
     WEBM_CLUSTER = b'\x1f\x43\xb6\x75'   # Cluster element ID
+    WEBM_UNKNOWN_SIZE = b'\x01\xff\xff\xff\xff\xff\xff\xff'   # 8-byte "unknown" size vint
+    WEBM_TIMECODE = b'\xe7'              # Cluster > Timecode
+    WEBM_SIMPLEBLOCK = b'\xa3'           # Cluster > SimpleBlock
+    WEBM_BLOCKGROUP = b'\xa0'            # Cluster > BlockGroup (a master; Block etc. inside)
     OGG_PAGE = b'OggS'                    # capture pattern at the top of every Ogg page
 
     def __init__(self, maxsize=16):
@@ -284,6 +300,16 @@ class _LiveContainerRelay:
         self._mime = None
         self._init = b''
         self._init_done = False
+        self._reset_scanner()
+
+    def _reset_scanner(self):
+        """WebM element scanner state (valid once the init segment is
+        complete): the stream from there is a sequence of Clusters."""
+        self._pend = b''       # partial element header carried over from the last blob
+        self._skip = 0         # payload bytes of the current leaf element still to pass over
+        self._cap = None       # bytearray while the Timecode payload is being collected
+        self._tc = None        # the current Cluster's Timecode, once its E7 has been seen
+        self._lost = False     # scanner desynced: resync on the next plausible Cluster ID
 
     # ── stream lifecycle ───────────────────────────────────────────────
     def start(self, mime):
@@ -296,6 +322,7 @@ class _LiveContainerRelay:
             self._mime = mime or ''
             self._init = b''
             self._init_done = False
+            self._reset_scanner()
 
     def end(self):
         """The stream is over: every reader gets its None."""
@@ -303,6 +330,7 @@ class _LiveContainerRelay:
             self._end_all_locked()
             self._init = b''
             self._init_done = False
+            self._reset_scanner()
 
     def _end_all_locked(self):
         for q in list(self._subs):
@@ -362,23 +390,143 @@ class _LiveContainerRelay:
                     else:
                         self._init += blob[:idx]
                         self._init_done = True
+                        self._reset_scanner()
+                        self._scan(blob[idx:])   # the scanner starts on the first Cluster
                 # nobody can be pending yet -- pending only starts once
                 # the init segment is known -- so every reader is live
                 for q in list(self._subs):
                     dropped += self._put(q, blob)
                 return dropped
-            boundary = None   # found lazily: only if someone's waiting
+            if self.is_ogg:
+                start = None   # found lazily: only if someone's waiting
+            else:
+                # the scanner must see every blob to keep its state,
+                # whether or not anyone is waiting
+                start = self._scan(blob)
             for q, state in list(self._subs.items()):
                 if state == 'live':
                     dropped += self._put(q, blob)
                     continue
-                if boundary is None:
-                    boundary = self._find_boundary(blob, 0)
-                if boundary < 0:
+                if start is None:
+                    idx = self._find_boundary(blob, 0)
+                    start = (idx, None, b'') if idx >= 0 else False
+                if not start:
                     continue          # still waiting for a clean start
+                off, tc, prefix = start
                 self._subs[q] = 'live'
-                dropped += self._put(q, blob[boundary:])
+                if tc is not None:    # starting at a SimpleBlock: give it a Cluster to live in
+                    dropped += self._put(q, self._synth_cluster_header(tc))
+                dropped += self._put(q, prefix + blob[off:])
         return dropped
+
+    # ── WebM element scanner ───────────────────────────────────────────
+    @classmethod
+    def _synth_cluster_header(cls, timecode):
+        """Cluster ID + unknown size + Timecode element carrying the given
+        value (minimal big-endian unsigned), i.e. exactly what precedes
+        the SimpleBlocks in the real Cluster."""
+        payload = timecode.to_bytes(max(1, (timecode.bit_length() + 7) // 8), 'big')
+        return (cls.WEBM_CLUSTER + cls.WEBM_UNKNOWN_SIZE
+                + cls.WEBM_TIMECODE + bytes([0x80 | len(payload)]) + payload)
+
+    @staticmethod
+    def _parse_header(buf):
+        """EBML element header at buf[0]: (id bytes, size or None for
+        unknown, header length). None if buf is too short to tell;
+        ValueError if it can't be a header (zero length marker, ID over
+        4 bytes)."""
+        if not buf:
+            return None
+        b0 = buf[0]
+        if b0 == 0:
+            raise ValueError('bad EBML ID')
+        id_len = 9 - b0.bit_length()
+        if id_len > 4:
+            raise ValueError('EBML ID too long')
+        if len(buf) <= id_len:
+            return None
+        s0 = buf[id_len]
+        if s0 == 0:
+            raise ValueError('bad EBML size vint')
+        size_len = 9 - s0.bit_length()
+        hdr_len = id_len + size_len
+        if len(buf) < hdr_len:
+            return None
+        value = s0 & (0xFF >> size_len)
+        for b in buf[id_len + 1:hdr_len]:
+            value = (value << 8) | b
+        if value == (1 << (7 * size_len)) - 1:
+            value = None      # all ones: unknown size (Chrome's live Clusters)
+        return bytes(buf[:id_len]), value, hdr_len
+
+    def _scan(self, blob):
+        """Walk the WebM element stream through this blob, carrying the
+        parser state across calls, and return the first clean start a
+        late reader could use, or None: (offset, timecode, prefix). A
+        Cluster start has timecode None (the reader gets the real
+        header); a SimpleBlock start carries the current Cluster's
+        Timecode for the synthesized header. An element whose header
+        began in an earlier blob has a negative offset; prefix is those
+        earlier bytes, so prefix + blob[offset:] is still the whole
+        element. Anything that doesn't parse puts the scanner into
+        lost mode, where it falls back to the old Cluster-ID search."""
+        found = None
+        pos, n = 0, len(blob)
+        while pos < n:
+            if self._lost:
+                idx = self._find_boundary(blob, pos)
+                if idx < 0:
+                    return found
+                self._lost, self._pend, self._skip, self._cap = False, b'', 0, None
+                pos = idx
+            if self._skip:
+                take = min(self._skip, n - pos)
+                if self._cap is not None:
+                    self._cap += blob[pos:pos + take]
+                self._skip -= take
+                pos += take
+                if not self._skip and self._cap is not None:
+                    self._tc = int.from_bytes(self._cap, 'big')
+                    self._cap = None
+                continue
+            buf = self._pend + blob[pos:pos + 12]      # a header is at most 4 + 8 bytes
+            try:
+                hdr = self._parse_header(buf)
+            except ValueError:
+                self._lost, self._pend = True, b''
+                pos += 1
+                continue
+            if hdr is None:                            # blob ended inside a header
+                self._pend = buf
+                return found
+            eid, size, hlen = hdr
+            start = pos - len(self._pend)
+            prefix = self._pend if start < 0 else b''
+            pos += hlen - len(self._pend)
+            self._pend = b''
+            if eid == self.WEBM_CLUSTER:
+                self._tc = None
+                if found is None:
+                    found = (max(start, 0), None, prefix)
+            elif eid == self.WEBM_TIMECODE:
+                if size is None or size > 8:
+                    self._lost = True
+                    continue
+                self._cap, self._skip = bytearray(), size
+                if size == 0:
+                    self._tc, self._cap = 0, None
+            elif eid == self.WEBM_SIMPLEBLOCK:
+                if size is None:
+                    self._lost = True
+                    continue
+                if found is None and self._tc is not None:
+                    found = (max(start, 0), self._tc, prefix)
+                self._skip = size
+            elif eid == self.WEBM_BLOCKGROUP or size is None:
+                pass                                   # a master: its children follow
+            else:
+                self._skip = size
+        return found
 
     def _find_boundary(self, blob, start):
         """Offset of the first plausible container boundary in blob at
@@ -925,10 +1073,14 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
         bps = size / elapsed if elapsed > 0 else None
         with _lock:
             _jobs[job_id].update(status='done', path=path, size=size, bps=bps)
+            # a re-download replaces the record but keeps what the user
+            # put on it: tags, play count, last played
+            prev = _library['downloads'].get(content_hash) or {}
             _library['downloads'][content_hash] = {
                 'content_hash': content_hash, 'job_id': job_id, 'path': path,
                 'title': title, 'downloaded_at': time.time(), 'size': size, 'bps': bps,
                 'signer_pubkey': signer_pubkey,
+                **{k: prev[k] for k in ('tags', 'play_count', 'last_played') if k in prev},
             }
             _save_library()
     except SystemExit as e:
@@ -1250,6 +1402,7 @@ class Handler(BaseHTTPRequestHandler):
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
             '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
+            '/api/tags': self._handle_tags,
             '/api/sync-relays': self._handle_sync_relays,
             '/api/verify': self._handle_verify, '/api/play': self._handle_play,
             '/api/playlists/create': self._handle_playlist_create,
@@ -1513,6 +1666,36 @@ class Handler(BaseHTTPRequestHandler):
                 _library['likes'].append(content_hash)
                 _save_library()
         self._json({'result': result})
+
+    # Tags on a download record: free-form labels ("chill", "90s",
+    # "visuals") the Downloads tab filters by and Autopilot can draw
+    # from. The whole list is replaced per call -- the UI sends the
+    # record's current list plus or minus one -- so there's no add/remove
+    # pair to keep in step. Normalised: trimmed, single-spaced, lower-
+    # cased, deduped, at most 32 chars and 20 tags.
+    @staticmethod
+    def _clean_tags(tags):
+        out = []
+        for t in tags if isinstance(tags, list) else []:
+            if not isinstance(t, str):
+                continue
+            t = ' '.join(t.split()).lower()[:32]
+            if t and t not in out:
+                out.append(t)
+        return out[:20]
+
+    def _handle_tags(self, body):
+        content_hash = body.get('content_hash')
+        if not content_hash:
+            return self._json({'error': 'content_hash required'}, status=400)
+        tags = self._clean_tags(body.get('tags'))
+        with _lock:
+            rec = _library['downloads'].get(content_hash)
+            if not rec:
+                return self._json({'error': 'no such download'}, status=404)
+            rec['tags'] = tags
+            _save_library()
+        self._json({'content_hash': content_hash, 'tags': tags})
 
     def _handle_subscribe(self, body):
         target_pubkey = body.get('target_pubkey')

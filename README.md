@@ -143,6 +143,12 @@ then carry it, so scanning is the login; the page shows an unlock
 prompt if opened any other way; the stream URLs it hands to VLC carry
 it as `?token=`, since a player can't send a cookie.
 
+Downloads can be **tagged**: a finished row in the Downloads tab has
+tag chips and a "+ tag" field (Enter adds, commas add several, × removes),
+the bar above the table filters by tag, tags are kept on the library
+record on the server (`POST /api/tags` replaces a record's list), and
+Autopilot can draw its next track from one tag.
+
 ```bash
 weed serve                          # alias for `web`, positional: serve [bind] [port]
 weed serve 0.0.0.0 8080             # reachable from your phone; prints a scan-to-open QR
@@ -237,7 +243,8 @@ Zoom retune every mode; every setting persists in the browser.
   a track ends with nothing queued it draws the next download by
   lottery. The control cycles through three states: off, **↓** (the
   lottery favours the least-played and longest-rested tracks) and **↑**
-  (it favours the most-played, the crowd-pleasers). The ☑
+  (it favours the most-played, the crowd-pleasers), and the "tracks
+  tagged" pick in the pool row limits the draw to one tag. The ☑
   button beside the toggle unfolds a checkbox per mode: untick the ones
   Autopilot should leave alone (they stay a click or a pad away).
 - **Video swap** (⇄ on the player): another download's picture stands

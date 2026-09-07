@@ -836,3 +836,56 @@ def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(pag
     assert page.evaluate("vm => vm.orbitStreaming", vm) is True
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
     page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)
+
+
+def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_path_server):
+    """Ryan: "can you add a tagging feature?" A finished download's row
+    in the Downloads tab has tag chips and a "+ tag" field; the bar above
+    the table filters by tag; tags live on the library record (server,
+    /api/tags) so they survive a reload; and Autopilot's "tracks tagged"
+    pick draws the next track only from a tag."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('.tab-btn:has-text("Downloads")')
+    row = page.locator('#jobs-table tbody tr').first
+    assert not page.locator('#tag-filter').is_visible()                  # no tags yet, no bar
+    field = row.locator('.tag-add')
+    field.fill('Chill, party')
+    field.press('Enter')
+    page.wait_for_function("() => document.querySelectorAll('#jobs-table .tag-row .tag-chip').length === 2")
+    chips = page.locator('#jobs-table .tag-row .tag-chip')
+    assert [c.inner_text().strip().rstrip('×').strip() for c in chips.all()] == ['chill', 'party']   # normalised
+    assert field.input_value() == ''
+    # the filter bar: all / chill / party, with counts
+    bar = page.locator('#tag-filter')
+    assert bar.is_visible()
+    assert [b.inner_text().split()[0] for b in bar.locator('button.tag-chip').all()] == ['all', 'chill', 'party']
+    # a second row-less tag on a fake download, to see filtering exclude it
+    page.evaluate("vm => { vm.library.downloads['e'.repeat(64)] = { content_hash: 'e'.repeat(64), job_id: 'zz', title: 'Other', path: '/x/e.mp4', tags: ['other'] }; vm.jobs.push({ job_id: 'zz', content_hash: 'e'.repeat(64), title: 'Other', status: 'done' }); }", vm)
+    assert page.locator('#jobs-table tbody tr').count() == 2
+    bar.locator('button.tag-chip', has_text='party').click()
+    assert page.locator('#jobs-table tbody tr').count() == 1
+    bar.locator('button.tag-chip', has_text='all').click()
+    assert page.locator('#jobs-table tbody tr').count() == 2
+    # remove one: the chip goes, the bar follows
+    page.locator('#jobs-table .tag-row .tag-chip', has_text='party').locator('.tag-x').click()
+    page.wait_for_function("() => document.querySelector('#jobs-table tbody tr .tag-row').querySelectorAll('.tag-chip').length === 1")
+    assert [b.inner_text().split()[0] for b in bar.locator('button.tag-chip').all()] == ['all', 'chill', 'other']
+    # persisted on the server
+    h = golden_path_server['content_hash']
+    lib = page.evaluate("() => fetch('/api/library').then(r => r.json())")
+    assert next(d for d in lib['downloads'] if d['content_hash'] == h)['tags'] == ['chill']
+    # Autopilot's tag: with 'chill' chosen only the chill track is in the draw
+    page.evaluate("vm => { vm.library.downloads['f'.repeat(64)] = { content_hash: 'f'.repeat(64), job_id: 'ff', title: 'Chilly too', path: '/x/f.mp4', tags: ['chill'] }; vm.player.contentHash = 'zzz'; }", vm)
+    page.evaluate("vm => { vm.autopilotTag = 'chill'; vm.saveAutopilotTag(); }", vm)
+    picks = page.evaluate("vm => { const out = {}; for (let i = 0; i < 100; i++) { const p = vm.autopilotPick(); out[p.title] = (out[p.title] || 0) + 1; } return out; }", vm)
+    assert set(picks) <= {'Test Clip', 'Chilly too'} and len(picks) == 2, picks
+    assert page.evaluate("() => localStorage.getItem('weed.autopilot.tag')") == 'chill'
+    page.evaluate("vm => { vm.autopilotTag = 'nothing-has-this'; }", vm)
+    picks = page.evaluate("vm => { const out = {}; for (let i = 0; i < 100; i++) { const p = vm.autopilotPick(); out[p.title] = (out[p.title] || 0) + 1; } return out; }", vm)
+    assert 'Other' in picks                                             # no match: everything, not silence
+    # the pick is in the visualizer's Autopilot pool row
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    page.click('#autoPoolBtn')
+    assert [o.strip() for o in page.locator('#autoTagSelect option').all_inner_texts()][:2] == ['any', 'chill (2)']

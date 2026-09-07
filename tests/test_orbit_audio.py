@@ -46,11 +46,51 @@ def webm_init():
             + b'\x16\x54\xae\x6b\x90' + os.urandom(16))             # Tracks
 
 
-def webm_cluster(n=40):
-    """A live Cluster: ID, unknown-size vint, Timecode element, then a
-    SimpleBlock's worth of random 'Opus'."""
-    body = b'\xe7\x81\x00' + b'\xa3' + bytes([0x80 | n]) + os.urandom(n)
-    return CLUSTER + b'\x01\xff\xff\xff\xff\xff\xff\xff' + body
+UNKNOWN = b'\x01\xff\xff\xff\xff\xff\xff\xff'
+
+
+def simple_block(n=40, payload=None):
+    """SimpleBlock: A3, 1-byte size vint, n bytes of random 'Opus'."""
+    payload = os.urandom(n) if payload is None else payload
+    assert len(payload) < 127
+    return b'\xa3' + bytes([0x80 | len(payload)]) + payload
+
+
+def timecode(tc=0):
+    """Timecode element: E7, size, minimal big-endian unsigned value."""
+    body = tc.to_bytes(max(1, (tc.bit_length() + 7) // 8), 'big')
+    return b'\xe7' + bytes([0x80 | len(body)]) + body
+
+
+def webm_cluster(n=40, tc=0, blocks=1):
+    """A live Cluster: ID, unknown-size vint, Timecode element, then
+    `blocks` SimpleBlocks' worth of random 'Opus'."""
+    return CLUSTER + UNKNOWN + timecode(tc) + b''.join(simple_block(n) for _ in range(blocks))
+
+
+def parse_webm(data, init_len):
+    """A tiny EBML walker for what a late reader was handed: checks the
+    init segment, then that the rest is a sequence of whole Clusters
+    (unknown size) each made of a Timecode and whole SimpleBlocks.
+    Returns [(timecode, [block payloads...]), ...]."""
+    pos = init_len
+    clusters = []
+    while pos < len(data):
+        assert data[pos:pos + 4] == CLUSTER, data[pos:pos + 4]
+        assert data[pos + 4:pos + 12] == UNKNOWN
+        pos += 12
+        assert data[pos] == 0xE7
+        tlen = data[pos + 1] & 0x7F
+        tc = int.from_bytes(data[pos + 2:pos + 2 + tlen], 'big')
+        pos += 2 + tlen
+        blocks = []
+        while pos < len(data) and data[pos] == 0xA3:
+            blen = data[pos + 1] & 0x7F
+            blocks.append(data[pos + 2:pos + 2 + blen])
+            assert len(blocks[-1]) == blen, 'truncated SimpleBlock'
+            pos += 2 + blen
+        clusters.append((tc, blocks))
+    return clusters
 
 
 def ogg_page(n=30):
@@ -88,19 +128,28 @@ def test_webm_init_segment_is_everything_before_the_first_cluster():
 
 
 def test_webm_late_subscriber_gets_init_then_starts_exactly_at_a_cluster():
+    """Joining inside a one-block Cluster, with no further SimpleBlock
+    in it: the next clean start is the next Cluster, delivered whole
+    even though its header arrives split across two blobs. (This used
+    to re-feed the last 7 bytes of c2 before c3 -- a stream no muxer
+    produces -- which the element scanner rightly can't follow; the
+    stream is now consistent and the split lands inside c3's header.)"""
     relay = web_ui._LiveContainerRelay()
     relay.start('audio/webm;codecs=opus')
     init = webm_init()
     c1, c2, c3 = webm_cluster(), webm_cluster(), webm_cluster()
     relay.feed(init + c1)
-    relay.feed(c2[:25])                   # a blob that ends mid-cluster
+    relay.feed(c2[:25])                   # a blob that ends mid-SimpleBlock
     q = relay.subscribe()                 # joins mid-cluster
-    # the tail of c2 has no cluster start in it: nothing yet but the init
+    # the tail of c2 has no element start in it: nothing yet but the init
     relay.feed(c2[25:])
     assert drain(q) == [init]
-    # c3 starts 7 bytes into this blob: those 7 are discarded
-    blob = c2[-7:] + c3
-    relay.feed(blob)
+    # c3's header is split: 7 bytes now, the rest next blob. Nothing can
+    # start on a half-parsed header; when it completes, the whole of c3
+    # (those 7 carried bytes included) is delivered.
+    relay.feed(c3[:7])
+    assert drain(q) == []
+    relay.feed(c3[7:])
     assert drain(q) == [c3]
     # live from here on
     c4 = webm_cluster()
@@ -110,7 +159,8 @@ def test_webm_late_subscriber_gets_init_then_starts_exactly_at_a_cluster():
 
 def test_webm_late_subscriber_start_is_playable_as_a_whole():
     """What a late reader's socket actually carries, end to end, is a
-    valid stream: init segment immediately followed by a Cluster ID."""
+    valid stream: init segment immediately followed by a Cluster ID
+    (here a synthesized one, since the join lands on a SimpleBlock)."""
     relay = web_ui._LiveContainerRelay()
     relay.start('audio/webm')
     init = webm_init()
@@ -120,22 +170,73 @@ def test_webm_late_subscriber_start_is_playable_as_a_whole():
     got = b''.join(drain(q))
     assert got.startswith(init + CLUSTER)
     assert got[:4] == EBML
+    assert len(parse_webm(got, len(init))) == 2
+
+
+def test_webm_late_subscriber_starts_at_the_next_simpleblock_with_a_synthesized_cluster():
+    """The fix for the 30-second wait: joining in the middle of a
+    SimpleBlock, the reader gets the init segment, a synthesized Cluster
+    header carrying the real Cluster's Timecode, then the stream from
+    the very next A3 -- and the whole thing parses as init + one Cluster
+    of whole SimpleBlocks."""
+    relay = web_ui._LiveContainerRelay()
+    relay.start('audio/webm;codecs=opus')
+    init = webm_init()
+    tc = 0x1234
+    b1, b2, b3, b4 = (simple_block() for _ in range(4))
+    relay.feed(init + CLUSTER + UNKNOWN + timecode(tc) + b1)
+    relay.feed(b2[:17])                                   # mid-SimpleBlock
+    q = relay.subscribe()
+    relay.feed(b2[17:] + b3 + b4[:5])                     # b3 starts partway in
+    b5 = simple_block()
+    relay.feed(b4[5:] + b5)
+    got = drain(q)
+    assert got[0] == init
+    assert got[1] == CLUSTER + UNKNOWN + timecode(tc)     # synthesized, same Timecode
+    assert got[2] == b3 + b4[:5]                          # from the next A3 exactly
+    assert got[3] == b4[5:] + b5                          # live from there
+    clusters = parse_webm(b''.join(got), len(init))
+    assert clusters == [(tc, [b3[2:], b4[2:], b5[2:]])]
+
+
+def test_webm_late_subscriber_before_any_cluster_waits_for_the_first_cluster():
+    """No Cluster Timecode known yet (the init segment is complete but
+    the first Cluster's own header hasn't arrived): there's nothing to
+    synthesize from, so the reader starts at the next Cluster ID, as
+    before."""
+    relay = web_ui._LiveContainerRelay()
+    relay.start('audio/webm')
+    init = webm_init()
+    relay.feed(init + CLUSTER)            # the init is complete the moment the Cluster ID shows
+    assert relay.init_segment == init
+    q = relay.subscribe()
+    c1 = webm_cluster(blocks=3)
+    relay.feed(c1[4:])                    # the rest of that first Cluster: header, Timecode, blocks
+    assert drain(q) == [init]             # no clean start in there
+    c2 = webm_cluster(tc=7, blocks=2)
+    relay.feed(c2)
+    assert drain(q) == [c2]
+    assert parse_webm(init + c2, len(init)) == [(7, [c2[-84:-42][2:], c2[-42:][2:]])]
 
 
 def test_webm_cluster_id_inside_opus_data_is_not_a_boundary():
-    """A chance 1F43B675 in the compressed audio isn't followed by a
-    size vint and a Timecode element, so a late reader waits for the
-    real one."""
+    """A chance 1F43B675 in the compressed audio -- even one followed by
+    a plausible size vint and Timecode, which fooled the old byte
+    search -- is inside a SimpleBlock's payload as far as the element
+    scanner is concerned, so a late reader waits for the real next
+    element."""
     relay = web_ui._LiveContainerRelay()
     relay.start('audio/webm')
     relay.feed(webm_init() + webm_cluster())
+    fake = CLUSTER + UNKNOWN + timecode(0)
+    blk = simple_block(payload=os.urandom(6) + fake + os.urandom(9))
+    relay.feed(blk[:4])
     q = relay.subscribe()
-    fake = CLUSTER + b'\x85\xa3\xa3\xa3\xa3\xa3'   # a 1-byte vint (5) then not 0xE7
-    relay.feed(b'\xa3\x85' + fake + os.urandom(8))
-    assert drain(q) == [relay.init_segment]        # still waiting
-    real = webm_cluster()
-    relay.feed(os.urandom(3) + real)
-    assert drain(q) == [real]
+    relay.feed(blk[4:])                             # the fake Cluster is in here
+    assert drain(q) == [relay.init_segment]         # still waiting
+    real = simple_block()
+    relay.feed(real)
+    assert drain(q) == [relay._synth_cluster_header(0), real]
 
 
 # ── Ogg ────────────────────────────────────────────────────────────────

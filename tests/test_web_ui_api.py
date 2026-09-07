@@ -707,3 +707,30 @@ def test_party_chat_is_gated_rate_limited_and_polled_by_id(web_server, monkeypat
     status, _, r = _raw_post(f'{web_server}/api/chat/clear', {}, admin)
     assert status == 200 and r['cleared'] == 2
     assert json.loads(_raw_get(f'{web_server}/api/chat', voter)[2])['messages'] == []
+
+
+def test_tags_are_set_whole_normalised_and_kept_on_the_record(web_server):
+    """POST /api/tags replaces a download record's tag list: trimmed,
+    lower-cased, deduped, capped, and only for a download that exists."""
+    import web_ui
+    h = 'd' * 64
+    status, resp = http_post_json(f'{web_server}/api/tags', {'tags': ['x']})
+    assert status == 400 and 'content_hash' in resp['error']
+    status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': ['x']})
+    assert status == 404
+    with web_ui._lock:
+        web_ui._library['downloads'][h] = {'content_hash': h, 'job_id': 'j1', 'path': '/x/d.mp4', 'title': 'D'}
+    status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': ['  Chill ', 'chill', 'Late  Night', '', 42, 'x' * 40]})
+    assert status == 200
+    assert resp['tags'] == ['chill', 'late night', 'x' * 32]
+    lib = http_get_json(f'{web_server}/api/library')
+    rec = next(d for d in lib['downloads'] if d['content_hash'] == h)
+    assert rec['tags'] == ['chill', 'late night', 'x' * 32]
+    # the whole list is replaced, so sending fewer removes
+    status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': ['chill']})
+    assert resp['tags'] == ['chill']
+    status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': [f't{i}' for i in range(30)]})
+    assert len(resp['tags']) == 20
+    # a garbage payload clears rather than errors
+    status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': 'nope'})
+    assert status == 200 and resp['tags'] == []

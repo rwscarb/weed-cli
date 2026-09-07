@@ -352,10 +352,19 @@
       </label>
       <button type="submit">Download</button>
     </form>
+    <!-- tag filter: one chip per tag in the library (vue-app.js allTags);
+         the lit one narrows the table to downloads carrying it -->
+    <div class="tag-filter" id="tag-filter" v-if="allTags().length">
+      <span class="tag-filter-label">tags</span>
+      <button type="button" class="tag-chip" :class="{active: !tagFilter}" @click="tagFilter = null">all</button>
+      <button type="button" class="tag-chip" v-for="t in allTags()" :key="t.tag" :class="{active: tagFilter === t.tag}"
+              @click="tagFilter = tagFilter === t.tag ? null : t.tag">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
+    </div>
+    <datalist id="tag-datalist"><option v-for="t in allTags()" :key="t.tag" :value="t.tag"></option></datalist>
     <div class="table-wrap"><table id="jobs-table">
       <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th></tr></thead>
       <tbody>
-        <tr v-for="j in jobs" :key="j.job_id">
+        <tr v-for="j in jobsShown()" :key="j.job_id">
           <td>
             <div class="swipe-row">
               <div class="swipe-front">
@@ -369,6 +378,15 @@
                     </span>
                     <span class="swipe-hint" aria-hidden="true">‹ actions ›</span>
                   </div>
+                </div>
+                <!-- tags on the finished download's library record: chips
+                     with a × each, and a field to add one (Enter, or a pick
+                     from the datalist of tags already in use) -->
+                <div class="tag-row" v-if="j.status === 'done' && library.downloads[j.content_hash]">
+                  <span class="tag-chip" v-for="t in tagsOf(j.content_hash)" :key="t">{{ t }}
+                    <button type="button" class="tag-x" :title="'remove tag ' + t" @click.stop="removeTag(j, t)">×</button></span>
+                  <input type="text" class="tag-add" list="tag-datalist" placeholder="+ tag" maxlength="32"
+                         @keydown.enter.prevent="addTagFromInput(j, $event)" @change="addTagFromInput(j, $event)" @click.stop>
                 </div>
               </div>
               <div class="swipe-back">
@@ -885,6 +903,15 @@
              button beside 🤖 -- see orbit_visualizer.js renderAutoPool -->
         <div class="preset-row random-pool mode-controls-hidden" id="autoPoolPanel">
           <span class="ascii-controls-label">Autopilot picks from</span>
+          <!-- and, between tracks, which tag's downloads (vue-app.js
+               autopilotPick); '' = any -->
+          <label class="auto-tag" title="Between tracks, Autopilot draws the next one only from downloads carrying this tag">
+            tracks tagged
+            <select id="autoTagSelect" v-model="autopilotTag" @change="saveAutopilotTag">
+              <option value="">any</option>
+              <option v-for="t in allTags()" :key="t.tag" :value="t.tag">{{ t.tag }} ({{ t.count }})</option>
+            </select>
+          </label>
           <div id="autoPoolList"></div>
         </div>
         <!-- MIDI controller panel (orbit_midi.js) -- toggled by the 🎹

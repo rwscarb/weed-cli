@@ -185,6 +185,10 @@ const app = createApp({
       // it, so switching tabs doesn't stop or hide playback.
       orbitStreaming: false,
       orbitDelay: 0,
+      // Downloads tab: the tag chip that's filtering the table (null =
+      // all), and the tag Autopilot draws its next track from ('' = any)
+      tagFilter: null,
+      autopilotTag: (() => { try { return localStorage.getItem('weed.autopilot.tag') || ''; } catch (e) { return ''; } })(),
       orbitRes: '720',
       // JPEG quality for the stream. Encoding happens in a worker now
       // (see toggleOrbitStream), so this costs bandwidth, not frame
@@ -2147,12 +2151,60 @@ const app = createApp({
     // some more (anything a day or more old counts as fully rested), so
     // fresh and neglected tracks come up first while nothing is ever
     // ruled out entirely.
+    // ── tags ─────────────────────────────────────────────────────────
+    // Free-form labels on a download record (server: /api/tags), shown
+    // as chips on the Downloads rows, filterable from the bar above the
+    // table, and one of them can be what Autopilot draws from.
+    tagsOf(contentHash) {
+      const rec = this.library.downloads[contentHash];
+      return (rec && Array.isArray(rec.tags)) ? rec.tags : [];
+    },
+    // every tag in the library with how many downloads carry it, most
+    // used first, then alphabetical
+    allTags() {
+      const counts = {};
+      for (const d of Object.values(this.library.downloads)) for (const t of (d.tags || [])) counts[t] = (counts[t] || 0) + 1;
+      return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b)).map(t => ({ tag: t, count: counts[t] }));
+    },
+    jobsShown() {
+      if (!this.tagFilter) return this.jobs;
+      return this.jobs.filter(j => this.tagsOf(j.content_hash).includes(this.tagFilter));
+    },
+    async setTags(contentHash, tags) {
+      const r = await this.apiPost('/api/tags', { content_hash: contentHash, tags });
+      if (r && Array.isArray(r.tags) && this.library.downloads[contentHash]) {
+        this.library.downloads[contentHash].tags = r.tags;
+        if (this.tagFilter && !this.allTags().some(t => t.tag === this.tagFilter)) this.tagFilter = null;
+      }
+      return r;
+    },
+    // the "+ tag" field on a row: Enter (or a datalist pick) adds it; a
+    // comma-separated entry adds several
+    addTagFromInput(job, ev) {
+      const input = ev.target;
+      const fresh = String(input.value || '').split(',').map(t => t.trim()).filter(Boolean);
+      input.value = '';
+      if (!fresh.length) return;
+      return this.setTags(job.content_hash, [...this.tagsOf(job.content_hash), ...fresh]);
+    },
+    removeTag(job, tag) {
+      return this.setTags(job.content_hash, this.tagsOf(job.content_hash).filter(t => t !== tag));
+    },
+    saveAutopilotTag() {
+      try { localStorage.setItem('weed.autopilot.tag', this.autopilotTag || ''); } catch (e) { /* private mode */ }
+    },
     // The 🤖 control's ↑/↓ flips the play-count term: ↓ (the default)
     // is the above, ↑ turns it over so the most-played tracks carry the
     // most weight instead -- the crowd-pleasers -- with the rest term
-    // still keeping the same one from coming straight back.
+    // still keeping the same one from coming straight back. With a tag
+    // chosen (autopilotTag) only downloads carrying it are in the draw,
+    // unless none are, in which case it's everything rather than silence.
     autopilotPick() {
-      const all = Object.values(this.library.downloads).filter(d => d.job_id && d.content_hash !== this.player.contentHash);
+      let all = Object.values(this.library.downloads).filter(d => d.job_id && d.content_hash !== this.player.contentHash);
+      if (this.autopilotTag) {
+        const tagged = all.filter(d => (d.tags || []).includes(this.autopilotTag));
+        if (tagged.length) all = tagged;
+      }
       if (!all.length) return null;
       const now = Date.now() / 1000;
       const popular = !!(window.orbitViz && window.orbitViz.autopilotBias && window.orbitViz.autopilotBias() === 'up');
