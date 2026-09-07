@@ -779,7 +779,9 @@ def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(pag
     EBML, CLUSTER = b'\x1a\x45\xdf\xa3', b'\x1f\x43\xb6\x75'
     first = grab('/api/orbit-audio')
     assert first[:4] == EBML, first[:16]
-    assert len(first) >= 3000, len(first)                               # a few KB within seconds: it's flowing
+    # silence encodes tiny (Opus emits ~3-byte frames for it, ~300 B/s
+    # with cluster overhead), so "flowing" is a modest floor, not a rate
+    assert len(first) >= 1200, len(first)
     assert CLUSTER in first
 
     # the late joiner, a couple of seconds in -- and through the ?token=
@@ -790,7 +792,7 @@ def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(pag
     second = grab('/api/orbit-audio?token=guest-tok')
     assert second[:4] == EBML, second[:16]                              # the cached init segment...
     assert CLUSTER in second                                            # ...then whole clusters
-    assert len(second) >= 3000, len(second)
+    assert len(second) >= 1200, len(second)
 
     # the guest page: a 🔊 listen button under the picture, tap to play
     guest_ctx = page.context.browser.new_context(viewport={'width': 400, 'height': 800})
@@ -807,18 +809,24 @@ def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(pag
         guest.wait_for_function("vm => vm.partyListening", arg=gvm)
         assert listen.inner_text().strip() == '🔇 mute'
         assert guest.evaluate("vm => vm._partyAudio && vm._partyAudio.src.includes('/api/orbit-audio?_=')", gvm)
-        # the element actually reads the feed: ready state advances past HAVE_NOTHING
-        guest.wait_for_function("vm => vm._partyAudio && vm._partyAudio.readyState >= 1", arg=gvm, timeout=10_000)
+        # the element is actually pulling the feed: the server counts it as
+        # a listener. (Not readyState: on the silence recorded here, ~300
+        # B/s, Chromium sits at HAVE_NOTHING for ages waiting to fill its
+        # first read buffer, while real music at 128 kbps is instant.)
+        page.wait_for_function(
+            "() => fetch('/api/orbit-stream?token=admin-tok').then(r => r.json()).then(s => s.audio_listeners >= 1)", timeout=10_000)
         listen.click()                                                  # 🔇 drops it
         guest.wait_for_function("vm => !vm.partyListening && !vm._partyAudio", arg=gvm)
         assert listen.inner_text().strip() == '🔊 listen'
     finally:
         guest_ctx.close()
 
-    # 🔊 off mid-stream stops the sender: the feed goes away, the picture stays
-    page.click('#orbit-egg-dialog .orbit-audio-btn')
+    # 🔊 off mid-stream stops the sender: the feed goes away, the picture
+    # stays. A DOM click, not a pointer one: auth went on above, so the
+    # admin page's polls are now 401 and its unlock gate sits over the UI.
+    page.evaluate("() => document.querySelector('#orbit-egg-dialog .orbit-audio-btn').click()")
     page.wait_for_function(
-        "() => fetch('/api/party?token=admin-tok').then(r => r.json()).then(p => p.stream.active && !p.stream.audio)", timeout=10_000)
+        "() => fetch('/api/orbit-stream?token=admin-tok').then(r => r.json()).then(s => s.audio === false)", timeout=10_000)
     assert page.evaluate("vm => vm.orbitStreaming", vm) is True
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
     page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)

@@ -209,8 +209,12 @@ Zoom retune every mode; every setting persists in the browser.
   (letterboxed on screen if the window isn't), so the frame is filled
   edge to edge and never distorted whatever shape the window is. The
   stream keeps running while the visualizer is closed, minimised to PIP,
-  or in a background tab. Picture only — audio stays wherever the
-  browser is playing it.
+  or in a background tab. Picture only by default — the 🔊 toggle beside
+  📡 sends the player's audio too, as a live Opus stream (WebM, or Ogg in
+  Firefox) on `/api/orbit-audio`. Late joiners get a clean start. The
+  guest party page shows a 🔊 listen button; VLC takes both with
+  `vlc --demux=mjpeg <view-url> --input-slave=<audio-url>`; OBS takes the
+  audio URL as a second Media Source. Safari/iOS can't play WebM audio.
 - **MIDI** (🎹): an AKAI MPK mini or any Web MIDI controller
   (Chrome/Edge/Firefox). Pads pick modes and fire actions, knobs turn
   the sliders or sweep through modes/transitions/character sets;
@@ -511,7 +515,8 @@ mechanisms hold up:
   and votes are anonymous per browser cookie — enough to put a
   LAN-bound UI behind something and hand guests a safe subset, not a
   reason to face it at the internet.
-- The Orbit stream is picture only, as MJPEG: fine for VLC, an
-  IP-camera app or the party page, but no audio travels with it and
-  there's no HLS/MP4 endpoint, so a stock Roku or smart-TV player
-  can't take it directly.
+- The Orbit stream is two separate feeds, MJPEG picture and (optionally)
+  Opus audio, not one muxed A/V stream: fine for VLC with `--input-slave`,
+  OBS, an IP-camera app or the party page, but there's no HLS/MP4
+  endpoint, so a stock Roku or smart-TV player can't take it directly,
+  and Safari/iOS can't play the WebM audio feed.
