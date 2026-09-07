@@ -1137,8 +1137,17 @@ const app = createApp({
             _due = Math.max(_due + _FRAME_DT, now - _FRAME_DT);
             _inFlight = true;
             const t0 = performance.now();
-            offscreen._ctx.drawImage(vc, 0, 0, offscreen.width, offscreen.height);
-            const img = offscreen._ctx.getImageData(0, 0, offscreen.width, offscreen.height);
+            // aspect-fit, never stretch: the stream frame is a fixed
+            // 16:9 but the canvas is whatever the dialog, theater or
+            // screen made it (a 16:10 monitor, a tall phone) -- scaling
+            // it straight into 1280x720 squeezed the picture sideways
+            // on every viewer. Letterbox or pillarbox the difference.
+            const octx = offscreen._ctx, ow = offscreen.width, oh = offscreen.height;
+            const fit = Math.min(ow / vc.width, oh / vc.height);
+            const dw = Math.round(vc.width * fit), dh = Math.round(vc.height * fit);
+            if (dw !== ow || dh !== oh) { octx.fillStyle = '#000'; octx.fillRect(0, 0, ow, oh); }
+            octx.drawImage(vc, (ow - dw) / 2, (oh - dh) / 2, dw, dh);
+            const img = octx.getImageData(0, 0, ow, oh);
             _stat.capMs += performance.now() - t0;
             // transfer, not copy: the ~3.7MB RGBA buffer moves to the
             // worker in O(1), and `img` is dead after this line

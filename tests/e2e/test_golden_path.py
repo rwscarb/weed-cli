@@ -671,3 +671,27 @@ def test_autopilot_keeps_the_music_going_when_nothing_is_queued(page, golden_pat
     assert 'Test Clip' not in picks and picks.get('Never played', 0) > 300, picks
     page.evaluate("vm => { vm.player.queue = null; vm.onPlayerEnded(); }", vm)
     assert page.evaluate("vm => vm.player.title", vm) in ('Never played', 'Played earlier')
+
+
+def test_stream_frames_keep_the_canvas_aspect_with_black_bars(page, golden_path_server):
+    """Ryan: "in party view the stream looks squished narrow on the
+    x-axis". The stream frame is a fixed 16:9, the visualizer canvas is
+    whatever the window made it, and the capture scaled one straight into
+    the other. Now it aspect-fits: a canvas that isn't 16:9 gets black
+    bars in the frame instead of a stretched picture."""
+    page.set_viewport_size({'width': 700, 'height': 900})   # a tall window: the canvas ends up nearly square
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    page.click('[data-viz="plasma"]')                         # fills the whole canvas with colour
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("vm => vm._orbitOffscreen && vm._orbitOffscreen.width === 1280", arg=vm, timeout=10_000)
+    page.wait_for_timeout(1500)
+    canvas = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
+    assert canvas[0] / canvas[1] < 1.4, canvas                 # genuinely not 16:9
+    probe = page.evaluate("""vm => { const c = vm._orbitOffscreen, x = c._ctx; const px = (X, Y) => [...x.getImageData(X, Y, 1, 1).data].slice(0, 3);
+        return { leftEdge: px(4, 360), rightEdge: px(1275, 360), centre: px(640, 360) }; }""", vm)
+    assert probe['leftEdge'] == [0, 0, 0] and probe['rightEdge'] == [0, 0, 0], probe   # pillarboxed
+    assert sum(probe['centre']) > 60, probe                                            # the picture is in the middle
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
