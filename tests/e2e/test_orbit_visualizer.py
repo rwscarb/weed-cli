@@ -630,3 +630,51 @@ def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_pa
     assert page.evaluate("() => window.orbitViz.autopilot()") is True
     _open_orbit_viz(page)
     assert page.is_checked('#autopilotToggle')
+
+
+def test_autopilot_pool_checkboxes_limit_what_autopilot_picks(page, golden_path_server):
+    """Ryan: "similar to how we allow the user to disable transitions from
+    auto-pilot, can we add a feature to disable modes as well?" The button
+    beside 🤖 unfolds one checkbox per mode; unticked ones are never
+    picked by Autopilot (a click still works), the choice persists across
+    a reload, and everything unticked falls back to everything."""
+    page.add_init_script("""
+      let a = 0;
+      AnalyserNode.prototype.getByteFrequencyData = function (arr) { a++; const beat = a % 24; const kick = beat < 3 ? 1.5 : 1;
+        for (let i = 0; i < arr.length; i++) { const lo = i < arr.length * 0.06 ? kick : 1; arr[i] = Math.min(255, 160 * Math.exp(-i / (arr.length / 6)) * lo + 25 + Math.random() * 15); } };
+      AnalyserNode.prototype.getByteTimeDomainData = function (arr) { for (let i = 0; i < arr.length; i++) arr[i] = 128 + 40 * Math.sin(i * 0.1 + a * 0.4); };
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    assert not page.locator('#autoPoolPanel').is_visible()
+    page.click('#autoPoolBtn')
+    assert page.locator('#autoPoolPanel').is_visible()
+    ids = page.evaluate("() => [...document.querySelectorAll('#autoPoolList input')].map(i => i.dataset.mode)")
+    assert 'tunnel' in ids and 'globe' in ids and 'win95' in ids            # built-ins and plugins alike
+    # leave only Bars and Scope ticked
+    page.evaluate("() => document.querySelectorAll('#autoPoolList input').forEach(i => { if (i.checked && !['bars', 'scope'].includes(i.dataset.mode)) i.click(); })")
+    assert sorted(page.evaluate("() => window.orbitViz.debugState().autoExclude")) == sorted(m for m in ids if m not in ('bars', 'scope'))
+    page.click('[data-viz="plasma"]')                                        # a click still reaches an unticked mode
+    page.evaluate("() => window.orbitViz.setAutopilotTiming({ modeMin: 0.2, modeMax: 0.4, videoMin: 0.2, videoMax: 0.4 })")
+    page.check('#autopilotToggle')
+    picked = set()
+    for _ in range(40):
+        page.wait_for_timeout(100)
+        d = page.evaluate("() => window.orbitViz.debugState()")
+        if not d['vizOff']: picked.add(d['mode'])
+    picked.discard('plasma')                                                 # the hand-picked start, before the first switch
+    assert picked and picked <= {'bars', 'scope'}, picked
+    page.uncheck('#autopilotToggle')
+    # persists across a reload
+    page.wait_for_timeout(300)
+    page.reload()
+    page.wait_for_selector('#discover-table .swipe-back:not(.swipe-back-mirror) .play-btn:has-text("▶ Play")', timeout=15_000)
+    page.locator('#discover-table tbody tr', has_text=golden_path_server['title']).first.locator(
+        '.swipe-back:not(.swipe-back-mirror) .play-btn', has_text='▶ Play').click()
+    page.wait_for_selector('#global-player:not(.hidden)', timeout=5_000)
+    _open_orbit_viz(page)
+    ticked = page.evaluate("() => [...document.querySelectorAll('#autoPoolList input:checked')].map(i => i.dataset.mode)")
+    assert sorted(ticked) == ['bars', 'scope']
+    # everything unticked: the pool is everything again rather than nothing
+    page.evaluate("() => document.querySelectorAll('#autoPoolList input:checked').forEach(i => i.click())")
+    assert len(page.evaluate("() => window.orbitViz.debugState().autoPool")) == len(ids)

@@ -371,6 +371,9 @@ window.orbitViz = (function () {
       // transitions ticked off in the Random pool panel: Random never
       // picks these (persisted; ids, so it survives plugins coming and going)
       randomExclude: [],
+      // modes ticked off in the Autopilot pool panel: Autopilot never
+      // picks them (a pad or a click still can)
+      autoExclude: [],
       // Autopilot: the visualizer drives itself off the music -- a mode,
       // then back to the plain video, then another mode, switching on
       // strong hits (never sooner than a minimum dwell, never later than
@@ -401,7 +404,7 @@ window.orbitViz = (function () {
     const SETTINGS_KEY = 'weed.orbit.settings';
     const SAVED_KEYS = ['vizMode', 'vizOff', 'vizUserScale', 'speed', 'reactivity', 'transition',
                         'transitionMs', 'asciiStride', 'asciiBrightness', 'asciiBgAlpha', 'asciiRampKey',
-                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude', 'autopilot'];
+                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude', 'autoExclude', 'autopilot'];
     let restoredVizOff = false;
     (function restoreSettings() {
       let saved;
@@ -417,7 +420,7 @@ window.orbitViz = (function () {
         // is gone falls back to the default
         if (k === 'vizMode') { if (!allModes().includes(saved[k])) continue; }
         else if (k === 'transition') { if (!allTransitions().includes(saved[k])) continue; }
-        else if (k === 'randomExclude') { if (!Array.isArray(saved[k])) continue; s[k] = saved[k].filter(x => typeof x === 'string'); continue; }
+        else if (k === 'randomExclude' || k === 'autoExclude') { if (!Array.isArray(saved[k])) continue; s[k] = saved[k].filter(x => typeof x === 'string'); continue; }
         else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
         s[k] = saved[k];
       }
@@ -512,6 +515,7 @@ window.orbitViz = (function () {
       transitionSelect.insertBefore(opt, transitionSelect.querySelector('option[value="random"]'));
       if (s.transition === tr.id) transitionSelect.value = tr.id;
       renderRandomPool();
+      renderAutoPool();
       midiRefresh();
     }
     function unmountTransition(tr) {
@@ -519,6 +523,7 @@ window.orbitViz = (function () {
       if (s.transition === tr.id) { setTransition('burn'); persistSettings(); }
       if (s.trans && s.trans.type === tr.id) s.trans = null;
       renderRandomPool();
+      renderAutoPool();
       midiRefresh();
     }
     // ── the Random pool: which transitions Random may pick ──────────
@@ -556,6 +561,42 @@ window.orbitViz = (function () {
       randomPoolBtn.classList.toggle('active', !randomPoolPanel.classList.contains('mode-controls-hidden'));
     });
     renderRandomPool();
+    // ── the Autopilot pool: which modes Autopilot may pick ───────────
+    // Same shape as the Random pool: a checkbox per mode, built-ins and
+    // plugins alike, in a row that folds out of the button beside the
+    // 🤖 toggle. Unticked modes are still a pad or a click away; only
+    // Autopilot leaves them alone. Everything unticked = everything.
+    const autoPoolPanel = document.getElementById('autoPoolPanel');
+    const autoPoolList = document.getElementById('autoPoolList');
+    const autoPoolBtn = document.getElementById('autoPoolBtn');
+    function autoPool() {
+      const pool = allModes().filter(m => !s.autoExclude.includes(m));
+      return pool.length ? pool : allModes();
+    }
+    s.autoPool = autoPool;
+    function renderAutoPool() {
+      if (!autoPoolList) return;
+      const labels = new Map(listModes().map(m => [m.id, m.label]));
+      for (const btn of vizModes ? vizModes.querySelectorAll('[data-viz]') : []) labels.set(btn.dataset.viz, btn.textContent.trim());
+      autoPoolList.innerHTML = '';
+      for (const id of allModes()) {
+        const lbl = document.createElement('label');
+        lbl.className = 'random-pool-item';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !s.autoExclude.includes(id); cb.dataset.mode = id;
+        cb.addEventListener('change', () => {
+          s.autoExclude = cb.checked ? s.autoExclude.filter(x => x !== id) : [...s.autoExclude, id];
+          persistSettings();
+        });
+        lbl.append(cb, document.createTextNode(labels.get(id) || id));
+        autoPoolList.appendChild(lbl);
+      }
+    }
+    if (autoPoolBtn && autoPoolPanel) on(autoPoolBtn, 'click', () => {
+      autoPoolPanel.classList.toggle('mode-controls-hidden');
+      autoPoolBtn.classList.toggle('active', !autoPoolPanel.classList.contains('mode-controls-hidden'));
+    });
+    renderAutoPool();
     s.mountPlugin = mountPlugin;
     s.unmountPlugin = unmountPlugin;
     s.mountTransition = mountTransition;
@@ -1006,7 +1047,7 @@ window.orbitViz = (function () {
     // private, and "why didn't that transition show" is unanswerable
     // from the outside otherwise
     s.transitionDebug = () => ({
-      transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(),
+      transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(), autoExclude: s.autoExclude.slice(), autoPool: autoPool(),
       rot: s.vizUserRot, panX: s.vizPanX, panY: s.vizPanY, zoom: s.vizUserScale,
       autopilot: s.autopilot, vizOff: s.vizOff, mode: s.vizMode,
       VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
@@ -1215,7 +1256,7 @@ window.orbitViz = (function () {
         setVizOff(transition);
         auto.phase = 'video';
       } else {
-        const modes = allModes();
+        const modes = autoPool();   // only what's ticked in the Autopilot pool
         const up = auto.energyAvg > 0.3;
         // never the mode that's up right now either: the one picked by
         // hand before Autopilot went on isn't in `recent`, and coming
