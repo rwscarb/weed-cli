@@ -80,6 +80,7 @@ window.orbitMidi = (function () {
     { id: 'kFreeH', label: 'Freefall bloom', target: 'param:buildingHeight', key: null },
     { id: 'kFreeN', label: 'Freefall count', target: 'param:buildingCount', key: null },
     { id: 'kRot', label: 'Rotate', target: 'param:rotate', key: null },
+    { id: 'actAuto', label: 'Autopilot', target: 'autopilot:toggle', key: null },
   ];
   const TARGET_LABELS = {
     video: 'video only (toggle)', flash: 'fire transition', 'transition:next': 'next fade style',
@@ -90,7 +91,7 @@ window.orbitMidi = (function () {
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
     'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay',
-    'param:rotate': 'Rotate view',
+    'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot on/off',
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
 

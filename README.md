@@ -214,6 +214,13 @@ Zoom retune every mode; every setting persists in the browser.
   endless encoders are detected on their own. Every row, plugin modes
   and transitions included, has a Learn button; **export** saves the
   keymap as a `.json` file and **import** loads one.
+- **Autopilot** (🤖 in the visualizer's header, or a MIDI pad): the
+  visualizer drives itself. It listens for onsets and the running energy,
+  holds a mode for a while, drops back to the plain video, then picks a
+  fresh mode -- energetic ones when the music is up, calmer ones when it
+  isn't -- with a punchy or gentle transition to match the hit, and when
+  a track ends with nothing queued it plays the download you've heard
+  least recently.
 - **Video swap** (⇄ on the player): another download's picture stands
   in for the current track's — for an mp3 or a static-image video, so
   the visuals have real footage. Audio stays with the track; the

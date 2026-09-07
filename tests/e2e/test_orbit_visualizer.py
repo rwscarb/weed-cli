@@ -504,3 +504,46 @@ def test_an_encoder_on_the_mode_selector_steps_exactly_one_mode_per_click(page, 
     assert page.evaluate("() => window.orbitViz.current().mode") == modes[3]
     page.evaluate("() => window.__midi.send([0xB0, 20, 3])")           # a fast spin: three entries at once
     assert page.evaluate("() => window.orbitViz.current().mode") == modes[6]
+
+
+def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_path_server):
+    """Ryan: "an Autopilot feature that will automatically choose modes/
+    transitions based on the beat/music ... and continues to go back to
+    video only after each mode", toggled from the dialog's transport.
+    With the phases shortened to test length and a beat fed in, the
+    visualizer walks mode -> video only -> a different mode -> video only,
+    each switch through a transition, and the toggle persists."""
+    page.add_init_script("""
+      let a = 0;
+      AnalyserNode.prototype.getByteFrequencyData = function (arr) { a++; const beat = a % 24; const kick = beat < 3 ? 1.5 : 1;
+        for (let i = 0; i < arr.length; i++) { const lo = i < arr.length * 0.06 ? kick : 1; arr[i] = Math.min(255, 160 * Math.exp(-i / (arr.length / 6)) * lo + 25 + Math.random() * 15); } };
+      AnalyserNode.prototype.getByteTimeDomainData = function (arr) { for (let i = 0; i < arr.length; i++) arr[i] = 128 + 40 * Math.sin(i * 0.1 + a * 0.4); };
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    assert not page.is_checked('#autopilotToggle')
+    assert page.evaluate("() => window.orbitViz.autopilot()") is False
+    page.evaluate("() => window.orbitViz.setAutopilotTiming({ modeMin: 0.3, modeMax: 0.6, videoMin: 0.3, videoMax: 0.6 })")
+    page.check('#autopilotToggle')
+    assert page.evaluate("() => window.orbitViz.autopilot()") is True
+    seen, transitions = [], 0
+    for _ in range(40):
+        page.wait_for_timeout(100)
+        d = page.evaluate("() => window.orbitViz.debugState()")
+        state = 'video' if d['vizOff'] else d['mode']
+        if not seen or seen[-1] != state: seen.append(state)
+        if d['trans']: transitions += 1
+    # mode / video / mode / video ..., never the same mode twice running
+    assert len(seen) >= 4, seen
+    for i in range(1, len(seen)):
+        assert (seen[i] == 'video') != (seen[i - 1] == 'video'), seen
+    modes = [x for x in seen if x != 'video']
+    assert len(set(modes)) == len(modes), seen
+    assert transitions > 0
+    # persists like the other settings, readable with the dialog closed
+    page.wait_for_timeout(300)
+    page.locator('#orbit-egg-backdrop').click(position={'x': 5, 'y': 5})
+    page.wait_for_selector('#orbit-egg-dialog', state='detached')
+    assert page.evaluate("() => window.orbitViz.autopilot()") is True
+    _open_orbit_viz(page)
+    assert page.is_checked('#autopilotToggle')

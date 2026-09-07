@@ -755,6 +755,12 @@
       <h1>Orbit Visualizer</h1>
       <div class="transport">
         <button class="viz-mode-btn" @click="easterEggVisible = false">← Back</button>
+        <!-- Autopilot: the visualizer drives itself off the music and
+             keeps the music coming (orbit_visualizer.js autopilotTick,
+             vue-app.js onPlayerEnded) -->
+        <label class="autopilot-toggle" title="Autopilot: switch modes and transitions with the music, drop back to the plain video between them, and keep playing when nothing's queued">
+          <input type="checkbox" id="autopilotToggle"> 🤖 Autopilot
+        </label>
         <button type="button" class="icon-btn" v-if="player.jobId" title="Copy stream URL (paste into VLC)" @click.stop="copyStreamUrl">📋</button>
         <select v-if="!orbitStreaming" v-model="orbitRes" @click.stop class="orbit-res-select" title="Stream resolution">
           <option value="720">720p</option>

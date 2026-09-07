@@ -1969,14 +1969,29 @@ const app = createApp({
         }
       }
       const q = this.player.queue;
-      if (!q) return;
-      const next = q.items[q.index + 1];
-      if (!next) { this.player.queue = null; return; }
+      const next = q ? q.items[q.index + 1] : null;
+      if (!next || !this.library.downloads[next.content_hash]) {
+        this.player.queue = null;
+        // Autopilot: nothing queued, so pick something -- the download
+        // played least recently, ties broken at random, never the one
+        // that just ended
+        if (window.orbitViz && window.orbitViz.autopilot()) {
+          const pick = this.autopilotPick();
+          if (pick) this.openPlayer(pick.job_id, pick.title || this.shortHash(pick.content_hash), pick.content_hash, pick.signer_pubkey || null);
+        }
+        return;
+      }
       const rec = this.library.downloads[next.content_hash];
-      if (!rec) { this.player.queue = null; return; }
       this.openPlayer(rec.job_id, next.title || rec.title || this.shortHash(next.content_hash),
         next.content_hash, next.signer_pubkey || rec.signer_pubkey,
         { items: q.items, index: q.index + 1, playlistId: q.playlistId });
+    },
+    autopilotPick() {
+      const all = Object.values(this.library.downloads).filter(d => d.job_id && d.content_hash !== this.player.contentHash);
+      if (!all.length) return null;
+      const oldest = Math.min(...all.map(d => d.last_played || 0));
+      const pool = all.filter(d => (d.last_played || 0) === oldest);
+      return pool[Math.floor(Math.random() * pool.length)];
     },
     // Manual Prev/Next (the player header's ⏮/⏭, see index.html) --
     // distinct from onPlayerEnded's own auto-advance above rather than

@@ -359,6 +359,14 @@ window.orbitViz = (function () {
       // transitions ticked off in the Random pool panel: Random never
       // picks these (persisted; ids, so it survives plugins coming and going)
       randomExclude: [],
+      // Autopilot: the visualizer drives itself off the music -- a mode,
+      // then back to the plain video, then another mode, switching on
+      // strong hits (never sooner than a minimum dwell, never later than
+      // a maximum), picking modes by how energetic the music is and
+      // transitions by how hard the hit was. vue-app.js also reads this
+      // (orbitViz.autopilot()) to queue up more music when a track ends
+      // with nothing next. Persisted.
+      autopilot: false,
       trans: null,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
@@ -381,7 +389,7 @@ window.orbitViz = (function () {
     const SETTINGS_KEY = 'weed.orbit.settings';
     const SAVED_KEYS = ['vizMode', 'vizOff', 'vizUserScale', 'speed', 'reactivity', 'transition',
                         'transitionMs', 'asciiStride', 'asciiBrightness', 'asciiBgAlpha', 'asciiRampKey',
-                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude'];
+                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude', 'autopilot'];
     let restoredVizOff = false;
     (function restoreSettings() {
       let saved;
@@ -626,11 +634,11 @@ window.orbitViz = (function () {
     // number-key jump below), instead of three copies of the same
     // lit-class/resetVizNav/asciiControls-visibility bookkeeping
     // drifting out of sync with each other.
-    function setVizMode(mode) {
+    function setVizMode(mode, transitionOverride) {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       // grab the outgoing picture *before* the switch -- the transition
       // draws it over the new mode until it's gone
-      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) snapshotForTransition();
+      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) snapshotForTransition(transitionOverride);
       s.vizMode = mode;
       s.vizOff = false;
       persistSettings();
@@ -665,8 +673,8 @@ window.orbitViz = (function () {
     // control rows hide, but s.vizMode is kept -- clicking any mode, the
     // select, arrow cycling or Shift+digit all go through setVizMode,
     // which switches the effects straight back on.
-    function setVizOff() {
-      if (!s.restoring) snapshotForTransition();
+    function setVizOff(transitionOverride) {
+      if (!s.restoring) snapshotForTransition(transitionOverride);
       s.vizOff = true;
       persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
@@ -950,14 +958,14 @@ window.orbitViz = (function () {
       return ranked;
     })();
 
-    function snapshotForTransition() {
-      if (s.transition === 'none' || !s.transitionMs || !s.VW || !s.VH) return;
+    function snapshotForTransition(typeOverride) {
+      if ((s.transition === 'none' && !typeOverride) || !s.transitionMs || !s.VW || !s.VH) return;
       if (transOld.width !== s.VW || transOld.height !== s.VH) {
         transOld.width = s.VW; transOld.height = s.VH;
       }
       transOldCtx.clearRect(0, 0, s.VW, s.VH);
       transOldCtx.drawImage(vizCanvas, 0, 0);
-      let type = s.transition;
+      let type = typeOverride || s.transition;
       if (type === 'random') {
         // any ticked one, plugins included, never the same as last time
         // when there's a choice
@@ -980,6 +988,7 @@ window.orbitViz = (function () {
     s.transitionDebug = () => ({
       transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(),
       rot: s.vizUserRot, panX: s.vizPanX, panY: s.vizPanY, zoom: s.vizUserScale,
+      autopilot: s.autopilot, vizOff: s.vizOff, mode: s.vizMode,
       VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
     });
 
@@ -1145,11 +1154,76 @@ window.orbitViz = (function () {
       s.rafPending = true;
       requestAnimationFrame(drawViz);
     }
+    // ── Autopilot ──────────────────────────────────────────────────────
+    // Watches the same spectrum the modes do. An onset is a jump in
+    // spectral flux (how much louder the bins got since the last frame)
+    // or in the bass against their own running averages; the running
+    // energy decides whether the music is "up" or "down". Every switch
+    // alternates: a mode for MODE_MIN..MODE_MAX seconds, then the plain
+    // video for VIDEO_MIN..VIDEO_MAX, then a fresh mode -- always
+    // different from the last few. A strong onset ends a phase early
+    // once its minimum has passed; the maximum ends it regardless.
+    const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12 };
+    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples'];
+    const PUNCHY = ['flash', 'glitch', 'shatter', 'rgbsplit', 'crtoff', 'slide', 'fliptiles', 'burn', 'pixelate'];
+    const GENTLE = ['crossfade', 'blur', 'dissolve', 'iris', 'wipe', 'melt', 'droplet', 'zoomblur', 'warp', 'blinds', 'wave', 'spin'];
+    const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false };
+    function autopilotTick() {
+      const now = performance.now();
+      const f = s.freqData, maxBin = Math.floor(f.length * 0.7);
+      let flux = 0, bass = 0, energy = 0;
+      for (let i = 0; i < maxBin; i++) { energy += f[i]; if (auto.prevFreq) { const d = f[i] - auto.prevFreq[i]; if (d > 0) flux += d; } }
+      const nb = Math.max(1, Math.floor(f.length * 0.06)); for (let i = 0; i < nb; i++) bass += f[i];
+      flux /= (maxBin * 255) || 1; bass /= nb * 255; energy /= (maxBin * 255) || 1;
+      auto.prevFreq = Uint8Array.from(f);
+      auto.fluxAvg = auto.fluxAvg * 0.9 + flux * 0.1; auto.bassAvg = auto.bassAvg * 0.9 + bass * 0.1; auto.energyAvg = auto.energyAvg * 0.98 + energy * 0.02;
+      const strength = Math.max(flux / (auto.fluxAvg + 0.004), bass / (auto.bassAvg + 0.05));
+      const onset = strength > 1.8 && energy > 0.05;
+      if (!auto.seeded) { auto.seeded = true; auto.phaseStart = now; auto.phase = s.vizOff ? 'video' : 'mode'; }
+      const elapsed = (now - auto.phaseStart) / 1000;
+      const [lo, hi] = auto.phase === 'mode' ? [AUTO.modeMin, AUTO.modeMax] : [AUTO.videoMin, AUTO.videoMax];
+      if (!(elapsed >= hi || (onset && elapsed >= lo))) return;
+      // the transition for this switch: a hard hit gets a punchy one,
+      // anything else a gentle one -- from what's in the Random pool
+      const pool = randomPool();
+      const wantPunchy = strength > 2.5 || energy > 0.45;
+      let choices = pool.filter(t => (wantPunchy ? PUNCHY : GENTLE).includes(t));
+      if (!choices.length) choices = pool;
+      const transition = choices[Math.floor(Math.random() * choices.length)];
+      if (auto.phase === 'mode') {
+        // back to the plain video between modes
+        setVizOff(transition);
+        auto.phase = 'video';
+      } else {
+        const modes = allModes();
+        const up = auto.energyAvg > 0.3;
+        let cands = modes.filter(m => (up ? UP_MODES.includes(m) : !UP_MODES.includes(m)) && !auto.recent.includes(m));
+        if (cands.length < 3) cands = modes.filter(m => !auto.recent.includes(m));
+        if (!cands.length) cands = modes;
+        const mode = cands[Math.floor(Math.random() * cands.length)];
+        auto.recent = [...auto.recent, mode].slice(-6);
+        setVizMode(mode, transition);
+        auto.phase = 'mode';
+      }
+      auto.phaseStart = now;
+    }
+    function setAutopilot(on) {
+      s.autopilot = !!on;
+      auto.seeded = false;
+      if (autopilotToggle) autopilotToggle.checked = s.autopilot;
+      persistSettings();
+    }
+    const autopilotToggle = document.getElementById('autopilotToggle');
+    if (autopilotToggle) { autopilotToggle.checked = s.autopilot; on(autopilotToggle, 'change', () => setAutopilot(autopilotToggle.checked)); }
+    s.setAutopilot = setAutopilot;
+    s.setAutopilotTiming = (t) => Object.assign(AUTO, t);
+
     function drawViz() {
       s.rafPending = false;
       if (!s.running) return;
       if (!externalClock) scheduleDraw();
       if (!s.VW || !s.VH) return;
+      if (s.autopilot && !s.restoring) autopilotTick();
       if (s.vizUserRot) {
         // the whole scene turned about the centre, scaled up just enough
         // that a rotated frame still covers the corners (no wedges of
@@ -1747,6 +1821,8 @@ window.orbitViz = (function () {
         if (allTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav();
+      } else if (action === 'autopilot:toggle') {
+        setAutopilot(!s.autopilot);
       } else if (action.startsWith('ascii:ramp:')) {
         const key = action.slice('ascii:ramp:'.length);
         if (asciiRampSelect && [...asciiRampSelect.options].some(o => o.value === key)) {
@@ -1952,6 +2028,16 @@ window.orbitViz = (function () {
     // the party chat overlay -- vue-app.js keeps the list polled and
     // pushes it here with the overlay's on/off
     setChat: (messages, on) => { if (state) state.setChat(messages, on); },
+    // Autopilot (see autopilotTick): on/off, readable even while the
+    // dialog is closed (from the persisted settings) so vue-app.js can
+    // keep the music going between tracks
+    autopilot: () => {
+      if (state) return state.autopilot;
+      try { return !!(JSON.parse(localStorage.getItem('weed.orbit.settings') || '{}') || {}).autopilot; } catch (e) { return false; }
+    },
+    setAutopilot: (on) => { if (state) state.setAutopilot(on); },
+    // test hook: shorter phases than anyone would want in real use
+    setAutopilotTiming: (t) => { if (state) state.setAutopilotTiming(t); },
     // external controllers (orbit_midi.js) -- see s.control/s.trigger
     control: (param, v01) => { if (state) state.control(param, v01); },
     controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),

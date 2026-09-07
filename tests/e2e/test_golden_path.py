@@ -648,3 +648,20 @@ def test_player_header_stacks_the_marquee_above_the_buttons_with_an_add_to_playl
     page.fill('#playlist-picker .playlist-picker-new input', 'from the player')
     page.click('#playlist-picker .playlist-picker-new button[type=submit]')
     page.wait_for_function("vm => vm.library.playlists.some(p => p.name === 'from the player' && p.items.length === 1)", arg=vm)
+
+
+def test_autopilot_keeps_the_music_going_when_nothing_is_queued(page, golden_path_server):
+    """The other half of Autopilot: a track ends, nothing is queued, so it
+    plays the download heard least recently (never the one that just
+    ended). Off, the player just stops as before."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    job_id = page.evaluate("vm => Object.values(vm.library.downloads)[0].job_id", vm)
+    page.evaluate("""([vm, jid]) => { vm.library.downloads['b'.repeat(64)] = { content_hash: 'b'.repeat(64), job_id: jid + '-b', title: 'Never played', path: '/x/b.mp4', signer_pubkey: null, last_played: 0 };
+      vm.library.downloads['c'.repeat(64)] = { content_hash: 'c'.repeat(64), job_id: jid + '-c', title: 'Played earlier', path: '/x/c.mp4', signer_pubkey: null, last_played: 1000 }; }""", [vm, job_id])
+    page.evaluate("vm => { vm.player.queue = null; vm.onPlayerEnded(); }", vm)
+    assert page.evaluate("vm => vm.player.jobId", vm) == job_id            # autopilot off: nothing happens
+    page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: true }))")
+    assert page.evaluate("() => window.orbitViz.autopilot()") is True
+    page.evaluate("vm => { vm.player.queue = null; vm.onPlayerEnded(); }", vm)
+    assert page.evaluate("vm => vm.player.title", vm) == 'Never played'
