@@ -233,7 +233,9 @@ Zoom retune every mode; every setting persists in the browser.
   fresh mode -- energetic ones when the music is up, calmer ones when it
   isn't -- with a punchy or gentle transition to match the hit, and when
   a track ends with nothing queued it draws the next download by
-  lottery, weighted toward the least-played and longest-rested. The ☑
+  lottery. The control cycles through three states: off, **↓** (the
+  lottery favours the least-played and longest-rested tracks) and **↑**
+  (it favours the most-played, the crowd-pleasers). The ☑
   button beside the toggle unfolds a checkbox per mode: untick the ones
   Autopilot should leave alone (they stay a click or a pad away).
 - **Video swap** (⇄ on the player): another download's picture stands

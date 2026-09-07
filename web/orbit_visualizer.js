@@ -382,6 +382,9 @@ window.orbitViz = (function () {
       // (orbitViz.autopilot()) to queue up more music when a track ends
       // with nothing next. Persisted.
       autopilot: false,
+      // which way the between-tracks lottery leans while Autopilot is
+      // on: 'down' favours the least-played tracks, 'up' the most-played
+      autopilotBias: 'down',
       trans: null,
       panning: false, lastX: 0, lastY: 0,
       listeners: [],
@@ -404,7 +407,7 @@ window.orbitViz = (function () {
     const SETTINGS_KEY = 'weed.orbit.settings';
     const SAVED_KEYS = ['vizMode', 'vizOff', 'vizUserScale', 'speed', 'reactivity', 'transition',
                         'transitionMs', 'asciiStride', 'asciiBrightness', 'asciiBgAlpha', 'asciiRampKey',
-                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude', 'autoExclude', 'autopilot'];
+                        'asciiColorMode', 'buildingWidthScale', 'buildingHeightScale', 'buildingCount', 'randomExclude', 'autoExclude', 'autopilot', 'autopilotBias'];
     let restoredVizOff = false;
     (function restoreSettings() {
       let saved;
@@ -420,6 +423,7 @@ window.orbitViz = (function () {
         // is gone falls back to the default
         if (k === 'vizMode') { if (!allModes().includes(saved[k])) continue; }
         else if (k === 'transition') { if (!allTransitions().includes(saved[k])) continue; }
+        else if (k === 'autopilotBias') { if (saved[k] === 'up' || saved[k] === 'down') s[k] = saved[k]; continue; }
         else if (k === 'randomExclude' || k === 'autoExclude') { if (!Array.isArray(saved[k])) continue; s[k] = saved[k].filter(x => typeof x === 'string'); continue; }
         else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
         s[k] = saved[k];
@@ -1049,7 +1053,7 @@ window.orbitViz = (function () {
     s.transitionDebug = () => ({
       transition: s.transition, transitionMs: s.transitionMs, trans: s.trans, randomExclude: s.randomExclude.slice(), autoExclude: s.autoExclude.slice(), autoPool: autoPool(),
       rot: s.vizUserRot, panX: s.vizPanX, panY: s.vizPanY, zoom: s.vizUserScale,
-      autopilot: s.autopilot, vizOff: s.vizOff, mode: s.vizMode,
+      autopilot: s.autopilot, autopilotBias: s.autopilotBias, vizOff: s.vizOff, mode: s.vizMode,
       VW: s.VW, VH: s.VH, oldW: transOld.width, oldH: transOld.height,
     });
 
@@ -1272,15 +1276,47 @@ window.orbitViz = (function () {
       }
       auto.phaseStart = now;
     }
+    // The 🤖 control has three states, cycled by a click (or the MIDI
+    // row): off -> ↓ (on, the lottery favours the least-played tracks)
+    // -> ↑ (on, it favours the most-played) -> off.
+    const AUTO_STATES = {
+      off: { text: '🤖 off', title: 'Autopilot off — click for ↓ (favour the least-played tracks)' },
+      down: { text: '🤖 ↓', title: 'Autopilot on, favouring the least-played tracks — click for ↑ (favour the most-played)' },
+      up: { text: '🤖 ↑', title: 'Autopilot on, favouring the most-played tracks — click to turn it off' },
+    };
+    function autopilotState() { return s.autopilot ? s.autopilotBias : 'off'; }
+    function renderAutopilotToggle() {
+      if (!autopilotToggle) return;
+      const st = autopilotState();
+      autopilotToggle.dataset.state = st;
+      autopilotToggle.textContent = AUTO_STATES[st].text;
+      autopilotToggle.title = AUTO_STATES[st].title;
+      autopilotToggle.setAttribute('aria-pressed', s.autopilot ? 'true' : 'false');
+      autopilotToggle.classList.toggle('active', s.autopilot);
+    }
     function setAutopilot(on) {
       s.autopilot = !!on;
       auto.seeded = false;
-      if (autopilotToggle) autopilotToggle.checked = s.autopilot;
+      renderAutopilotToggle();
       persistSettings();
     }
+    function setAutopilotBias(bias) {
+      if (bias !== 'up' && bias !== 'down') return;
+      s.autopilotBias = bias;
+      renderAutopilotToggle();
+      persistSettings();
+    }
+    function cycleAutopilot() {
+      const st = autopilotState();
+      if (st === 'off') { s.autopilotBias = 'down'; setAutopilot(true); }
+      else if (st === 'down') setAutopilotBias('up');
+      else setAutopilot(false);
+    }
     const autopilotToggle = document.getElementById('autopilotToggle');
-    if (autopilotToggle) { autopilotToggle.checked = s.autopilot; on(autopilotToggle, 'change', () => setAutopilot(autopilotToggle.checked)); }
+    if (autopilotToggle) { renderAutopilotToggle(); on(autopilotToggle, 'click', cycleAutopilot); }
     s.setAutopilot = setAutopilot;
+    s.setAutopilotBias = setAutopilotBias;
+    s.cycleAutopilot = cycleAutopilot;
     s.setAutopilotTiming = (t) => Object.assign(AUTO, t);
 
     function drawViz() {
@@ -1898,7 +1934,7 @@ window.orbitViz = (function () {
       } else if (action === 'resetNav') {
         resetVizNav();
       } else if (action === 'autopilot:toggle') {
-        setAutopilot(!s.autopilot);
+        cycleAutopilot();   // off -> ↓ -> ↑ -> off, same as the button
       } else if (action.startsWith('ascii:ramp:')) {
         const key = action.slice('ascii:ramp:'.length);
         if (asciiRampSelect && [...asciiRampSelect.options].some(o => o.value === key)) {
@@ -2119,6 +2155,13 @@ window.orbitViz = (function () {
       try { return !!(JSON.parse(localStorage.getItem('weed.orbit.settings') || '{}') || {}).autopilot; } catch (e) { return false; }
     },
     setAutopilot: (on) => { if (state) state.setAutopilot(on); },
+    // 'down' (favour the least-played tracks) or 'up' (the most-played);
+    // like autopilot(), readable with the dialog closed
+    autopilotBias: () => {
+      if (state) return state.autopilotBias;
+      try { const b = (JSON.parse(localStorage.getItem('weed.orbit.settings') || '{}') || {}).autopilotBias; return b === 'up' ? 'up' : 'down'; } catch (e) { return 'down'; }
+    },
+    setAutopilotBias: (bias) => { if (state) state.setAutopilotBias(bias); },
     // test hook: shorter phases than anyone would want in real use
     setAutopilotTiming: (t) => { if (state) state.setAutopilotTiming(t); },
     // external controllers (orbit_midi.js) -- see s.control/s.trigger

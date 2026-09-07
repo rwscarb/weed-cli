@@ -91,7 +91,7 @@ window.orbitMidi = (function () {
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
     'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay',
-    'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot on/off',
+    'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot: off → ↓ → ↑',
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
 

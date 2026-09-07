@@ -604,10 +604,11 @@ def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_pa
     """)
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
-    assert not page.is_checked('#autopilotToggle')
+    assert page.get_attribute('#autopilotToggle', 'data-state') == 'off'
     assert page.evaluate("() => window.orbitViz.autopilot()") is False
     page.evaluate("() => window.orbitViz.setAutopilotTiming({ modeMin: 0.3, modeMax: 0.6, videoMin: 0.3, videoMax: 0.6 })")
-    page.check('#autopilotToggle')
+    page.click('#autopilotToggle')                                            # off -> ↓
+    assert page.get_attribute('#autopilotToggle', 'data-state') == 'down'
     assert page.evaluate("() => window.orbitViz.autopilot()") is True
     seen, transitions = [], 0
     for _ in range(40):
@@ -629,7 +630,15 @@ def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_pa
     page.wait_for_selector('#orbit-egg-dialog', state='detached')
     assert page.evaluate("() => window.orbitViz.autopilot()") is True
     _open_orbit_viz(page)
-    assert page.is_checked('#autopilotToggle')
+    assert page.get_attribute('#autopilotToggle', 'data-state') == 'down'
+    # the three states cycle: ↓ -> ↑ (still on, favouring the most-played) -> off
+    page.click('#autopilotToggle')
+    assert page.get_attribute('#autopilotToggle', 'data-state') == 'up'
+    assert page.evaluate("() => [window.orbitViz.autopilot(), window.orbitViz.autopilotBias()]") == [True, 'up']
+    page.click('#autopilotToggle')
+    assert page.get_attribute('#autopilotToggle', 'data-state') == 'off'
+    assert page.evaluate("() => window.orbitViz.autopilot()") is False
+    assert page.evaluate("() => window.orbitViz.autopilotBias()") == 'up'    # the lean is remembered for next time
 
 
 def test_autopilot_pool_checkboxes_limit_what_autopilot_picks(page, golden_path_server):
@@ -656,7 +665,7 @@ def test_autopilot_pool_checkboxes_limit_what_autopilot_picks(page, golden_path_
     assert sorted(page.evaluate("() => window.orbitViz.debugState().autoExclude")) == sorted(m for m in ids if m not in ('bars', 'scope'))
     page.click('[data-viz="plasma"]')                                        # a click still reaches an unticked mode
     page.evaluate("() => window.orbitViz.setAutopilotTiming({ modeMin: 0.2, modeMax: 0.4, videoMin: 0.2, videoMax: 0.4 })")
-    page.check('#autopilotToggle')
+    page.click('#autopilotToggle')
     picked = set()
     for _ in range(40):
         page.wait_for_timeout(100)
@@ -664,7 +673,7 @@ def test_autopilot_pool_checkboxes_limit_what_autopilot_picks(page, golden_path_
         if not d['vizOff']: picked.add(d['mode'])
     picked.discard('plasma')                                                 # the hand-picked start, before the first switch
     assert picked and picked <= {'bars', 'scope'}, picked
-    page.uncheck('#autopilotToggle')
+    page.evaluate("() => window.orbitViz.setAutopilot(false)")
     # persists across a reload
     page.wait_for_timeout(300)
     page.reload()

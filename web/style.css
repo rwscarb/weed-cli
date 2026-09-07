@@ -2073,9 +2073,13 @@ code {
 .party-invite { margin: 0.5rem 0; }
 
 /* ── Autopilot toggle in the visualizer's header ─────────────────── */
-#orbit-egg-dialog .autopilot-toggle { display: inline-flex; flex-direction: row; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--muted); margin: 0; cursor: pointer; white-space: nowrap; }
-#orbit-egg-dialog .autopilot-toggle input { width: auto; margin: 0; }
-#orbit-egg-dialog .autopilot-toggle:has(input:checked) { color: var(--accent); }
+#orbit-egg-dialog .autopilot-toggle {
+  display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem; color: var(--muted);
+  margin: 0; padding: 0.15rem 0.45rem; cursor: pointer; white-space: nowrap;
+  background: transparent; border: 1px solid var(--border); border-radius: 4px; font-family: inherit;
+}
+#orbit-egg-dialog .autopilot-toggle:hover { color: var(--text); border-color: var(--text); }
+#orbit-egg-dialog .autopilot-toggle[data-state="down"], #orbit-egg-dialog .autopilot-toggle[data-state="up"] { color: var(--accent); border-color: var(--accent); }
 
 /* ── Random pool (which transitions Random may pick) ─────────────── */
 #orbit-egg-dialog .random-pool { align-items: flex-start; gap: 0.5rem; border-top: 1px solid var(--border); padding-top: 0.3rem; width: 100%; }

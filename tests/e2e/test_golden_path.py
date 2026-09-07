@@ -669,6 +669,12 @@ def test_autopilot_keeps_the_music_going_when_nothing_is_queued(page, golden_pat
     page.evaluate("([vm, jid]) => { vm.library.downloads['c'.repeat(64)].play_count = 10; vm.library.downloads['c'.repeat(64)].last_played = Date.now() / 1000; }", [vm, job_id])
     picks = page.evaluate("vm => { const out = {}; for (let i = 0; i < 400; i++) { const p = vm.autopilotPick(); out[p.title] = (out[p.title] || 0) + 1; } return out; }", vm)
     assert 'Test Clip' not in picks and picks.get('Never played', 0) > 300, picks
+    # the 🤖 control's ↑ state turns the lottery over: the most-played track wins instead
+    page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: true, autopilotBias: 'up' }))")
+    assert page.evaluate("() => window.orbitViz.autopilotBias()") == 'up'
+    picks = page.evaluate("vm => { const out = {}; for (let i = 0; i < 400; i++) { const p = vm.autopilotPick(); out[p.title] = (out[p.title] || 0) + 1; } return out; }", vm)
+    assert 'Test Clip' not in picks and picks.get('Played earlier', 0) > 300, picks
+    page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: true }))")
     page.evaluate("vm => { vm.player.queue = null; vm.onPlayerEnded(); }", vm)
     assert page.evaluate("vm => vm.player.title", vm) in ('Never played', 'Played earlier')
 

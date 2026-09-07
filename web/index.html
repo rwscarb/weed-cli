@@ -766,9 +766,11 @@
         <!-- Autopilot: the visualizer drives itself off the music and
              keeps the music coming (orbit_visualizer.js autopilotTick,
              vue-app.js onPlayerEnded) -->
-        <label class="autopilot-toggle" title="Autopilot: switch modes and transitions with the music, drop back to the plain video between them, and keep playing when nothing's queued">
-          <input type="checkbox" id="autopilotToggle"> 🤖 Autopilot
-        </label>
+        <!-- three states, cycled by a click: off, ↓ (on, favouring the
+             least-played tracks between songs), ↑ (on, favouring the
+             most-played). Text/title come from orbit_visualizer.js
+             renderAutopilotToggle. -->
+        <button type="button" class="autopilot-toggle" id="autopilotToggle" data-state="off" aria-pressed="false">🤖 off</button>
         <!-- the Autopilot pool: which modes it may pick (see the
              #autoPoolPanel row below the controls) -->
         <button type="button" class="icon-btn" id="autoPoolBtn" title="Choose which modes Autopilot picks from">☑</button>

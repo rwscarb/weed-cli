@@ -2147,14 +2147,19 @@ const app = createApp({
     // some more (anything a day or more old counts as fully rested), so
     // fresh and neglected tracks come up first while nothing is ever
     // ruled out entirely.
+    // The 🤖 control's ↑/↓ flips the play-count term: ↓ (the default)
+    // is the above, ↑ turns it over so the most-played tracks carry the
+    // most weight instead -- the crowd-pleasers -- with the rest term
+    // still keeping the same one from coming straight back.
     autopilotPick() {
       const all = Object.values(this.library.downloads).filter(d => d.job_id && d.content_hash !== this.player.contentHash);
       if (!all.length) return null;
       const now = Date.now() / 1000;
+      const popular = !!(window.orbitViz && window.orbitViz.autopilotBias && window.orbitViz.autopilotBias() === 'up');
       const weight = d => {
         const plays = Math.max(0, d.play_count || 0);
         const ageHours = d.last_played ? (now - d.last_played) / 3600 : 48;
-        return Math.pow(1 + plays, -1.5) * (0.2 + 0.8 * Math.min(1, ageHours / 24));
+        return Math.pow(1 + plays, popular ? 1.5 : -1.5) * (0.2 + 0.8 * Math.min(1, ageHours / 24));
       };
       const weights = all.map(weight), total = weights.reduce((a, b) => a + b, 0);
       let r = Math.random() * total;
