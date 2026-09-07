@@ -56,7 +56,11 @@ const app = createApp({
       role: 'admin',
       partyMode: false,
       party: { title: '', links: [], tracks: [], now_playing: null, autoplay: false,
-               stream: { active: false, since: 0, url: '/api/orbit-view', player_url: null } },
+               stream: { active: false, since: 0, url: '/api/orbit-view', player_url: null,
+                         audio: false, audio_since: 0, audio_url: '/api/orbit-audio', audio_player_url: null } },
+      // the guest page's 🔊 listen: true while its <audio> is playing
+      // /api/orbit-audio (the element itself is this._partyAudio)
+      partyListening: false,
       partyUrl: '',          // admin: the guest link (lan url + stream token)
       partyStreamToken: '',
       partyForm: { title: '', links: '', autoplay: false, chat: false },
@@ -187,6 +191,12 @@ const app = createApp({
       // rate: 0.7 is visibly cleaner than the old 0.5 for roughly 2x
       // the bytes, still a few Mbit at 720p/30fps.
       orbitQuality: '0.7',
+      // 🔊: send the player's audio with the stream too (a second
+      // WebSocket carrying MediaRecorder's WebM/Opus, served back out
+      // on /api/orbit-audio -- see _startOrbitAudio). Off by default:
+      // the picture alone is what a Roku IP-camera viewer or an <img>
+      // can take; audio is for VLC/OBS/the party page's 🔊 button.
+      orbitAudio: false,
       // /api/orbit-view URL while streaming, shown inline next to the
       // stream button with click-to-copy -- replaced a prompt() that
       // blocked all JS (and therefore the stream) until dismissed
@@ -433,6 +443,13 @@ const app = createApp({
     orbitDelay() { this.saveStreamSettings(); },
     orbitRes() { this.saveStreamSettings(); },
     orbitQuality() { this.saveStreamSettings(); },
+    // flipped mid-stream, the audio sender starts/stops on its own;
+    // flipped beforehand, toggleOrbitStream's 'open' reads it
+    orbitAudio(on) {
+      this.saveStreamSettings();
+      if (!this.orbitStreaming) return;
+      if (on) this._startOrbitAudio(); else this._stopOrbitAudio();
+    },
     pageTitle: {
       immediate: true,
       handler(title) { document.title = title; },
@@ -556,6 +573,7 @@ const app = createApp({
         if (typeof saved.orbitDelay === 'number') this.orbitDelay = Math.min(10000, Math.max(0, saved.orbitDelay));
         if (['360', '480', '720'].includes(saved.orbitRes)) this.orbitRes = saved.orbitRes;
         if (['0.4', '0.55', '0.7', '0.85'].includes(saved.orbitQuality)) this.orbitQuality = saved.orbitQuality;
+        if (typeof saved.orbitAudio === 'boolean') this.orbitAudio = saved.orbitAudio;
       }
     } catch (e) { /* unreadable saved settings: defaults it is */ }
 
@@ -1176,6 +1194,7 @@ const app = createApp({
             window.orbitViz.setFrameAspect(null);   // the canvas gets its own shape back
             worker.terminate();
             if (this._orbitWorker === worker) this._orbitWorker = null;
+            this._stopOrbitAudio();   // the audio feed lives and dies with the picture
             this.orbitStreaming = false;
             window._orbitStreaming = false;
             this.orbitViewUrl = '';
@@ -1200,6 +1219,7 @@ const app = createApp({
                 _running = true;
                 document.addEventListener('visibilitychange', _onVisibility);
                 if (document.hidden) _setClock(true); else _scheduleCapture();
+                if (this.orbitAudio) this._startOrbitAudio();
                 break;
               }
               case 'tick':
@@ -1238,8 +1258,83 @@ const app = createApp({
     saveStreamSettings() {
       try {
         localStorage.setItem('weed.stream.settings', JSON.stringify(
-          { orbitDelay: this.orbitDelay, orbitRes: this.orbitRes, orbitQuality: this.orbitQuality }));
+          { orbitDelay: this.orbitDelay, orbitRes: this.orbitRes, orbitQuality: this.orbitQuality,
+            orbitAudio: this.orbitAudio }));
       } catch (e) { /* private mode / quota */ }
+    },
+    // ── orbit audio (🔊): the player's sound, alongside the picture ──
+    // Taps the Web Audio graph _ensureOrbitAnalyser built -- at `source`,
+    // *before* the ⏱ delay node, so the stream gets the undelayed audio
+    // (the delay exists to hold the local speakers back to match a
+    // laggy viewer; sending delayed audio would defeat it) -- into a
+    // MediaStreamAudioDestinationNode, records that with MediaRecorder
+    // (Opus in WebM on Chromium, Opus in Ogg on Firefox), and sends each
+    // ~250ms blob as one binary message on its own WebSocket to
+    // /api/orbit-audio-ws. Main thread, not the worker: the blobs are a
+    // few KB each and the recorder does its encoding off-thread anyway.
+    // Nothing here touches the picture path.
+    _startOrbitAudio() {
+      if (this._orbitAudioSender) return;
+      if (typeof MediaRecorder === 'undefined') {
+        console.warn('[orbit] audio: MediaRecorder is not available in this browser');
+        return;
+      }
+      const mime = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus']
+        .find(m => MediaRecorder.isTypeSupported(m));
+      if (!mime) {
+        console.warn('[orbit] audio: no supported Opus container for MediaRecorder');
+        return;
+      }
+      let graph;
+      try { graph = this._ensureOrbitAnalyser(); } catch (e) { console.error('[orbit] audio: no audio graph:', e); return; }
+      const { ctx, source } = graph;
+      // a context created before any user gesture starts suspended and
+      // renders nothing; the click that started playback lets this resume
+      if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+      const dest = ctx.createMediaStreamDestination();
+      source.connect(dest);
+      let rec;
+      try {
+        rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 128000 });
+      } catch (e) {
+        console.error('[orbit] audio: MediaRecorder refused:', e);
+        try { source.disconnect(dest); } catch (e2) { /* already gone */ }
+        return;
+      }
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const actualMime = rec.mimeType || mime;
+      const ws = new WebSocket(`${proto}//${location.host}/api/orbit-audio-ws?mime=${encodeURIComponent(actualMime)}`);
+      ws.binaryType = 'arraybuffer';
+      const sender = { dest, source, rec, ws, stopped: false, bytes: 0 };
+      this._orbitAudioSender = sender;
+      ws.onopen = () => {
+        if (sender.stopped) return;
+        try { rec.start(250); } catch (e) { console.error('[orbit] audio: recorder start failed:', e); this._stopOrbitAudio(); return; }
+        console.log(`[orbit] audio on (${actualMime}) → /api/orbit-audio`);
+      };
+      ws.onerror = () => { if (!sender.stopped) console.error('[orbit] audio: WebSocket error'); };
+      ws.onclose = () => {
+        if (sender.stopped) return;
+        console.warn('[orbit] audio: WebSocket closed by the server');
+        this._stopOrbitAudio();
+      };
+      rec.ondataavailable = (e) => {
+        if (sender.stopped || !e.data || !e.data.size) return;
+        if (ws.readyState !== WebSocket.OPEN) return;
+        sender.bytes += e.data.size;
+        ws.send(e.data);
+      };
+      rec.onerror = (e) => { console.error('[orbit] audio: recorder error:', e.error || e); this._stopOrbitAudio(); };
+    },
+    _stopOrbitAudio() {
+      const s = this._orbitAudioSender;
+      if (!s) return;
+      this._orbitAudioSender = null;
+      s.stopped = true;
+      try { if (s.rec.state !== 'inactive') s.rec.stop(); } catch (e) { /* already stopped */ }
+      try { s.source.disconnect(s.dest); } catch (e) { /* already disconnected */ }
+      try { s.ws.close(); } catch (e) { /* already closed */ }
+      console.log(`[orbit] audio off (${(s.bytes / 1024).toFixed(0)} KB sent)`);
     },
     copyOrbitViewUrl() {
       if (!this.orbitViewUrl) return;
@@ -1505,12 +1600,56 @@ const app = createApp({
       if (p.error) return;
       this.party = p;
       this.chat.enabled = !!p.chat;
+      // the guest's <audio>: drop it the moment its feed is gone --
+      // audio switched off, or the stream (or just its audio) restarted,
+      // which is a new container the old element can't continue into.
+      // It's never restarted from here: play() needs a tap (autoplay).
+      if (this._partyAudio) {
+        const s = p.stream || {};
+        if (!s.active || !s.audio || s.since !== this._partyAudio._since || s.audio_since !== this._partyAudio._audioSince) {
+          this.stopPartyListen();
+        }
+      }
       if (!this.partyForm._touched) {
         this.partyForm.title = p.title || '';
         this.partyForm.links = (p.links || []).map(l => (l.label ? l.label + ' | ' : '') + l.url).join('\n');
         this.partyForm.autoplay = !!p.autoplay;
         this.partyForm.chat = !!p.chat;
       }
+    },
+    // ── the party page's 🔊 listen ────────────────────────────────────
+    // An <audio> pointed at /api/orbit-audio, created on the tap itself
+    // (browsers only allow play() with sound from a user gesture, so
+    // this never autoplays), and torn down on 🔇 or when the feed goes
+    // away (see refreshParty). A fresh ?_= on every start: the browser
+    // must not hand back a cached response for a live stream.
+    togglePartyListen() {
+      if (this._partyAudio) { this.stopPartyListen(); return; }
+      const s = this.party.stream;
+      if (!s.active || !s.audio) return;
+      const a = document.createElement('audio');
+      a.preload = 'none';
+      a._since = s.since;
+      a._audioSince = s.audio_since;
+      a.src = (s.audio_url || '/api/orbit-audio') + '?_=' + Date.now();
+      a.onerror = () => { console.warn('[party] audio element error', a.error && a.error.message); if (this._partyAudio === a) this.stopPartyListen(); };
+      a.onended = () => { if (this._partyAudio === a) this.stopPartyListen(); };
+      this._partyAudio = a;
+      this.partyListening = true;
+      a.play().catch(err => {
+        console.warn('[party] audio play() refused:', err && err.message);
+        if (this._partyAudio === a) this.stopPartyListen();
+      });
+    },
+    stopPartyListen() {
+      const a = this._partyAudio;
+      this._partyAudio = null;
+      this.partyListening = false;
+      if (!a) return;
+      try { a.pause(); } catch (e) { /* never started */ }
+      // dropping src closes the connection; the server sees the write fail
+      a.removeAttribute('src');
+      try { a.load(); } catch (e) { /* nothing to reset */ }
     },
     // ── the party index strip ─────────────────────────────────────────
     indexLetter(t) {
@@ -2089,7 +2228,9 @@ const app = createApp({
       source.connect(delay);          // delayed → speakers
       delay.connect(ctx.destination);
       this._orbitAnalyser = {
-        ctx, analyser, delay,
+        // source is kept so the network stream's audio sender
+        // (_startOrbitAudio) can tap it ahead of the delay node
+        ctx, analyser, delay, source,
         freq: new Uint8Array(analyser.frequencyBinCount),
         wave: new Uint8Array(analyser.fftSize),
       };

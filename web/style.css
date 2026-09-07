@@ -2046,6 +2046,10 @@ code {
 .party-top { position: sticky; top: 0; z-index: 5; background: var(--bg); padding: 0.4rem 0 0.3rem; display: flex; flex-direction: column; gap: 0.5rem; }
 .party-stream img { width: 100%; max-height: 46vh; object-fit: contain; border-radius: 8px; background: #000; display: block; }
 .party-player-link { display: inline-block; margin-top: 0.3rem; font-size: 0.8rem; color: var(--muted); }
+/* the 🔊 listen / 🔇 mute tap: styled as a link like "open in a player"
+   next to it, but a button (it starts an <audio>, it doesn't navigate) */
+.party-listen-btn { background: none; border: none; padding: 0; margin-right: 0.8rem; font: inherit; font-size: 0.8rem; color: var(--muted); cursor: pointer; text-decoration: underline; }
+.party-listen-btn.active { color: var(--accent); }
 .party-stream-off, .party-empty { color: var(--muted); font-size: 0.9rem; }
 .party-tracks, .party-links { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 .party-tracks li { display: flex; align-items: center; gap: 0.6rem; padding: 0.35rem 0.5rem; background: var(--panel); border: 1px solid var(--border); border-radius: 6px; }

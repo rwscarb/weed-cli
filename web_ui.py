@@ -97,7 +97,7 @@ def _party_settings():
     return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False, 'chat': False})
 _orbit_ws_since = 0.0  # when the current stream started -- the party page keys its <img> on it
 # Optional second listener, plain HTTP, serving *only* the stream
-# endpoints (/api/orbit-view, /api/orbit-stream, /api/stream/<job>).
+# endpoints (/api/orbit-view, /api/orbit-audio, /api/orbit-stream, /api/stream/<job>).
 # For players that can't do TLS with a self-signed cert -- a Roku
 # IP-camera viewer, a smart TV, an old set-top box -- while the UI
 # itself stays on --tls. Same token rules as the main port (?token=).
@@ -232,6 +232,199 @@ def _orbit_fanout(payload):
                 except queue.Full: pass
                 dropped += 1
     return dropped
+
+
+# ── orbit audio stream ───────────────────────────────────────────────────
+# Optional second feed next to the picture: the streamer's browser records
+# the player's audio with MediaRecorder (WebM/Opus in Chromium, Ogg/Opus
+# in Firefox) and pushes each ~250ms blob over WebSocket /api/orbit-audio-ws;
+# the server hands the container bytes out live on /api/orbit-audio. The
+# state lives here rather than in the handler so /api/party and
+# /api/orbit-stream can report it.
+_orbit_audio = {'on': False, 'mime': None, 'since': 0.0}
+_orbit_audio_lock = threading.Lock()
+
+
+class _LiveContainerRelay:
+    """Fan a live WebM or Ogg byte stream out to any number of HTTP
+    readers, each of which may connect at any moment.
+
+    The problem it solves: MJPEG viewers can start on any frame, but a
+    container stream isn't like that. A WebM reader has to see the EBML
+    header, Segment, Info and Tracks elements (the "init segment") before
+    the first Cluster, and then must start on a Cluster boundary -- half
+    a Cluster is garbage to the demuxer. Ogg is the same shape: the BOS
+    header pages first, then whole pages, each starting with 'OggS'.
+
+    So: everything received before the first Cluster ID (WebM) -- or the
+    entire first blob (Ogg, whose header pages the muxer emits together)
+    -- is cached as the init segment. A reader that subscribes after that
+    point is handed the cached init segment immediately, then held back
+    until the next blob that contains a boundary marker, and started from
+    that marker, discarding the partial bytes before it. A reader that
+    subscribed before the init segment was complete simply receives every
+    blob verbatim, the way the streamer's own recorder produced them.
+
+    Pure Python over byte strings, no sockets: feed() the incoming blobs,
+    subscribe() to get a queue.Queue to read from (None on it means the
+    stream ended), unsubscribe() when the reader goes away. Delivery is
+    drop-oldest like _orbit_fanout, with a deeper queue -- a container
+    reader that's 16 blobs (~4s) behind is going to glitch anyway, and
+    the alternative of letting the backlog grow costs every other reader
+    its latency."""
+
+    WEBM_EBML = b'\x1a\x45\xdf\xa3'      # EBML header, the very first 4 bytes of a WebM
+    WEBM_CLUSTER = b'\x1f\x43\xb6\x75'   # Cluster element ID
+    OGG_PAGE = b'OggS'                    # capture pattern at the top of every Ogg page
+
+    def __init__(self, maxsize=16):
+        self.maxsize = maxsize
+        self._lock = threading.Lock()
+        self._subs = {}     # queue.Queue -> 'live' | 'pending' (waiting for a boundary)
+        self._mime = None
+        self._init = b''
+        self._init_done = False
+
+    # ── stream lifecycle ───────────────────────────────────────────────
+    def start(self, mime):
+        """A new stream (the sender's WebSocket opened): forget the old
+        init segment. Readers left over from a previous stream are ended
+        rather than spliced -- a new recording is a new container with
+        its own header, and a demuxer mid-stream can't switch."""
+        with self._lock:
+            self._end_all_locked()
+            self._mime = mime or ''
+            self._init = b''
+            self._init_done = False
+
+    def end(self):
+        """The stream is over: every reader gets its None."""
+        with self._lock:
+            self._end_all_locked()
+            self._init = b''
+            self._init_done = False
+
+    def _end_all_locked(self):
+        for q in list(self._subs):
+            self._put(q, None)
+        self._subs.clear()
+
+    @property
+    def is_ogg(self):
+        return (self._mime or '').startswith('audio/ogg')
+
+    @property
+    def init_segment(self):
+        with self._lock:
+            return self._init if self._init_done else None
+
+    # ── readers ────────────────────────────────────────────────────────
+    def subscribe(self):
+        """A queue the reader drains. If the init segment is already
+        known it's the first thing on the queue and the reader is held
+        until a boundary; otherwise the reader is early and gets
+        everything from here on."""
+        q = queue.Queue(maxsize=self.maxsize)
+        with self._lock:
+            if self._init_done:
+                if self._init:
+                    q.put_nowait(self._init)
+                self._subs[q] = 'pending'
+            else:
+                self._subs[q] = 'live'
+        return q
+
+    def unsubscribe(self, q):
+        with self._lock:
+            self._subs.pop(q, None)
+
+    def subscriber_count(self):
+        with self._lock:
+            return len(self._subs)
+
+    # ── the feed ───────────────────────────────────────────────────────
+    def feed(self, blob):
+        """One blob from the sender, in order. Returns how many readers
+        were behind (had to drop) when it arrived."""
+        if not blob:
+            return 0
+        dropped = 0
+        with self._lock:
+            if not self._init_done:
+                if self.is_ogg:
+                    # the muxer's first blob carries the BOS/header pages
+                    self._init = blob
+                    self._init_done = True
+                else:
+                    idx = self._find_boundary(blob, 0)
+                    if idx < 0:
+                        self._init += blob
+                    else:
+                        self._init += blob[:idx]
+                        self._init_done = True
+                # nobody can be pending yet -- pending only starts once
+                # the init segment is known -- so every reader is live
+                for q in list(self._subs):
+                    dropped += self._put(q, blob)
+                return dropped
+            boundary = None   # found lazily: only if someone's waiting
+            for q, state in list(self._subs.items()):
+                if state == 'live':
+                    dropped += self._put(q, blob)
+                    continue
+                if boundary is None:
+                    boundary = self._find_boundary(blob, 0)
+                if boundary < 0:
+                    continue          # still waiting for a clean start
+                self._subs[q] = 'live'
+                dropped += self._put(q, blob[boundary:])
+        return dropped
+
+    def _find_boundary(self, blob, start):
+        """Offset of the first plausible container boundary in blob at
+        or after start, or -1. Both markers are 4 bytes, so a chance
+        match inside Opus data is possible (~1 in 4 billion per byte);
+        the byte(s) that must follow a real one are checked to make
+        that even rarer: an Ogg page header's version byte is 0, and a
+        Cluster ID is followed by its size vint and then the Timecode
+        element (0xE7)."""
+        marker = self.OGG_PAGE if self.is_ogg else self.WEBM_CLUSTER
+        idx = blob.find(marker, start)
+        while idx >= 0:
+            if self._plausible_boundary(blob, idx):
+                return idx
+            idx = blob.find(marker, idx + 1)
+        return -1
+
+    def _plausible_boundary(self, blob, idx):
+        after = idx + 4
+        if after >= len(blob):
+            return True   # can't tell -- the marker is the last thing in the blob
+        if self.is_ogg:
+            return blob[after] == 0
+        # EBML vint: the count of leading zero bits + 1 is its length
+        first = blob[after]
+        if first == 0:
+            return False
+        vint_len = 9 - first.bit_length()
+        pos = after + vint_len
+        return pos >= len(blob) or blob[pos] == 0xE7
+
+    @staticmethod
+    def _put(q, item):
+        """put_nowait with the drop-oldest policy; 1 if it had to drop."""
+        try:
+            q.put_nowait(item)
+            return 0
+        except queue.Full:
+            try: q.get_nowait()
+            except queue.Empty: pass
+            try: q.put_nowait(item)
+            except queue.Full: pass
+            return 1
+
+
+_orbit_audio_relay = _LiveContainerRelay()
 
 
 def _ws_unmask(data, mask_key):
@@ -874,14 +1067,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET endpoints a guest (stream token) may use; everything else under
     # /api/ is admin-only. The stream endpoints also take ?token=.
-    _GUEST_GET = ('/api/orbit-view', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
+    _GUEST_GET = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path, qs = parsed.path, parse_qs(parsed.query)
 
         if path.startswith('/api/'):
-            takes_query_token = path == '/api/orbit-view' or path.startswith('/api/stream/')
+            takes_query_token = path in ('/api/orbit-view', '/api/orbit-audio') or path.startswith('/api/stream/')
             q = qs if takes_query_token else None
             guest_ok = takes_query_token or path in self._GUEST_GET
             if not (self._guest_ok(q) if guest_ok else self._authorized(q)):
@@ -975,6 +1168,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_orbit_websocket(qs)
         if path == '/api/orbit-view':
             return self._handle_orbit_view()
+        if path == '/api/orbit-audio-ws':
+            return self._handle_orbit_audio_websocket(qs)
+        if path == '/api/orbit-audio':
+            return self._handle_orbit_audio()
         if path == '/api/orbit-stream':
             return self._handle_orbit_stream_status()
         if path == '/api/qr':
@@ -1350,6 +1547,8 @@ class Handler(BaseHTTPRequestHandler):
             now_playing = _library['history'][-1] if _library['history'] else None
         with _orbit_ws_lock:
             active = _orbit_ws_connected
+        with _orbit_audio_lock:
+            audio = dict(_orbit_audio)
         plain = self._stream_plain_base()
         self._json({
             'role': self._role(), 'title': party.get('title') or '', 'links': party.get('links') or [],
@@ -1361,6 +1560,12 @@ class Handler(BaseHTTPRequestHandler):
                 'url': '/api/orbit-view',
                 # for an external player on the guest's phone/TV
                 'player_url': f'{plain or ""}/api/orbit-view{token_qs}' if plain else None,
+                # the optional audio feed (the streamer's 🔊 toggle): the
+                # page's own <audio>, and the URL a player takes as a
+                # second input alongside the picture
+                'audio': bool(audio['on']), 'audio_since': audio['since'], 'audio_mime': audio['mime'],
+                'audio_url': '/api/orbit-audio',
+                'audio_player_url': f'{plain or ""}/api/orbit-audio{token_qs}' if plain else None,
             },
             'tracks': self._party_tracks(gid),
         }, headers=extra)
@@ -1628,6 +1833,8 @@ class Handler(BaseHTTPRequestHandler):
         token_qs = f'?token={self._presented_token()}' if AUTH_TOKEN else ''
         view_url = f'{scheme}://{host}/api/orbit-view{token_qs}'
         plain_base = self._stream_plain_base()
+        with _orbit_audio_lock:
+            audio = dict(_orbit_audio)
         return self._json({
             'active': active,
             'res': res,
@@ -1638,6 +1845,14 @@ class Handler(BaseHTTPRequestHandler):
             # for players that can't do (self-signed) TLS at all -- see
             # STREAM_PLAIN_PORT; None when that listener isn't configured
             'plain_url': f'{plain_base}/api/orbit-view{token_qs}' if plain_base else None,
+            # the audio feed, when the streamer's 🔊 toggle is on: what a
+            # player opens as its second input (VLC --input-slave, an OBS
+            # Media Source) next to the picture
+            'audio': bool(audio['on']),
+            'audio_mime': audio['mime'],
+            'audio_listeners': _orbit_audio_relay.subscriber_count(),
+            'audio_url': f'{scheme}://{host}/api/orbit-audio{token_qs}',
+            'audio_plain_url': f'{plain_base}/api/orbit-audio{token_qs}' if plain_base else None,
         })
 
     def _handle_orbit_view(self):
@@ -1690,22 +1905,18 @@ class Handler(BaseHTTPRequestHandler):
             with _orbit_subs_lock:
                 _orbit_subscribers.discard(q)
 
-    def _handle_orbit_websocket(self, qs):
-        """The streamer's side: one browser pushes JPEG frames here as
-        binary WebSocket messages; each one is fanned out to every
-        /api/orbit-view subscriber. Frame parsing lives in _ws_messages
-        and the fanout policy in _orbit_fanout -- this method is just
-        the handshake, the loop, and the 5-second rx counters."""
+    def _ws_handshake(self):
+        """Answer the client's WebSocket upgrade. Written directly to the
+        raw socket to avoid BaseHTTPRequestHandler's headers buffer
+        interfering with the upgrade. Returns False (after a 400) if the
+        request wasn't a WebSocket upgrade at all. Shared by the picture
+        (/api/orbit-ws) and audio (/api/orbit-audio-ws) senders."""
         import base64, hashlib
-        global _orbit_ws_connected, _orbit_res, _orbit_ws_since
-
-        # WebSocket handshake — write directly to the raw socket to avoid
-        # BaseHTTPRequestHandler's headers buffer interfering with the upgrade.
         key = self.headers.get('Sec-WebSocket-Key', '')
         if not key:
             self.send_response(400)
             self.end_headers()
-            return
+            return False
         accept = base64.b64encode(
             hashlib.sha1(
                 (key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').encode()
@@ -1718,6 +1929,28 @@ class Handler(BaseHTTPRequestHandler):
             f'Sec-WebSocket-Accept: {accept}\r\n'
             '\r\n'
         ).encode())
+        # after the upgrade this socket is a WebSocket for good; never
+        # let the base class try to read another HTTP request off it
+        self.close_connection = True
+        return True
+
+    def _ws_pong(self, payload):
+        """ping -> pong with the same payload. Browsers don't send these
+        unprompted, but a proxy in between might; server->client frames
+        are never masked."""
+        if len(payload) < 126:
+            self.connection.sendall(b'\x8a' + bytes([len(payload)]) + payload)
+
+    def _handle_orbit_websocket(self, qs):
+        """The streamer's side: one browser pushes JPEG frames here as
+        binary WebSocket messages; each one is fanned out to every
+        /api/orbit-view subscriber. Frame parsing lives in _ws_messages
+        and the fanout policy in _orbit_fanout -- this method is just
+        the handshake, the loop, and the 5-second rx counters."""
+        global _orbit_ws_connected, _orbit_res, _orbit_ws_since
+
+        if not self._ws_handshake():
+            return
 
         res = (qs.get('res') or [None])[0]
         with _orbit_ws_lock:
@@ -1731,11 +1964,7 @@ class Handler(BaseHTTPRequestHandler):
             rx_t0 = time.monotonic()
             for opcode, payload in _ws_messages(self.rfile):
                 if opcode == 9:
-                    # ping -> pong with the same payload. Browsers don't
-                    # send these unprompted, but a proxy in between might;
-                    # server->client frames are never masked.
-                    if len(payload) < 126:
-                        self.connection.sendall(b'\x8a' + bytes([len(payload)]) + payload)
+                    self._ws_pong(payload)
                     continue
                 if opcode != 2 or not payload:
                     continue
@@ -1771,6 +2000,98 @@ class Handler(BaseHTTPRequestHandler):
             for q in subs:
                 try: q.put_nowait(None)
                 except Exception: pass
+
+    # ── orbit audio stream ─────────────────────────────────────────────
+    _AUDIO_MIMES = ('audio/webm', 'audio/ogg')
+
+    def _handle_orbit_audio_websocket(self, qs):
+        """The streamer's audio, as a second WebSocket next to the picture
+        one: each binary message is one MediaRecorder blob of the WebM or
+        Ogg container, in order, and goes straight into
+        _orbit_audio_relay, which handles the fanout and the late-joiner
+        problem. ?mime= is what the browser's recorder actually produced
+        (audio/webm;codecs=opus, audio/ogg;codecs=opus, ...); it becomes
+        /api/orbit-audio's Content-Type, so only the two container types
+        the relay knows how to cut are accepted."""
+        mime = (qs.get('mime') or ['audio/webm'])[0].strip()
+        if not mime.startswith(self._AUDIO_MIMES) or any(c in mime for c in '\r\n'):
+            return self._json({'error': f'unsupported audio mime {mime!r}: '
+                                        f'want one of {", ".join(self._AUDIO_MIMES)}'}, status=400)
+        if not self._ws_handshake():
+            return
+        with _orbit_audio_lock:
+            _orbit_audio.update(on=True, mime=mime, since=time.time())
+        _orbit_audio_relay.start(mime)
+        print(f'[orbit] audio WebSocket open ({mime}) — streaming to /api/orbit-audio', flush=True)
+        try:
+            rx_bytes = rx_dropped = 0
+            rx_t0 = time.monotonic()
+            for opcode, payload in _ws_messages(self.rfile):
+                if opcode == 9:
+                    self._ws_pong(payload)
+                    continue
+                if opcode != 2 or not payload:
+                    continue
+                rx_dropped += _orbit_audio_relay.feed(payload)
+                rx_bytes += len(payload)
+                now = time.monotonic()
+                if now - rx_t0 >= 10:
+                    print(f'[orbit] audio rx {rx_bytes / (now - rx_t0) / 1024:.1f} KB/s, '
+                          f'listeners={_orbit_audio_relay.subscriber_count()}, dropped={rx_dropped}', flush=True)
+                    rx_bytes = rx_dropped = 0
+                    rx_t0 = now
+        except Exception:
+            pass
+        finally:
+            print('[orbit] audio WebSocket closed', flush=True)
+            with _orbit_audio_lock:
+                _orbit_audio.update(on=False, mime=None)
+            _orbit_audio_relay.end()
+
+    def _handle_orbit_audio(self):
+        """The audio feed as a plain HTTP response: the live container
+        bytes, no framing, Content-Type = whatever the sender's recorder
+        produced. A browser <audio src=...>, VLC (as --input-slave next
+        to the MJPEG), ffmpeg/OBS all take it as a live file. Same shape
+        as _handle_orbit_view: HTTP/1.1, no Content-Length, Connection:
+        close marks the end. 404 while no audio is being sent -- unlike
+        the picture there's no Content-Type to promise until the
+        streamer's recorder has said what it makes."""
+        import queue as _q
+        with _orbit_audio_lock:
+            on, mime = _orbit_audio['on'], _orbit_audio['mime']
+        if not on or not mime:
+            return self._json({'error': 'the stream has no audio right now (the streamer\'s 🔊 toggle is off)'},
+                              status=404)
+        q = _orbit_audio_relay.subscribe()
+        try:
+            # each blob is one write; don't let Nagle hold it back
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+            self.send_response(200)
+            self.send_header('Content-Type', mime)
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.flush()
+            while True:
+                try:
+                    chunk = q.get(timeout=30)
+                except _q.Empty:
+                    continue
+                if chunk is None:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                except OSError:
+                    break
+        except Exception:
+            pass
+        finally:
+            _orbit_audio_relay.unsubscribe(q)
 
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range
@@ -1892,7 +2213,7 @@ class StreamOnlyHandler(Handler):
     it next to a --tls UI doesn't quietly reopen the whole control
     surface over plain HTTP. Auth, if on, applies exactly as on the main
     port (a player uses ?token=)."""
-    _ALLOWED = ('/api/orbit-view', '/api/orbit-stream')
+    _ALLOWED = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-stream')
 
     def do_GET(self):
         path = urlparse(self.path).path

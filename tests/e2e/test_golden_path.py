@@ -724,3 +724,101 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
     page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)
     after = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
     assert after[0] / after[1] < 1.4, after                    # its own shape again once the stream stops
+
+
+def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(page, golden_path_server, monkeypatch):
+    """The 🔊 toggle next to 📡: with it on, the streamer's browser records
+    the player's audio (MediaRecorder, WebM/Opus in Chromium) and pushes
+    it over a second WebSocket; the server serves it live on
+    /api/orbit-audio. The hard part is a listener who connects after the
+    recording started -- a WebM reader needs the container's init segment
+    and then a Cluster boundary, so the relay caches the one and cuts at
+    the other (web_ui._LiveContainerRelay). Both a first and a later
+    fetch must therefore start with the EBML magic. The guest page shows
+    a 🔊 listen button for it (tap to play -- never autoplay). The seeded
+    clip is random bytes that never decode, so what's recorded here is
+    the audio graph's silence: still real Opus in a real WebM."""
+    import http.client, json, time
+    from urllib.parse import urlparse
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    assert page.evaluate("vm => vm.orbitAudio", vm) is False           # off by default
+    page.click('#orbit-egg-dialog .orbit-audio-btn')
+    page.wait_for_function("vm => vm.orbitAudio", arg=vm)
+    saved = json.loads(page.evaluate("() => localStorage.getItem('weed.stream.settings')"))
+    assert saved['orbitAudio'] is True                                  # persisted with the other stream settings
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("vm => vm.orbitStreaming", arg=vm, timeout=10_000)
+    page.wait_for_function(
+        "() => fetch('/api/party').then(r => r.json()).then(p => p.stream.active && p.stream.audio)", timeout=10_000)
+    party = page.evaluate("() => fetch('/api/party').then(r => r.json())")
+    assert party['stream']['audio_url'] == '/api/orbit-audio'
+    assert party['stream']['audio_mime'].startswith('audio/webm')
+    status = page.evaluate("() => fetch('/api/orbit-stream').then(r => r.json())")
+    assert status['audio'] is True and status['audio_url'].endswith('/api/orbit-audio')
+
+    u = urlparse(golden_path_server['web_url'])
+    def grab(path, min_bytes=3000, seconds=8):
+        conn = http.client.HTTPConnection(u.hostname, u.port, timeout=15)
+        conn.request('GET', path)
+        resp = conn.getresponse()
+        assert resp.status == 200, resp.status
+        assert resp.getheader('Content-Type').startswith('audio/webm')
+        assert resp.getheader('Content-Length') is None
+        buf = b''
+        deadline = time.time() + seconds
+        while len(buf) < min_bytes and time.time() < deadline:
+            chunk = resp.fp.read1(65536)
+            if not chunk:
+                break
+            buf += chunk
+        conn.close()
+        return buf
+    EBML, CLUSTER = b'\x1a\x45\xdf\xa3', b'\x1f\x43\xb6\x75'
+    first = grab('/api/orbit-audio')
+    assert first[:4] == EBML, first[:16]
+    assert len(first) >= 3000, len(first)                               # a few KB within seconds: it's flowing
+    assert CLUSTER in first
+
+    # the late joiner, a couple of seconds in -- and through the ?token=
+    # door a player would use, once auth is on
+    time.sleep(2)
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
+    second = grab('/api/orbit-audio?token=guest-tok')
+    assert second[:4] == EBML, second[:16]                              # the cached init segment...
+    assert CLUSTER in second                                            # ...then whole clusters
+    assert len(second) >= 3000, len(second)
+
+    # the guest page: a 🔊 listen button under the picture, tap to play
+    guest_ctx = page.context.browser.new_context(viewport={'width': 400, 'height': 800})
+    guest = guest_ctx.new_page()
+    try:
+        with guest.expect_response(lambda r: '/api/party' in r.url and r.status == 200):
+            guest.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+        guest.wait_for_selector('#party-view .party-stream img')
+        listen = guest.locator('.party-listen-btn')
+        assert listen.inner_text().strip() == '🔊 listen'
+        gvm = _vm(guest)
+        assert guest.evaluate("vm => vm.partyListening", gvm) is False
+        listen.click()
+        guest.wait_for_function("vm => vm.partyListening", arg=gvm)
+        assert listen.inner_text().strip() == '🔇 mute'
+        assert guest.evaluate("vm => vm._partyAudio && vm._partyAudio.src.includes('/api/orbit-audio?_=')", gvm)
+        # the element actually reads the feed: ready state advances past HAVE_NOTHING
+        guest.wait_for_function("vm => vm._partyAudio && vm._partyAudio.readyState >= 1", arg=gvm, timeout=10_000)
+        listen.click()                                                  # 🔇 drops it
+        guest.wait_for_function("vm => !vm.partyListening && !vm._partyAudio", arg=gvm)
+        assert listen.inner_text().strip() == '🔊 listen'
+    finally:
+        guest_ctx.close()
+
+    # 🔊 off mid-stream stops the sender: the feed goes away, the picture stays
+    page.click('#orbit-egg-dialog .orbit-audio-btn')
+    page.wait_for_function(
+        "() => fetch('/api/party?token=admin-tok').then(r => r.json()).then(p => p.stream.active && !p.stream.audio)", timeout=10_000)
+    assert page.evaluate("vm => vm.orbitStreaming", vm) is True
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)

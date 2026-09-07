@@ -38,6 +38,11 @@
     </div>
     <div class="party-stream" v-if="party.stream.active">
       <img :key="party.stream.since" :src="party.stream.url + '?_=' + party.stream.since" alt="live visualizer">
+      <!-- the streamer's 🔊 is on: a tap (never autoplay) starts an <audio>
+           on /api/orbit-audio -- see vue-app.js togglePartyListen -->
+      <button type="button" v-if="party.stream.audio" class="party-player-link party-listen-btn" :class="{active: partyListening}"
+              :title="partyListening ? 'Stop listening' : 'Listen to the stream\'s audio'"
+              @click="togglePartyListen">{{ partyListening ? '🔇 mute' : '🔊 listen' }}</button>
       <a v-if="party.stream.player_url" class="party-player-link" :href="party.stream.player_url" target="_blank" rel="noopener">open in a player</a>
     </div>
     <div class="party-stream-off" v-else>
@@ -589,6 +594,9 @@
       <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
               :title="orbitStreaming ? 'Stop stream (keeps running while the visualizer is closed)' : 'Stream Orbit to network'"
               @click.stop="toggleOrbitStream">📡</button>
+      <button type="button" class="icon-btn orbit-audio-btn" :class="{active: orbitAudio}"
+              :title="orbitAudio ? 'Send audio with the stream: on (/api/orbit-audio) — click to stop' : 'Send audio with the stream'"
+              @click.stop="orbitAudio = !orbitAudio">🔊</button>
       <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
               :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
               @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
@@ -776,6 +784,9 @@
         <button type="button" class="icon-btn" :class="{active: orbitStreaming}"
                 :title="orbitStreaming ? 'Stop stream' : 'Stream to network'"
                 @click.stop="toggleOrbitStream">📡</button>
+        <button type="button" class="icon-btn orbit-audio-btn" :class="{active: orbitAudio}"
+                :title="orbitAudio ? 'Send audio with the stream: on (/api/orbit-audio) — click to stop' : 'Send audio with the stream'"
+                @click.stop="orbitAudio = !orbitAudio">🔊</button>
         <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
                 :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
                 @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
