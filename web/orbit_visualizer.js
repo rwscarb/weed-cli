@@ -208,6 +208,18 @@ window.orbitViz = (function () {
   // `s` so it survives a teardown/init cycle and a fresh init starts in
   // the right mode.
   let externalClock = false;
+  // Width/height the canvas bitmap is held to while the network stream
+  // runs (16/9 for every stream resolution), null otherwise. The stream
+  // frame is a fixed 16:9 but the canvas is whatever the dialog or
+  // screen made it -- usually wider -- and scaling one into the other
+  // either distorted the picture or, once the capture aspect-fit it,
+  // filled a third of every viewer's frame with black bars. Holding the
+  // bitmap at the stream's own shape (letterboxed on screen by
+  // object-fit: contain, see style.css) means the frame is filled edge
+  // to edge and what's on screen is exactly what goes out. Module-level
+  // so a stream started before init() (the toggle opens the dialog)
+  // still applies to the canvas the moment it exists.
+  let frameAspect = null;
 
   function init() {
     // defensive, not expected in normal use -- vue-app.js's
@@ -591,11 +603,19 @@ window.orbitViz = (function () {
     }
 
     function resizeVizCanvas() {
-      s.VW = Math.round(vizCanvas.offsetWidth * devicePixelRatio);
-      s.VH = Math.round(vizCanvas.offsetHeight * devicePixelRatio);
+      let cw = vizCanvas.offsetWidth, ch = vizCanvas.offsetHeight;
+      if (frameAspect && cw > 0 && ch > 0) {
+        // largest box of the stream's shape that fits the element; the
+        // element itself keeps its layout size and object-fit centres
+        // the bitmap in it
+        if (cw / ch > frameAspect) cw = ch * frameAspect; else ch = cw / frameAspect;
+      }
+      s.VW = Math.round(cw * devicePixelRatio);
+      s.VH = Math.round(ch * devicePixelRatio);
       vizCanvas.width = s.VW; vizCanvas.height = s.VH;
       vizOff.width = s.VW; vizOff.height = s.VH;
     }
+    s.resizeVizCanvas = resizeVizCanvas;
     resizeVizCanvas();
     const resizeObserver = new ResizeObserver(resizeVizCanvas);
     resizeObserver.observe(vizCanvas);
@@ -2021,6 +2041,13 @@ window.orbitViz = (function () {
       if (state && !externalClock && state.running) state.scheduleDraw();
     },
     step: () => { if (state && externalClock && state.running) state.drawViz(); },
+    // network stream on/off: hold the canvas bitmap at the stream frame's
+    // width/height ratio (see frameAspect), or release it with null
+    setFrameAspect: (aspect) => {
+      frameAspect = aspect > 0 ? aspect : null;
+      if (state) state.resizeVizCanvas();
+    },
+    frameAspect: () => frameAspect,
     // "something else is about to replace the picture" (a new track):
     // run the configured transition from whatever's on the canvas now
     transition: () => { if (state) state.snapshotForTransition(); },

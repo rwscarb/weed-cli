@@ -205,9 +205,12 @@ Zoom retune every mode; every setting persists in the browser.
   <url>`; 🔗 copies the URL, token included), a Roku IP-camera viewer,
   or the guest party page. Resolution and JPEG quality are selectable;
   the ⏱ slider delays the local audio by up to 10 s to line up with a
-  laggy viewer. The stream keeps running while the visualizer is closed,
-  minimised to PIP, or in a background tab. Picture only — audio stays
-  wherever the browser is playing it.
+  laggy viewer. While it runs the canvas is held at the stream's 16:9
+  (letterboxed on screen if the window isn't), so the frame is filled
+  edge to edge and never distorted whatever shape the window is. The
+  stream keeps running while the visualizer is closed, minimised to PIP,
+  or in a background tab. Picture only — audio stays wherever the
+  browser is playing it.
 - **MIDI** (🎹): an AKAI MPK mini or any Web MIDI controller
   (Chrome/Edge/Firefox). Pads pick modes and fire actions, knobs turn
   the sliders or sweep through modes/transitions/character sets;

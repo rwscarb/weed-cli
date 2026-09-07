@@ -1078,6 +1078,12 @@ const app = createApp({
           // both synchronous, so nothing here ever waits for a task slot.
           const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
           const wsUrl = `${proto}//${location.host}/api/orbit-ws?res=${this.orbitRes}`;
+          // Hold the visualizer's bitmap at the frame's own shape for as
+          // long as the stream runs, so the frame is filled edge to edge
+          // with no bars and no distortion whatever shape the dialog or
+          // screen is. The aspect-fit in _captureStep below is then only
+          // a safety net for the odd pixel of rounding.
+          window.orbitViz.setFrameAspect(_rw / _rh);
           const worker = new Worker('orbit_stream_worker.js');
           this._orbitWorker = worker;
           const _TARGET_FPS = 30;
@@ -1167,6 +1173,7 @@ const app = createApp({
             _running = false;
             document.removeEventListener('visibilitychange', _onVisibility);
             if (_external) _setClock(false);   // hand the viz/feed loops back to rAF
+            window.orbitViz.setFrameAspect(null);   // the canvas gets its own shape back
             worker.terminate();
             if (this._orbitWorker === worker) this._orbitWorker = null;
             this.orbitStreaming = false;

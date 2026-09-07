@@ -673,25 +673,54 @@ def test_autopilot_keeps_the_music_going_when_nothing_is_queued(page, golden_pat
     assert page.evaluate("vm => vm.player.title", vm) in ('Never played', 'Played earlier')
 
 
-def test_stream_frames_keep_the_canvas_aspect_with_black_bars(page, golden_path_server):
+def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_server):
     """Ryan: "in party view the stream looks squished narrow on the
-    x-axis". The stream frame is a fixed 16:9, the visualizer canvas is
-    whatever the window made it, and the capture scaled one straight into
-    the other. Now it aspect-fits: a canvas that isn't 16:9 gets black
-    bars in the frame instead of a stretched picture."""
-    page.set_viewport_size({'width': 700, 'height': 900})   # a tall window: the canvas ends up nearly square
+    x-axis", then "fixed in the party viewer, but not in /api/orbit-view".
+    The stream frame is a fixed 16:9 and the visualizer canvas is whatever
+    the window made it. First fix aspect-fit the capture, which stopped
+    the distortion but put black bars in every viewer's frame. Now the
+    canvas bitmap itself is held at the stream's 16:9 while streaming
+    (letterboxed on screen by object-fit), so the frame that goes out on
+    /api/orbit-view is filled edge to edge, and released when it stops."""
+    import http.client, io
+    from urllib.parse import urlparse
+    from PIL import Image
+    page.set_viewport_size({'width': 700, 'height': 900})   # a tall window: the canvas would end up nearly square
     _download_and_play(page, golden_path_server)
     vm = _vm(page)
     page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
     page.wait_for_selector('#vizModes')
     page.click('[data-viz="plasma"]')                         # fills the whole canvas with colour
+    before = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
+    assert before[0] / before[1] < 1.4, before                 # genuinely not 16:9 on its own
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
-    page.wait_for_function("vm => vm._orbitOffscreen && vm._orbitOffscreen.width === 1280", arg=vm, timeout=10_000)
+    page.wait_for_function("vm => vm.orbitStreaming", arg=vm, timeout=10_000)
     page.wait_for_timeout(1500)
-    canvas = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
-    assert canvas[0] / canvas[1] < 1.4, canvas                 # genuinely not 16:9
-    probe = page.evaluate("""vm => { const c = vm._orbitOffscreen, x = c._ctx; const px = (X, Y) => [...x.getImageData(X, Y, 1, 1).data].slice(0, 3);
-        return { leftEdge: px(4, 360), rightEdge: px(1275, 360), centre: px(640, 360) }; }""", vm)
-    assert probe['leftEdge'] == [0, 0, 0] and probe['rightEdge'] == [0, 0, 0], probe   # pillarboxed
-    assert sum(probe['centre']) > 60, probe                                            # the picture is in the middle
+    canvas = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height, c.offsetWidth, c.offsetHeight]; }")
+    assert abs(canvas[0] / canvas[1] - 16 / 9) < 0.01, canvas  # bitmap held at the stream's shape...
+    assert canvas[0] <= canvas[2] and canvas[1] < canvas[3], canvas   # ...inside the element, letterboxed on screen
+    # what a viewer actually receives: one real JPEG off /api/orbit-view
+    u = urlparse(golden_path_server['web_url'])
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=15)
+    conn.request('GET', '/api/orbit-view')
+    resp = conn.getresponse()
+    assert resp.status == 200
+    buf = b''
+    while True:
+        chunk = resp.fp.read1(65536)
+        assert chunk, 'stream ended without a frame'
+        buf += chunk
+        s0 = buf.find(b'\xff\xd8')
+        e0 = buf.find(b'\xff\xd9', s0) if s0 >= 0 else -1
+        if e0 > 0:
+            break
+    conn.close()
+    im = Image.open(io.BytesIO(buf[s0:e0 + 2])).convert('RGB')
+    assert im.size == (1280, 720), im.size
+    px = im.load()
+    for x, y in ((4, 360), (1275, 360), (640, 4), (640, 715), (640, 360)):
+        assert sum(px[x, y]) > 60, (x, y, px[x, y])            # picture right out to every edge, no bars
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)
+    after = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
+    assert after[0] / after[1] < 1.4, after                    # its own shape again once the stream stops

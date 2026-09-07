@@ -1288,6 +1288,11 @@ td button {
   image-rendering: pixelated; cursor: grab;
   width: 100%; flex: 1; min-height: 0;
   display: block; border-radius: 4px; background: #000;
+  /* while the network stream runs the bitmap is held at the stream's
+     16:9 (orbit_visualizer.js frameAspect) and sits centred in the
+     element with black either side; a no-op when the bitmap matches
+     the element, which is the case whenever the stream is off */
+  object-fit: contain;
 }
 #orbit-egg-dialog #vizSection:fullscreen, #orbit-egg-dialog #vizSection:-webkit-full-screen {
   background: #000; padding: 0.5rem 0.85rem;
