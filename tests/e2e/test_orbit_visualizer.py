@@ -469,3 +469,38 @@ def test_an_undecided_encoder_on_an_action_row_fires_on_its_first_click(page, go
     page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
     page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
     assert page.locator('#speedVal').inner_text() == '1.0x'
+
+
+def test_an_encoder_on_the_mode_selector_steps_exactly_one_mode_per_click(page, golden_path_server):
+    """Ryan: "Tunnel is getting skipped by my mode sweep knob". The
+    selector used to map an encoder onto a 0..1 position in 2% nudges and
+    pick by position, so with 28 modes some got one click and some two,
+    and a quick turn could hop over one. An encoder now moves exactly one
+    entry per click, clamped at both ends, so every mode is reachable
+    and Tunnel is the hard stop at the top of the list."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    modes = page.evaluate("() => window.orbitViz.modes()")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Mode$')))
+    row.locator('button', has_text='learn').click()
+    # settle the detector as relative with a few clicks, then start from a known mode
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
+    page.click('[data-viz="ascii"]')
+    seen = []
+    for _ in range(8):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 127])")     # one counter-clockwise click
+        seen.append(page.evaluate("() => window.orbitViz.current().mode"))
+    start = modes.index('ascii')
+    assert seen == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel']
+    for _ in range(3):
+        page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # clockwise
+    assert page.evaluate("() => window.orbitViz.current().mode") == modes[3]
+    page.evaluate("() => window.__midi.send([0xB0, 20, 3])")           # a fast spin: three entries at once
+    assert page.evaluate("() => window.orbitViz.current().mode") == modes[6]

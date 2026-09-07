@@ -14,8 +14,9 @@
 //   ---------     ---------------------------    -------------------------------
 //   action        fires it                       fires it as the value crosses
 //                                                the middle going up (64+)
-//   selector      steps to the next choice       picks the choice by position:
-//   (mode/style)                                 0..127 spread over the list
+//   selector      steps to the next choice       absolute: picks by position,
+//   (mode/style)                                 0..127 spread over the list;
+//                                                encoder: one entry per click
 //   parameter     (nothing)                      sets it: 0..127 -> its range
 //
 // The defaults match an AKAI MPK mini's factory MIDI program (pads on
@@ -268,10 +269,18 @@ window.orbitMidi = (function () {
       const list = sel.list(viz);
       if (!list.length) return;
       let idx;
+      const cur = list.indexOf((viz.current() || {})[sel.current]);
       if (kind === 'note') {
         // a pad on a selector steps forward through the list
-        const cur = list.indexOf((viz.current() || {})[sel.current]);
         idx = (Math.max(0, cur) + 1) % list.length;
+      } else if (isRelative(b, ccKey)) {
+        // an encoder steps exactly one entry per click (a fast spin, which
+        // sends bigger steps, moves several), clamped at the ends. It used
+        // to nudge a 0..1 position by 2% and pick by position, which with
+        // 28 modes gave some entries one click and others two -- and a
+        // quick turn could hop straight over one.
+        idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + stepOf(v)));
+        if (idx === cur) return;
       } else {
         idx = Math.min(list.length - 1, Math.floor(knobPosition(b, v, ccKey) * list.length));
       }
