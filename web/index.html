@@ -360,7 +360,6 @@
       <button type="button" class="tag-chip" v-for="t in allTags()" :key="t.tag" :class="{active: tagFilter === t.tag}"
               @click="tagFilter = tagFilter === t.tag ? null : t.tag">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
     </div>
-    <datalist id="tag-datalist"><option v-for="t in allTags()" :key="t.tag" :value="t.tag"></option></datalist>
     <div class="table-wrap"><table id="jobs-table">
       <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th></tr></thead>
       <tbody>
@@ -385,8 +384,19 @@
                 <div class="tag-row" v-if="j.status === 'done' && library.downloads[j.content_hash]">
                   <span class="tag-chip" v-for="t in tagsOf(j.content_hash)" :key="t">{{ t }}
                     <button type="button" class="tag-x" :title="'remove tag ' + t" @click.stop="removeTag(j, t)">×</button></span>
-                  <input type="text" class="tag-add" list="tag-datalist" placeholder="+ tag" maxlength="32"
-                         @keydown.enter.prevent="addTagFromInput(j, $event)" @change="addTagFromInput(j, $event)" @click.stop>
+                  <!-- Enter adds what's typed (commas for several). While the
+                       field has focus, the tags already in use that fit what's
+                       typed appear as chips to tap -- Vue-rendered, not a
+                       native datalist, which the once-a-second jobs poll kept
+                       closing under the cursor -->
+                  <input type="text" class="tag-add" placeholder="+ tag" maxlength="32" autocomplete="off"
+                         :value="tagEditing === j.job_id ? tagDraft : ''" @input="tagDraft = $event.target.value.trim()"
+                         @focus="tagEditing = j.job_id" @blur="onTagBlur"
+                         @keydown.enter.prevent="addTagFromInput(j, $event)" @keydown.escape="$event.target.blur()" @click.stop>
+                  <span class="tag-suggest" v-if="tagEditing === j.job_id && tagSuggestions(j).length">
+                    <button type="button" class="tag-chip tag-suggestion" v-for="t in tagSuggestions(j)" :key="t"
+                            @mousedown.prevent @click.stop="addTag(j, t)">+ {{ t }}</button>
+                  </span>
                 </div>
               </div>
               <div class="swipe-back">

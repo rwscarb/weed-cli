@@ -188,6 +188,8 @@ const app = createApp({
       // Downloads tab: the tag chip that's filtering the table (null =
       // all), and the tag Autopilot draws its next track from ('' = any)
       tagFilter: null,
+      tagEditing: null,   // job_id whose "+ tag" field has focus (its suggestion chips show)
+      tagDraft: '',       // what's typed in it
       autopilotTag: (() => { try { return localStorage.getItem('weed.autopilot.tag') || ''; } catch (e) { return ''; } })(),
       orbitRes: '720',
       // JPEG quality for the stream. Encoding happens in a worker now
@@ -2178,14 +2180,31 @@ const app = createApp({
       }
       return r;
     },
-    // the "+ tag" field on a row: Enter (or a datalist pick) adds it; a
-    // comma-separated entry adds several
+    // the "+ tag" field on a row: Enter adds what's typed, a comma-
+    // separated entry adds several, and the field stays focused for the
+    // next one
     addTagFromInput(job, ev) {
-      const input = ev.target;
-      const fresh = String(input.value || '').split(',').map(t => t.trim()).filter(Boolean);
-      input.value = '';
+      const fresh = String(this.tagDraft || '').split(',').map(t => t.trim()).filter(Boolean);
+      this.tagDraft = '';
       if (!fresh.length) return;
       return this.setTags(job.content_hash, [...this.tagsOf(job.content_hash), ...fresh]);
+    },
+    addTag(job, tag) {
+      this.tagDraft = '';
+      return this.setTags(job.content_hash, [...this.tagsOf(job.content_hash), tag]);
+    },
+    // tags already in the library that this record doesn't carry and
+    // that start with what's typed: the chips under a focused field
+    tagSuggestions(job) {
+      const have = new Set(this.tagsOf(job.content_hash));
+      const q = String(this.tagDraft || '').toLowerCase();
+      return this.allTags().map(t => t.tag).filter(t => !have.has(t) && (!q || t.startsWith(q))).slice(0, 8);
+    },
+    onTagBlur() {
+      // a tap on a suggestion chip prevents the blur (mousedown.prevent),
+      // so getting here means the user really left the field
+      this.tagEditing = null;
+      this.tagDraft = '';
     },
     removeTag(job, tag) {
       return this.setTags(job.content_hash, this.tagsOf(job.content_hash).filter(t => t !== tag));

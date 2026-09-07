@@ -200,23 +200,39 @@ def test_webm_late_subscriber_starts_at_the_next_simpleblock_with_a_synthesized_
 
 
 def test_webm_late_subscriber_before_any_cluster_waits_for_the_first_cluster():
-    """No Cluster Timecode known yet (the init segment is complete but
-    the first Cluster's own header hasn't arrived): there's nothing to
-    synthesize from, so the reader starts at the next Cluster ID, as
-    before."""
+    """No Cluster Timecode known yet: there's nothing to synthesize
+    from, so a SimpleBlock isn't a clean start and the reader waits for
+    the next Cluster ID, as before. (The first Cluster here has no
+    Timecode element at all -- not something a muxer writes, but the
+    only way to be inside a Cluster without one.)"""
     relay = web_ui._LiveContainerRelay()
     relay.start('audio/webm')
     init = webm_init()
-    relay.feed(init + CLUSTER)            # the init is complete the moment the Cluster ID shows
+    relay.feed(init + CLUSTER + UNKNOWN)   # (split here: the init detector wants E7 after the size)
+    relay.feed(simple_block())
     assert relay.init_segment == init
     q = relay.subscribe()
-    c1 = webm_cluster(blocks=3)
-    relay.feed(c1[4:])                    # the rest of that first Cluster: header, Timecode, blocks
-    assert drain(q) == [init]             # no clean start in there
+    relay.feed(simple_block() + simple_block())
+    assert drain(q) == [init]             # whole SimpleBlocks, but no Timecode to lend them
     c2 = webm_cluster(tc=7, blocks=2)
     relay.feed(c2)
     assert drain(q) == [c2]
     assert parse_webm(init + c2, len(init)) == [(7, [c2[-84:-42][2:], c2[-42:][2:]])]
+
+
+def test_webm_cluster_id_split_across_blobs_still_starts_the_reader_on_it():
+    """The init segment ends the instant the first Cluster ID shows, so
+    that ID may be all the scanner has of the Cluster when a reader
+    joins. The carried header bytes are prepended when it completes:
+    the reader gets the whole first Cluster, not the second."""
+    relay = web_ui._LiveContainerRelay()
+    relay.start('audio/webm')
+    init = webm_init()
+    relay.feed(init + CLUSTER)
+    q = relay.subscribe()
+    c1 = webm_cluster(blocks=3)
+    relay.feed(c1[4:])
+    assert drain(q) == [init, c1]
 
 
 def test_webm_cluster_id_inside_opus_data_is_not_a_boundary():

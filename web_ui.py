@@ -402,7 +402,7 @@ class _LiveContainerRelay:
             else:
                 # the scanner must see every blob to keep its state,
                 # whether or not anyone is waiting
-                start = self._scan(blob)
+                start = self._scan(blob) or False
             for q, state in list(self._subs.items()):
                 if state == 'live':
                     dropped += self._put(q, blob)
