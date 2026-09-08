@@ -688,9 +688,8 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
     canvas bitmap itself is held at the stream's 16:9 while streaming
     (letterboxed on screen by object-fit), so the frame that goes out on
     /api/orbit-view is filled edge to edge, and released when it stops."""
-    import http.client, io
+    import base64, http.client
     from urllib.parse import urlparse
-    from PIL import Image
     page.set_viewport_size({'width': 700, 'height': 900})   # a tall window: the canvas would end up nearly square
     _download_and_play(page, golden_path_server)
     vm = _vm(page)
@@ -721,11 +720,18 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
         if e0 > 0:
             break
     conn.close()
-    im = Image.open(io.BytesIO(buf[s0:e0 + 2])).convert('RGB')
-    assert im.size == (1280, 720), im.size
-    px = im.load()
-    for x, y in ((4, 360), (1275, 360), (640, 4), (640, 715), (640, 360)):
-        assert sum(px[x, y]) > 60, (x, y, px[x, y])            # picture right out to every edge, no bars
+    # decoded by the browser itself (no PIL in CI): size, and a sample
+    # at every edge and the middle
+    shot = page.evaluate("""async (b64) => {
+        const img = new Image(); img.src = 'data:image/jpeg;base64,' + b64; await img.decode();
+        const c = document.createElement('canvas'); c.width = img.naturalWidth; c.height = img.naturalHeight;
+        const x = c.getContext('2d'); x.drawImage(img, 0, 0);
+        const px = (X, Y) => [...x.getImageData(X, Y, 1, 1).data].slice(0, 3);
+        return { w: c.width, h: c.height, samples: [[4, 360], [1275, 360], [640, 4], [640, 715], [640, 360]].map(([X, Y]) => [X, Y, px(X, Y)]) };
+    }""", base64.b64encode(buf[s0:e0 + 2]).decode())
+    assert (shot['w'], shot['h']) == (1280, 720), shot
+    for x, y, rgb in shot['samples']:
+        assert sum(rgb) > 60, (x, y, rgb)                       # picture right out to every edge, no bars
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
     page.wait_for_function("vm => !vm.orbitStreaming", arg=vm, timeout=10_000)
     after = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")

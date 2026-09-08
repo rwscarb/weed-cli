@@ -1297,6 +1297,10 @@ window.orbitViz = (function () {
     function setAutopilot(on) {
       s.autopilot = !!on;
       auto.seeded = false;
+      // the mode that's up when Autopilot comes on counts as recently
+      // played, so it isn't picked again a phase or two later (it would
+      // otherwise be the only mode not in `recent`)
+      if (s.autopilot && s.vizMode && !auto.recent.includes(s.vizMode)) auto.recent = [...auto.recent, s.vizMode].slice(-6);
       renderAutopilotToggle();
       persistSettings();
     }
