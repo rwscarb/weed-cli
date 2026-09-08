@@ -144,14 +144,22 @@ class Plugin:
         if not st.get('active'):
             self.ui.notify('the visualizer is not streaming right now (📡 in the player)')
             return self.ui.end()
+        # The feed URLs are built from the node URL in the add-on's own
+        # settings -- the one that just answered /api/orbit-stream, so it
+        # is reachable -- not from the node's advertised "plain port" URL,
+        # which can point at a port that's no longer exposed (Ryan: "the
+        # log says it's trying 4242, but that's the old port"). The
+        # advertised plain URL is only used when the node is https, since
+        # Kodi's player won't take a self-signed certificate.
+        tls = self.api.base.lower().startswith('https://')
         if what == 'audio':
             if not st.get('audio'):
                 self.ui.notify('the stream has no audio on (🔊 beside 📡)')
                 return self.ui.end()
-            url = st.get('audio_plain_url') or st.get('audio_url')
+            url = (st.get('audio_plain_url') if tls else None) or self.api._with_token(self.api.base + '/api/orbit-audio')
             self.ui.play(url, 'weed Orbit audio', {'title': 'weed Orbit audio', 'mediatype': 'song'})
         else:
-            url = st.get('plain_url') or st.get('url')
+            url = (st.get('plain_url') if tls else None) or self.api._with_token(self.api.base + '/api/orbit-view')
             self.ui.play(url, 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})
 
     def do_autopilot(self):

@@ -191,3 +191,23 @@ def test_kodi_own_url_parameters_are_ignored(web_server):
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='downloads', content_type='audio', tag='chill')
     assert [m[0] for m in ui.items] == ['Track 1', 'Track 0'] and not ui.notices
+
+
+def test_live_feed_urls_come_from_the_configured_node_not_its_advertised_plain_port(web_server, monkeypatch):
+    """Ryan: "unable to view the orbit stream, the log says it's trying
+    4242, but that's the old port". The node still advertised a plain
+    stream port that was no longer exposed; the add-on now builds the feed
+    URLs from its own node URL, with the token, and only takes the
+    advertised plain URL when the node is https."""
+    _seed()
+    monkeypatch.setattr(web_ui, '_orbit_ws_connected', True)
+    monkeypatch.setattr(web_ui, 'STREAM_PLAIN_PORT', 4242)
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    ui = FakeUI(web_server, token='admin-tok')
+    plugin.Plugin(ui).run(action='live', what='view')
+    assert ui.played and ui.played[0][0] == web_server + '/api/orbit-view?token=admin-tok'
+    assert ':4242' not in ui.played[0][0]
+    monkeypatch.setitem(web_ui._orbit_audio, 'on', True)
+    ui = FakeUI(web_server, token='admin-tok')
+    plugin.Plugin(ui).run(action='live', what='audio')
+    assert ui.played and ui.played[0][0] == web_server + '/api/orbit-audio?token=admin-tok'
