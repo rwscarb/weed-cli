@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<addon id="plugin.video.weed" name="weed" version="0.1.0" provider-name="weed-cli">
+  <requires>
+    <import addon="xbmc.python" version="3.0.0"/>
+  </requires>
+  <extension point="xbmc.python.pluginsource" library="default.py">
+    <provides>video audio</provides>
+  </extension>
+  <extension point="xbmc.addon.metadata">
+    <summary lang="en_GB">Your weed node's downloads, playlists, tags and party on the TV</summary>
+    <description lang="en_GB">Browses a weed-cli node over its web API and plays its downloads through Kodi's own player: downloads (newest first), playlists with play-all, tag folders, the party vote list, the node's Autopilot pick, and the live Orbit picture or audio feed while the visualizer is streaming. Set the node's URL and, if it runs with --auth-token, the token in the add-on settings.</description>
+    <platform>all</platform>
+    <license>MIT</license>
+    <source>https://github.com/ryanscarbery/weed-cli</source>
+    <assets/>
+  </extension>
+</addon>

@@ -24,6 +24,7 @@ output (not simulated) — see [Status](#status) for what's verified.
   - [Interactive shell](#interactive-shell)
   - [Web UI](#web-ui)
   - [Orbit Visualizer](#orbit-visualizer)
+  - [Kodi add-on](#kodi-add-on)
   - [Orbit Visualizer plugins](#orbit-visualizer-plugins)
   - [Docker](#docker)
 - [Core mechanisms](#core-mechanisms)
@@ -253,6 +254,30 @@ Zoom retune every mode; every setting persists in the browser.
   borrowed video loops on its own, follows play/pause, has its own seek
   slider in the picker, and the pairing is remembered per track. The
   picker has a search box for big libraries.
+
+### Kodi add-on
+
+`kodi/plugin.video.weed` is a Kodi add-on (Kodi 19 Matrix or later, any
+platform) that puts the node on a TV without streaming anything: it
+browses the node over the same web API the browser uses and plays the
+downloaded files through Kodi's own player, which handles every codec.
+Screens: **Downloads** (newest first, extensions dropped), **Playlists**
+with play-all, **Tags** as folders, **Party** (the vote list, select to
++1), **Autopilot** (the node's weighted least-played pick), and the
+**live Orbit picture or audio feed** while the visualizer is streaming
+(the audio one lights up Kodi's own visualisers). Plays are counted on
+the node like the browser's.
+
+```bash
+make kodi                                  # -> dist/plugin.video.weed-<ver>.zip
+```
+
+On the Kodi box: Settings → Add-ons → *Unknown sources* on → *Install
+from zip file* → the zip (copy it over, or share it with the node's
+`/share`). Then open the add-on's settings and set the node URL, for
+example `http://192.168.1.137:8080`, and the token if the node runs with
+`--auth-token`. The add-on hands Kodi the `/api/stream/<job_id>` URLs
+with the token in the query, so seeking and resume work as for any file.
 
 ### Orbit Visualizer plugins
 
@@ -493,6 +518,9 @@ just designed:
 - Kademlia DHT discovery, survives the announcing node going offline
 - Local web UI with live progress, QR onboarding, HTTP range streaming,
   optional two-tier token auth, and the guest party page with voting
+- Kodi add-on (`kodi/plugin.video.weed`): downloads, playlists, tags,
+  party votes, Autopilot pick and the live feeds on a TV through Kodi's
+  own player, 9 tests against a real node with Kodi stubbed.
 - Orbit Visualizer: 30 modes and 26 transitions behind a plugin API,
   MJPEG network stream (VLC/Roku), Web MIDI control with keymap files,
   video swap — 44 Playwright tests against real Chromium (`tests/e2e/`)

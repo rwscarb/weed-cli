@@ -1,4 +1,4 @@
-.PHONY: help demo network stats chart reputation discovery real-archive \
+.PHONY: help demo network stats chart reputation discovery real-archive kodi \
         containers node node-down node-shell lightning-up lightning-down lightning-demo lightning-smoke \
         all-stdlib clean install uninstall test test-e2e trust
 
@@ -125,3 +125,12 @@ install:
 
 uninstall:
 	rm -f $(BINDIR)/weed
+
+# The Kodi add-on, zipped the way Kodi's "Install from zip file" wants it
+# (the add-on folder at the top level of the zip). Version from addon.xml.
+KODI_VER := $(shell sed -n 's/.*<addon id="plugin.video.weed"[^>]*version="\([^"]*\)".*/\1/p' kodi/plugin.video.weed/addon.xml)
+kodi:
+	@mkdir -p dist
+	@rm -f dist/plugin.video.weed-$(KODI_VER).zip
+	@cd kodi && zip -qr ../dist/plugin.video.weed-$(KODI_VER).zip plugin.video.weed -x '*__pycache__*' -x '*.pyc'
+	@echo "dist/plugin.video.weed-$(KODI_VER).zip"

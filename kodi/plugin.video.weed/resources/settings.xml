@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes"?>
+<settings>
+  <category label="weed node">
+    <setting id="server" type="text" label="Node URL (http://host:port)" default="http://192.168.1.137:8080"/>
+    <setting id="token" type="text" label="Auth token (blank if the node has none)" default="" option="hidden"/>
+  </category>
+</settings>
