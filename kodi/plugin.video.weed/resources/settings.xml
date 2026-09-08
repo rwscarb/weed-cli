@@ -3,5 +3,6 @@
   <category label="weed node">
     <setting id="server" type="text" label="Node URL (http://host:port)" default="http://192.168.1.137:8080"/>
     <setting id="token" type="text" label="Auth token (blank if the node has none)" default="" option="hidden"/>
+    <setting id="insecure" type="bool" label="Accept the node's self-signed https certificate" default="true"/>
   </category>
 </settings>

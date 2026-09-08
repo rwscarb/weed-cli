@@ -30,7 +30,8 @@ def build_url(action, **params):
 
 class KodiUI:
     def settings(self):
-        return {'server': ADDON.getSetting('server'), 'token': ADDON.getSetting('token')}
+        return {'server': ADDON.getSetting('server'), 'token': ADDON.getSetting('token'),
+                'insecure': ADDON.getSetting('insecure') != 'false'}
 
     def folder(self, label, action, **params):
         item = xbmcgui.ListItem(label=label)

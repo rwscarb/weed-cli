@@ -153,7 +153,7 @@ def test_default_py_builds_plugin_urls_with_stubbed_kodi(monkeypatch):
                                  Player=lambda: types.SimpleNamespace(play=lambda *a: calls.append(('play',) + a)),
                                  PlayList=lambda k: types.SimpleNamespace(clear=lambda: None, add=lambda *a: calls.append(('add',) + a)))
     xbmcaddon = types.SimpleNamespace(Addon=lambda: types.SimpleNamespace(
-        getAddonInfo=lambda k: ADDON, getSetting=lambda k: {'server': 'http://node:8080', 'token': 't'}[k]))
+        getAddonInfo=lambda k: ADDON, getSetting=lambda k: {'server': 'http://node:8080', 'token': 't', 'insecure': 'true'}[k]))
     xbmcgui = types.SimpleNamespace(ListItem=lambda **kw: types.SimpleNamespace(setInfo=lambda *a: None, setProperty=lambda *a: None, **kw),
                                     Dialog=lambda: types.SimpleNamespace(notification=lambda *a: calls.append(('notify',) + a)), NOTIFICATION_INFO=0)
     xbmcplugin = types.SimpleNamespace(addDirectoryItem=lambda h, url, item, isFolder=False: calls.append(('dir', url, item.label, isFolder)),
@@ -166,7 +166,7 @@ def test_default_py_builds_plugin_urls_with_stubbed_kodi(monkeypatch):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     ui = mod.KodiUI()
-    assert ui.settings() == {'server': 'http://node:8080', 'token': 't'}
+    assert ui.settings() == {'server': 'http://node:8080', 'token': 't', 'insecure': True}
     ui.folder('Downloads', 'downloads', tag='chill')
     assert calls[-1] == ('dir', 'plugin://plugin.video.weed/?action=downloads&tag=chill', 'Downloads', True)
     ui.media('Track', 'http://node:8080/api/stream/j1?token=t', {'title': 'Track', 'mediatype': 'musicvideo'}, action='play', job_id='j1', content_hash='h', title='Track')
@@ -211,3 +211,38 @@ def test_live_feed_urls_come_from_the_configured_node_not_its_advertised_plain_p
     ui = FakeUI(web_server, token='admin-tok')
     plugin.Plugin(ui).run(action='live', what='audio')
     assert ui.played and ui.played[0][0] == web_server + '/api/orbit-audio?token=admin-tok'
+
+
+def test_https_node_sends_media_through_its_plain_port_or_skips_verification():
+    """Ryan: "seems that I need the tls for it to work, but the firestick
+    doesn't have the cert installed". The API calls tolerate the self-
+    signed certificate; the player never sees https when the node
+    advertises a plain stream port, and gets Kodi's verifypeer=false
+    option when it doesn't."""
+    import io, json as _json
+    class Resp:
+        def __init__(self, body): self._b = _json.dumps(body).encode()
+        def read(self): return self._b
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+    seen = []
+    def opener_with_plain(req, timeout=None):
+        seen.append(req.full_url)
+        return Resp({'active': False, 'plain_url': 'http://192.168.1.137:8081/api/orbit-view?token=t', 'audio_plain_url': 'http://192.168.1.137:8081/api/orbit-audio?token=t'})
+    api = weedapi.WeedApi('https://192.168.1.137:8080', 't', opener=opener_with_plain)
+    assert api.is_tls
+    assert api.stream_url('job1') == 'http://192.168.1.137:8081/api/stream/job1?token=t'
+    assert api.feed_url('view') == 'http://192.168.1.137:8081/api/orbit-view?token=t'
+    assert api.feed_url('audio') == 'http://192.168.1.137:8081/api/orbit-audio?token=t'
+    assert seen == ['https://192.168.1.137:8080/api/orbit-stream']              # asked once, then cached
+    def opener_no_plain(req, timeout=None):
+        return Resp({'active': False, 'plain_url': None, 'audio_plain_url': None})
+    api = weedapi.WeedApi('https://node:8080', 't', opener=opener_no_plain)
+    assert api.stream_url('job1') == 'https://node:8080/api/stream/job1?token=t|verifypeer=false'
+    assert api.feed_url('audio') == 'https://node:8080/api/orbit-audio?token=t|verifypeer=false'
+    # a plain http node never touches the advertised plain port at all
+    def opener_stale(req, timeout=None):
+        return Resp({'active': True, 'plain_url': 'http://node:4242/api/orbit-view'})
+    api = weedapi.WeedApi('http://node:8080', None, opener=opener_stale)
+    assert api.stream_url('job1') == 'http://node:8080/api/stream/job1'
+    assert api.feed_url('view') == 'http://node:8080/api/orbit-view'

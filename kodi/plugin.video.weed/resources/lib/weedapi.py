@@ -32,11 +32,62 @@ def display_title(title):
 
 
 class WeedApi:
-    def __init__(self, base, token=None, timeout=10, opener=None):
+    def __init__(self, base, token=None, timeout=10, opener=None, insecure=True):
         self.base = (base or '').rstrip('/')
         self.token = (token or '').strip() or None
         self.timeout = timeout
-        self._open = opener or urllib.request.urlopen
+        # The node's TLS is self-signed (weed web --tls), which no Kodi
+        # box will have in its trust store, so with `insecure` the API
+        # calls skip certificate verification. Media never goes through
+        # this client (Kodi's player fetches it), see media_base().
+        self.insecure = bool(insecure)
+        self._open = opener or self._default_open
+        self._media_base = None
+
+    def _default_open(self, req, timeout=None):
+        if self.insecure and req.full_url.lower().startswith('https://'):
+            import ssl
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            return urllib.request.urlopen(req, timeout=timeout, context=ctx)
+        return urllib.request.urlopen(req, timeout=timeout)
+
+    @property
+    def is_tls(self):
+        return self.base.lower().startswith('https://')
+
+    def media_base(self):
+        """Where Kodi's player fetches files and feeds from. On a plain
+        http node that's the node itself. On an https node it's the plain
+        stream port the node advertises (--stream-plain-port; asked for
+        once via /api/orbit-stream and cached), because Kodi's player
+        won't take the self-signed certificate; with no plain port
+        configured it falls back to the https node with Kodi's own
+        verifypeer=false URL option, which its file player honours."""
+        if not self.is_tls:
+            return self.base
+        if self._media_base is None:
+            plain = None
+            try:
+                st = self._req('/api/orbit-stream') or {}
+                for key in ('plain_url', 'audio_plain_url'):
+                    u = st.get(key)
+                    if u:
+                        p = urllib.parse.urlsplit(u)
+                        plain = '%s://%s' % (p.scheme, p.netloc)
+                        break
+            except WeedError:
+                pass
+            self._media_base = plain or self.base
+        return self._media_base
+
+    def _player_url(self, path):
+        base = self.media_base()
+        url = self._with_token(base + path)
+        if base.lower().startswith('https://'):
+            url += '|verifypeer=false'
+        return url
 
     # ── plumbing ────────────────────────────────────────────────────
     def _req(self, path, body=None):
@@ -71,7 +122,11 @@ class WeedApi:
         return url + sep + 'token=' + urllib.parse.quote(self.token, safe='')
 
     def stream_url(self, job_id):
-        return self._with_token('%s/api/stream/%s' % (self.base, job_id))
+        return self._player_url('/api/stream/%s' % job_id)
+
+    def feed_url(self, what):
+        """The live Orbit picture ('view') or audio ('audio') feed, for the player."""
+        return self._player_url('/api/orbit-audio' if what == 'audio' else '/api/orbit-view')
 
     # ── reads ───────────────────────────────────────────────────────
     def library(self):

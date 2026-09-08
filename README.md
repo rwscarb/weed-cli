@@ -278,6 +278,11 @@ from zip file* → the zip (copy it over, or share it with the node's
 example `http://192.168.1.137:8080`, and the token if the node runs with
 `--auth-token`. The add-on hands Kodi the `/api/stream/<job_id>` URLs
 with the token in the query, so seeking and resume work as for any file.
+An https node works too: the add-on accepts the node's self-signed
+certificate for its API calls (a setting, on by default), and sends the
+player to the plain stream port the node advertises
+(`--stream-plain-port`), falling back to https with Kodi's own
+`verifypeer=false` URL option when there is no plain port.
 
 ### Orbit Visualizer plugins
 

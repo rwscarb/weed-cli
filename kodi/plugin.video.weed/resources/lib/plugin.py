@@ -47,7 +47,7 @@ class Plugin:
     def __init__(self, ui, api=None):
         self.ui = ui
         s = ui.settings()
-        self.api = api or weedapi.WeedApi(s.get('server'), s.get('token'))
+        self.api = api or weedapi.WeedApi(s.get('server'), s.get('token'), insecure=s.get('insecure', True))
 
     # ── dispatch ────────────────────────────────────────────────────
     def run(self, action=None, **params):
@@ -144,23 +144,18 @@ class Plugin:
         if not st.get('active'):
             self.ui.notify('the visualizer is not streaming right now (📡 in the player)')
             return self.ui.end()
-        # The feed URLs are built from the node URL in the add-on's own
-        # settings -- the one that just answered /api/orbit-stream, so it
-        # is reachable -- not from the node's advertised "plain port" URL,
-        # which can point at a port that's no longer exposed (Ryan: "the
-        # log says it's trying 4242, but that's the old port"). The
-        # advertised plain URL is only used when the node is https, since
-        # Kodi's player won't take a self-signed certificate.
-        tls = self.api.base.lower().startswith('https://')
+        # The feed URLs come from weedapi.media_base(): the node itself on
+        # plain http, its advertised plain stream port on https (Kodi's
+        # player can't take the self-signed certificate), never a stale
+        # advertised port on an http node (Ryan: "the log says it's
+        # trying 4242, but that's the old port").
         if what == 'audio':
             if not st.get('audio'):
                 self.ui.notify('the stream has no audio on (🔊 beside 📡)')
                 return self.ui.end()
-            url = (st.get('audio_plain_url') if tls else None) or self.api._with_token(self.api.base + '/api/orbit-audio')
-            self.ui.play(url, 'weed Orbit audio', {'title': 'weed Orbit audio', 'mediatype': 'song'})
+            self.ui.play(self.api.feed_url('audio'), 'weed Orbit audio', {'title': 'weed Orbit audio', 'mediatype': 'song'})
         else:
-            url = (st.get('plain_url') if tls else None) or self.api._with_token(self.api.base + '/api/orbit-view')
-            self.ui.play(url, 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})
+            self.ui.play(self.api.feed_url('view'), 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})
 
     def do_autopilot(self):
         """The node's own weighted pick between tracks: least-played and
