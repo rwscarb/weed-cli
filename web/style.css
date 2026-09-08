@@ -764,6 +764,33 @@ td button {
   display: none;
 }
 
+/* PIP's control row (Ryan: "fix the icons/spacing in PIP"): one row of
+   same-sized square buttons that never wraps. The stream extras that
+   only make sense with room to spare (resolution/quality pickers, the
+   two URL-copy buttons, the ⏱ delay slider) stay out of PIP entirely;
+   every one of them is in the visualizer's own header. Below ~420px the
+   swap, audio and stream buttons step aside too rather than wrap. */
+#global-player.mode-pip .player-controls {
+  flex-wrap: nowrap;
+  gap: 0.2rem;
+  overflow: hidden;
+}
+#global-player.mode-pip .player-controls .icon-btn {
+  width: 1.85rem; min-width: 1.85rem; height: 1.85rem; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 0.95rem; line-height: 1; flex: none;
+}
+#global-player.mode-pip .player-controls .icon-btn.like-icon { font-size: 0.9rem; }
+#global-player.mode-pip .player-controls .orbit-res-select,
+#global-player.mode-pip .player-controls .copy-stream-btn,
+#global-player.mode-pip .player-controls .orbit-url-btn,
+#global-player.mode-pip .player-controls .orbit-delay-label { display: none; }
+@container (max-width: 420px) {
+  #global-player.mode-pip .player-controls .swap-btn,
+  #global-player.mode-pip .player-controls .orbit-audio-btn,
+  #global-player.mode-pip .player-controls .playlist-add-btn { display: none; }
+}
+
 /* v-marquee (vue-app.js) only ever adds this class to an element it's
    already measured as genuinely overflowing -- text-overflow: clip
    instead of ellipsis here since the animation itself is what reveals
