@@ -1736,4 +1736,259 @@
       }
     },
   });
+
+  // ── 3D: a small painter's-algorithm toolkit and what's built on it ──
+  // Canvas 2D has no perspective, so a textured face is drawn as a run
+  // of thin vertical strips, each an affine parallelogram between two
+  // projected strip edges; at 40-60 strips the seams and the per-strip
+  // affine error are invisible. Points are [x, y, z] with the camera on
+  // +z looking at the origin; a face is four 3D corners TL TR BR BL and
+  // the source rectangle of the texture that goes on it. Faces are
+  // culled by the winding of their projected corners and sorted far to
+  // near before drawing.
+  (function () {
+    const rotY = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+    const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+    const lerp3 = (a, b, u) => [a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u];
+    // f: focal length, D: camera distance; scale = f / (D - z)
+    function project(p, cam) { const sc = cam.f / Math.max(1, cam.D - p[2]); return [cam.cx + p[0] * sc, cam.cy + p[1] * sc]; }
+    function visible(P) {   // TL TR BR BL projected, clockwise on screen (y down) = facing us
+      const [a, b, , d] = P;
+      return (b[0] - a[0]) * (d[1] - a[1]) - (b[1] - a[1]) * (d[0] - a[0]) > 0;
+    }
+    function drawFace(vctx, img, sx, sy, sw, sh, F, cam, strips, shade) {
+      const [TL, TR, BR, BL] = F;
+      const P = F.map(p => project(p, cam));
+      if (!visible(P)) return false;
+      const n = Math.max(6, strips | 0), ssw = sw / n;
+      vctx.save();
+      for (let i = 0; i < n; i++) {
+        const u0 = i / n, u1 = (i + 1) / n;
+        const A = project(lerp3(TL, TR, u0), cam), B = project(lerp3(TL, TR, u1), cam), C = project(lerp3(BL, BR, u0), cam);
+        // affine map of this strip's source rect onto A (top-left), B (top-right), C (bottom-left)
+        const a = (B[0] - A[0]) / ssw, b = (B[1] - A[1]) / ssw, c = (C[0] - A[0]) / sh, d = (C[1] - A[1]) / sh;
+        vctx.setTransform(a, b, c, d, A[0], A[1]);
+        vctx.drawImage(img, sx + i * ssw, sy, ssw + 0.5, sh, 0, 0, ssw + 1.2, sh);   // the +1.2 overlap hides seams
+      }
+      vctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (shade > 0) {   // a face turning away goes dark
+        vctx.globalAlpha = Math.min(0.85, shade); vctx.fillStyle = '#000';
+        vctx.beginPath(); vctx.moveTo(P[0][0], P[0][1]); for (let k = 1; k < 4; k++) vctx.lineTo(P[k][0], P[k][1]); vctx.closePath(); vctx.fill();
+      }
+      vctx.restore();
+      return true;
+    }
+    // faces: [{ img, sx, sy, sw, sh, pts, shade }], drawn far to near
+    function drawFaces(vctx, faces, cam, strips) {
+      faces.map(f => ({ f, z: (f.pts[0][2] + f.pts[1][2] + f.pts[2][2] + f.pts[3][2]) / 4 }))
+        .sort((p, q) => p.z - q.z)
+        .forEach(({ f }) => drawFace(vctx, f.img, f.sx, f.sy, f.sw, f.sh, f.pts, cam, strips, f.shade || 0));
+    }
+    // a box face by name, for a box of half-extents hw hh hd, before rotation
+    function boxFace(name, hw, hh, hd) {
+      switch (name) {
+        case 'front': return [[-hw, -hh, hd], [hw, -hh, hd], [hw, hh, hd], [-hw, hh, hd]];
+        case 'right': return [[hw, -hh, hd], [hw, -hh, -hd], [hw, hh, -hd], [hw, hh, hd]];
+        case 'back': return [[hw, -hh, -hd], [-hw, -hh, -hd], [-hw, hh, -hd], [hw, hh, -hd]];
+        case 'left': return [[-hw, -hh, -hd], [-hw, -hh, hd], [-hw, hh, hd], [-hw, hh, -hd]];
+      }
+    }
+    // how much a face has turned from facing the camera, 0..1, from its rotated normal
+    const turned = (angle) => clamp01(1 - Math.cos(angle));
+    const ease = (t) => t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    // a copy of what's on the canvas right now -- for a transition, that's
+    // the new picture (the mode already painted it under us)
+    const snapOff = offscreen();
+    function snapshot(vctx, W, H) {
+      const { c, ctx } = snapOff(W, H);
+      ctx.clearRect(0, 0, W, H); ctx.drawImage(vctx.canvas, 0, 0);
+      return c;
+    }
+    function backdrop(vctx, W, H, hueBase) {
+      const g = vctx.createLinearGradient(0, 0, 0, H);
+      g.addColorStop(0, `hsl(${hueBase | 0},35%,7%)`); g.addColorStop(1, '#000');
+      vctx.fillStyle = g; vctx.fillRect(0, 0, W, H);
+    }
+    // the picture for a mode: the video frame as a canvas, or, with no
+    // video, the spectrum as coloured bars so there's still something on
+    // the faces
+    const texOff = offscreen();
+    let texFrame = null;
+    function texture(videoFrame, freqData, hueBase) {
+      if (videoFrame) {
+        const { c, ctx } = texOff(videoFrame.w, videoFrame.h);
+        if (texFrame !== videoFrame) { texFrame = videoFrame; ctx.putImageData(videoFrame.imageData, 0, 0); }
+        return c;
+      }
+      texFrame = null;
+      const { c, ctx: x } = texOff(256, 144);
+      const maxBin = Math.floor(freqData.length * 0.7), n = 32;
+      x.fillStyle = '#101018'; x.fillRect(0, 0, 256, 144);
+      for (let i = 0; i < n; i++) {
+        const v = freqData[Math.floor((i / n) * maxBin)] / 255;
+        x.fillStyle = `hsl(${(hueBase + i * 9) | 0},90%,${(35 + v * 40) | 0}%)`;
+        x.fillRect(i * 8, 144 - v * 130, 7, v * 130);
+      }
+      return c;
+    }
+
+    // ── Desktop cube (transition): Compiz. The old picture on the front
+    // face, the new one on the side, the cube turns a quarter and zooms
+    // out a little on the way, over a dark sky.
+    viz.registerTransition({
+      id: 'desktopcube', label: 'Desktop cube',
+      draw({ vctx, old, oldW, oldH, W, H, t, seed, hueBase }) {
+        const fresh = snapshot(vctx, W, H);
+        const dir = hash(seed) > 0.5 ? 1 : -1;
+        const k = ease(t), th = -dir * k * Math.PI / 2, zoom = 1 - 0.28 * Math.sin(Math.PI * t);
+        const hw = W / 2, hh = H / 2, hd = W / 2;
+        const cam = { cx: W / 2, cy: H / 2, D: W * 1.6, f: W * 1.6 - hd };
+        const side = dir > 0 ? 'right' : 'left';
+        const faces = [
+          { img: old, sx: 0, sy: 0, sw: oldW, sh: oldH, pts: boxFace('front', hw, hh, hd).map(p => rotY(p, th).map(v => v * zoom)), shade: turned(th) * 0.7 },
+          { img: fresh, sx: 0, sy: 0, sw: W, sh: H, pts: boxFace(side, hw, hh, hd).map(p => rotY(p, th).map(v => v * zoom)), shade: turned(th + dir * Math.PI / 2) * 0.7 },
+        ];
+        backdrop(vctx, W, H, hueBase);
+        drawFaces(vctx, faces, cam, 48);
+      },
+    });
+
+    // ── Carousel (transition): the pictures are two neighbouring faces
+    // of a six-sided drum; it turns a sixth of the way round.
+    viz.registerTransition({
+      id: 'carousel', label: 'Carousel',
+      draw({ vctx, old, oldW, oldH, W, H, t, seed, hueBase }) {
+        const fresh = snapshot(vctx, W, H);
+        const dir = hash(seed + 1) > 0.5 ? 1 : -1;
+        const step = Math.PI / 3, k = ease(t), th = -dir * k * step, zoom = 1 - 0.18 * Math.sin(Math.PI * t);
+        const hw = W / 2, hh = H / 2, r = hw / Math.tan(step / 2);          // face centre distance from the axis
+        const cam = { cx: W / 2, cy: H / 2, D: W * 1.9, f: W * 1.9 - r };
+        const face = (angle, img, sw, sh, shadeAngle) => ({
+          img, sx: 0, sy: 0, sw, sh, shade: turned(shadeAngle) * 0.8,
+          pts: [[-hw, -hh, r], [hw, -hh, r], [hw, hh, r], [-hw, hh, r]].map(p => rotY(p, angle).map(v => v * zoom)),
+        });
+        backdrop(vctx, W, H, hueBase);
+        const faces = [face(th, old, oldW, oldH, th), face(th + dir * step, fresh, W, H, th + dir * step)];
+        // the drum's other faces, dark, so it reads as a solid thing
+        for (let i = 2; i < 6; i++) faces.push({ ...face(th + dir * step * i, old, oldW, oldH, Math.PI), shade: 0.92 });
+        drawFaces(vctx, faces, cam, 40);
+      },
+    });
+
+    // ── Doors (transition): the old picture splits down the middle and
+    // both halves swing away into the screen on their outer edges.
+    viz.registerTransition({
+      id: 'doors', label: 'Doors',
+      draw({ vctx, old, oldW, oldH, W, H, t }) {
+        const k = ease(t), a = k * Math.PI * 0.55;
+        const hw = W / 2, hh = H / 2;
+        const cam = { cx: W / 2, cy: H / 2, D: W * 1.5, f: W * 1.5 };
+        // each door hinges on its outer edge (x = ±hw): rotate its points
+        // about that edge, the free edge swinging away to -z
+        const hinged = (sign) => [[0, -hh, 0], [hw, -hh, 0], [hw, hh, 0], [0, hh, 0]].map(p => {
+          const q = rotY([p[0] - hw, p[1], p[2]], sign * a);     // rotate about the door's outer edge
+          return [sign * (q[0] + hw), q[1], q[2]];
+        });
+        const R = hinged(1), L = hinged(-1);
+        // texture: the left door shows the left half of the old picture, mirrored back into place
+        const faces = [
+          { img: old, sx: oldW / 2, sy: 0, sw: oldW / 2, sh: oldH, pts: [R[0], R[1], R[2], R[3]], shade: turned(a) * 0.8 },
+          { img: old, sx: 0, sy: 0, sw: oldW / 2, sh: oldH, pts: [L[1], L[0], L[3], L[2]], shade: turned(a) * 0.8 },
+        ];
+        vctx.fillStyle = `rgba(0,0,0,${(0.5 * Math.sin(Math.PI * t)).toFixed(2)})`; vctx.fillRect(0, 0, W, H);   // the room behind, dimmed mid-swing
+        drawFaces(vctx, faces, cam, 32);
+      },
+    });
+
+    // ── Desktop cube (mode): the video on all four sides of a cube that
+    // turns with the music, tilted so the top shows, over its own
+    // reflection in a dark floor. Speed drives the turn, the bass gives
+    // it a shove and swells it, Zoom sizes it.
+    (function () {
+      let spin = 0, kick = 0, last = 0;
+      viz.registerMode({
+        id: 'desktopcube', label: 'Desktop cube',
+        draw(ctx) {
+          const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+          const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+          const bass = bassOf(freqData);
+          kick = Math.max(kick * 0.9, bass > 0.6 ? bass : 0);
+          spin += dt * (0.35 * speed + kick * 1.5);
+          const img = texture(videoFrame, freqData, hueBase), iw = img.width, ih = img.height;
+          const size = Math.min(VW, VH) * 0.42 * vizUserScale * (1 + bass * 0.08);
+          const hw = size, hh = size * 0.6, hd = size;
+          const cam = { cx: VW / 2, cy: VH / 2 - hh * 0.25, D: size * 6, f: size * 6 - size * 1.7 };
+          const tilt = -0.32;   // negative: the top tips toward us (y runs down on screen)
+          const place = (p, mirror) => { let q = rotY(p, spin); q = rotX(q, tilt); return mirror ? [q[0], 2 * (hh * 1.05) - q[1] + hh * 0.3, q[2]] : q; };
+          backdrop(vctx, VW, VH, hueBase);
+          const names = ['front', 'right', 'back', 'left'];
+          const build = (mirror) => names.map((n, i) => {
+            const angle = spin + i * Math.PI / 2;
+            return { img, sx: 0, sy: 0, sw: iw, sh: ih, pts: boxFace(n, hw, hh, hd).map(p => place(p, mirror)), shade: turned(angle) * 0.75 + (mirror ? 0.45 : 0) };
+          });
+          // the reflection first, then a fade over it, then the cube
+          drawFaces(vctx, build(true), cam, 28);
+          const g = vctx.createLinearGradient(0, VH * 0.55, 0, VH);
+          g.addColorStop(0, 'rgba(0,0,0,0.35)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+          vctx.fillStyle = g; vctx.fillRect(0, VH * 0.5, VW, VH * 0.5);
+          drawFaces(vctx, build(false), cam, 40);
+          // the top face: a plain lit lid so the tilt reads
+          const top = [[-hw, -hh, -hd], [hw, -hh, -hd], [hw, -hh, hd], [-hw, -hh, hd]].map(p => project(place(p, false), cam));
+          if (visible(top)) {
+            vctx.fillStyle = `hsla(${hueBase | 0},60%,${(30 + bass * 30) | 0}%,0.9)`;
+            vctx.beginPath(); vctx.moveTo(top[0][0], top[0][1]); for (let k = 1; k < 4; k++) vctx.lineTo(top[k][0], top[k][1]); vctx.closePath(); vctx.fill();
+          }
+        },
+      });
+    })();
+
+    // ── Coverflow (mode): the last few seconds of the picture as a row
+    // of cards, the one in the middle facing you, the rest angled away
+    // either side, sliding along with the beat, reflected in the floor.
+    (function () {
+      const N = 9, cards = [];
+      let lastSnap = 0, pos = 0, kick = 0, last = 0;
+      viz.registerMode({
+        id: 'coverflow', label: 'Coverflow',
+        draw(ctx) {
+          const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+          const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+          const bass = bassOf(freqData);
+          kick = Math.max(kick * 0.88, bass > 0.6 ? bass : 0);
+          pos += dt * (0.25 * speed + kick * 1.2);
+          const src = texture(videoFrame, freqData, hueBase);
+          if (now - lastSnap > 450 || !cards.length) {   // a new card every so often, oldest one recycled
+            lastSnap = now;
+            const card = cards.length < N ? offscreen() : cards.shift();
+            card(256, 144).ctx.drawImage(src, 0, 0, 256, 144);
+            cards.push(card);
+          }
+          backdrop(vctx, VW, VH, hueBase);
+          const cw = VW * 0.34 * vizUserScale, ch = cw * 9 / 16, gap = cw * 0.36;
+          const cam = { cx: VW / 2, cy: VH / 2 - ch * 0.1, D: VW * 1.6, f: VW * 1.6 };
+          const centre = pos % cards.length;   // which card is in the middle, fractional
+          const faces = [], mirrors = [];
+          cards.forEach((card, i) => {
+            const cc = card(256, 144).c;
+            let off = i - centre; off = ((off + cards.length / 2) % cards.length + cards.length) % cards.length - cards.length / 2;
+            const side = Math.sign(off), d = Math.abs(off);
+            const angle = -side * Math.min(1, d * 1.6) * 1.05;
+            const x = side * (Math.min(1, d * 1.6) * gap * 1.6 + Math.max(0, d - 0.6) * gap * 0.9);
+            const z = -Math.min(1, d * 1.6) * cw * 0.7;
+            const pts = [[-cw / 2, -ch / 2, 0], [cw / 2, -ch / 2, 0], [cw / 2, ch / 2, 0], [-cw / 2, ch / 2, 0]]
+              .map(p => rotY(p, angle)).map(p => [p[0] + x, p[1], p[2] + z]);
+            faces.push({ img: cc, sx: 0, sy: 0, sw: 256, sh: 144, pts, shade: Math.min(1, d) * 0.5 });
+            mirrors.push({ img: cc, sx: 0, sy: 0, sw: 256, sh: 144, pts: [pts[3], pts[2], pts[1], pts[0]].map(p => [p[0], ch + (ch - p[1]) + ch * 0.06, p[2]]), shade: 0.6 + Math.min(1, d) * 0.3 });
+          });
+          drawFaces(vctx, mirrors, cam, 20);
+          const g = vctx.createLinearGradient(0, cam.cy + ch * 0.55, 0, VH);
+          g.addColorStop(0, 'rgba(0,0,0,0.3)'); g.addColorStop(1, 'rgba(0,0,0,1)');
+          vctx.fillStyle = g; vctx.fillRect(0, cam.cy + ch * 0.5, VW, VH);
+          drawFaces(vctx, faces, cam, 36);
+        },
+      });
+    })();
+  })();
+
 })();

@@ -1229,7 +1229,7 @@ window.orbitViz = (function () {
     // different from the last few. A strong onset ends a phase early
     // once its minimum has passed; the maximum ends it regardless.
     const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12 };
-    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples'];
+    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'desktopcube'];
     const PUNCHY = ['flash', 'glitch', 'shatter', 'rgbsplit', 'crtoff', 'slide', 'fliptiles', 'burn', 'pixelate'];
     const GENTLE = ['crossfade', 'blur', 'dissolve', 'iris', 'wipe', 'melt', 'droplet', 'zoomblur', 'warp', 'blinds', 'wave', 'spin'];
     const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false };
