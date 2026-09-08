@@ -855,14 +855,19 @@ def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_pat
     page.click('.tab-btn:has-text("Downloads")')
     row = page.locator('#jobs-table tbody tr').first
     assert not page.locator('#tag-filter').is_visible()                  # no tags yet, no bar
+    # the field is folded behind a + until asked for
+    assert row.locator('.tag-add').count() == 0
+    row.locator('.tag-plus').click()
     field = row.locator('.tag-add')
+    assert page.evaluate("() => document.activeElement.classList.contains('tag-add')")
     field.fill('Chill, party')
     field.press('Enter')
     page.wait_for_function("() => document.querySelectorAll('#jobs-table .tag-row .tag-chip').length === 2")
     chips = page.locator('#jobs-table .tag-row .tag-chip')
     assert [c.inner_text().strip().rstrip('×').strip() for c in chips.all()] == ['chill', 'party']   # normalised
-    page.keyboard.press('Escape')
     assert field.input_value() == ''
+    page.keyboard.press('Escape')                                       # folds the field away again
+    assert row.locator('.tag-add').count() == 0 and row.locator('.tag-plus').count() == 1
     # the filter bar: all / chill / party, with counts
     bar = page.locator('#tag-filter')
     assert bar.is_visible()
@@ -895,7 +900,8 @@ def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_pat
     # suggestions: focus the field and the tags in use elsewhere appear as
     # chips (Vue-rendered, so the polls that re-render the table can't
     # close them the way they did the native datalist); a tap adds one
-    field.focus()
+    page.locator('#jobs-table tbody tr').first.locator('.tag-plus').click()
+    field = page.locator('#jobs-table tbody tr').first.locator('.tag-add')
     sugg = page.locator('#jobs-table tbody tr').first.locator('.tag-suggestion')
     assert sugg.all_inner_texts() == ['+ other']
     field.type('zz')

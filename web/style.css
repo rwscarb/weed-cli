@@ -2170,6 +2170,8 @@ button.tag-chip.empty:not(.active) { opacity: 0.4; }
 .tag-x:hover { color: var(--text); }
 .tag-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem; margin-top: 0.25rem; }
 .tag-add { width: 5.5rem; font-size: 0.72rem; padding: 0.1rem 0.4rem; margin: 0; border-radius: 999px; }
+.tag-plus { width: 1.4rem; height: 1.4rem; padding: 0; margin: 0; border-radius: 999px; border: 1px dashed var(--border); background: transparent; color: var(--muted); font-size: 0.85rem; line-height: 1; cursor: pointer; }
+.tag-plus:hover { color: var(--accent); border-color: var(--accent); }
 .tag-suggest { display: inline-flex; flex-wrap: wrap; gap: 0.25rem; }
 button.tag-suggestion { color: var(--accent); border-style: dashed; }
 #orbit-egg-dialog .auto-tag { display: inline-flex; flex-direction: row; align-items: center; gap: 0.3rem; font-size: 0.75rem; color: var(--muted); margin: 0 0.6rem 0 0; white-space: nowrap; }

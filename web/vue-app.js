@@ -2223,6 +2223,12 @@ const app = createApp({
       const q = String(this.tagDraft || '').toLowerCase();
       return this.allTags().map(t => t.tag).filter(t => !have.has(t) && (!q || t.startsWith(q))).slice(0, 8);
     },
+    // the + on a row: unfold its tag field and put the cursor in it
+    openTagField(job) {
+      this.tagDraft = '';
+      this.tagEditing = job.job_id;
+      this.$nextTick(() => { const el = document.querySelector('#jobs-table .tag-add'); if (el) el.focus(); });
+    },
     onTagBlur() {
       // a tap on a suggestion chip prevents the blur (mousedown.prevent),
       // so getting here means the user really left the field
