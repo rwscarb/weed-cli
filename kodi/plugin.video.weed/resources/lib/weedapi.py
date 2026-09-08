@@ -126,7 +126,8 @@ class WeedApi:
 
     def feed_url(self, what):
         """The live Orbit picture ('view') or audio ('audio') feed, for the player."""
-        return self._player_url('/api/orbit-audio' if what == 'audio' else '/api/orbit-view')
+        path = {'audio': '/api/orbit-audio', 'mux': '/api/orbit-mux'}.get(what, '/api/orbit-view')
+        return self._player_url(path)
 
     # ── reads ───────────────────────────────────────────────────────
     def library(self):

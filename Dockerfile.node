@@ -10,6 +10,10 @@
 # store-and-forward relays. This one is the actual node a person runs.
 FROM python:3.13-slim
 WORKDIR /app
+# ffmpeg: only for /api/orbit-mux, the Orbit picture+audio as one live
+# Matroska stream (stream copy, no transcoding) for Kodi and friends;
+# everything else is stdlib. Drop this line and that one endpoint 503s.
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 # weed.py/shell.py/discovery_relay.py/lightning_settle.py/dht.py weren't
 # here before -- the image only ever ran web_ui.py, so there was no way
 # to get an interactive shell or bare CLI *inside this exact container*

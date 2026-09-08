@@ -224,6 +224,11 @@ Zoom retune every mode; every setting persists in the browser.
   guest party page shows a 🔊 listen button; VLC takes both with
   `vlc --demux=mjpeg <view-url> --input-slave=<audio-url>`; OBS takes the
   audio URL as a second Media Source. Safari/iOS can't play WebM audio.
+  With ffmpeg on the node (the Docker image has it; otherwise
+  `$WEED_FFMPEG` or PATH), `/api/orbit-mux` is picture and audio as one
+  live Matroska stream, stream-copied, no transcoding -- for Kodi and
+  anything else that can't pair two URLs. Roku still can't: it wants
+  H.264, and this is MJPEG in a box.
 - **MIDI** (🎹): an AKAI MPK mini or any Web MIDI controller
   (Chrome/Edge/Firefox). Pads pick modes and fire actions, knobs turn
   the sliders or sweep through modes/transitions/character sets;
@@ -264,8 +269,9 @@ downloaded files through Kodi's own player, which handles every codec.
 Screens: **Downloads** (newest first, extensions dropped), **Playlists**
 with play-all, **Tags** as folders, **Party** (the vote list, select to
 +1), **Autopilot** (the node's weighted least-played pick), and the
-**live Orbit picture or audio feed** while the visualizer is streaming
-(the audio one lights up Kodi's own visualisers). Plays are counted on
+**live Orbit feed** while the visualizer is streaming: picture and audio
+together (`/api/orbit-mux`, needs ffmpeg on the node), or the picture or
+the audio alone (the audio one lights up Kodi's own visualisers). Plays are counted on
 the node like the browser's.
 
 ```bash

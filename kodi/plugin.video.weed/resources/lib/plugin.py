@@ -26,7 +26,8 @@ ROOT = [
     ('Playlists', 'playlists', {}),
     ('Tags', 'tags', {}),
     ('Party', 'party', {}),
-    ('Live: Orbit picture (MJPEG)', 'live', {'what': 'view'}),
+    ('Live: Orbit picture + audio', 'live', {'what': 'mux'}),
+    ('Live: Orbit picture only (MJPEG)', 'live', {'what': 'view'}),
     ('Live: Orbit audio (Kodi visualiser)', 'live', {'what': 'audio'}),
     ("Autopilot: play the node's pick", 'autopilot', {}),
 ]
@@ -149,6 +150,14 @@ class Plugin:
         # player can't take the self-signed certificate), never a stale
         # advertised port on an http node (Ryan: "the log says it's
         # trying 4242, but that's the old port").
+        if what == 'mux':
+            if not st.get('audio'):
+                self.ui.notify('the stream has no audio on (🔊 beside 📡)')
+                return self.ui.end()
+            if not st.get('ffmpeg'):
+                self.ui.notify('the node has no ffmpeg, so picture and audio come separately (see README)')
+                return self.ui.end()
+            return self.ui.play(self.api.feed_url('mux'), 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})
         if what == 'audio':
             if not st.get('audio'):
                 self.ui.notify('the stream has no audio on (🔊 beside 📡)')

@@ -59,7 +59,7 @@ def test_root_and_downloads_list_finished_tracks_newest_first(web_server):
     _seed()
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run()
-    assert [f[1] for f in ui.folders] == ['downloads', 'playlists', 'tags', 'party', 'live', 'live', 'autopilot']
+    assert [f[1] for f in ui.folders] == ['downloads', 'playlists', 'tags', 'party', 'live', 'live', 'live', 'autopilot']
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='downloads')
     assert [m[0] for m in ui.items] == ['Track 2', 'Track 1', 'Track 0']          # newest first, extension dropped, no unfinished
@@ -246,3 +246,22 @@ def test_https_node_sends_media_through_its_plain_port_or_skips_verification():
     api = weedapi.WeedApi('http://node:8080', None, opener=opener_stale)
     assert api.stream_url('job1') == 'http://node:8080/api/stream/job1'
     assert api.feed_url('view') == 'http://node:8080/api/orbit-view'
+
+
+def test_muxed_live_feed_needs_audio_and_ffmpeg(web_server, monkeypatch):
+    """The picture+audio entry: one Matroska URL when the node has ffmpeg
+    and audio is on; a plain notice otherwise."""
+    _seed()
+    monkeypatch.setattr(web_ui, '_orbit_ws_connected', True)
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='live', what='mux')
+    assert ui.played == [] and 'no audio' in ui.notices[0]
+    monkeypatch.setitem(web_ui._orbit_audio, 'on', True)
+    monkeypatch.setattr(web_ui, '_ffmpeg_path', lambda: None)
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='live', what='mux')
+    assert ui.played == [] and 'ffmpeg' in ui.notices[0]
+    monkeypatch.setattr(web_ui, '_ffmpeg_path', lambda: '/usr/bin/ffmpeg')
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='live', what='mux')
+    assert ui.played == [(web_server + '/api/orbit-mux', 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})]

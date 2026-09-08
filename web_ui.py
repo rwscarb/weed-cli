@@ -25,6 +25,7 @@ import signal
 import socket
 import queue
 import secrets
+import shutil
 import ssl
 import struct
 import subprocess
@@ -573,6 +574,14 @@ class _LiveContainerRelay:
 
 
 _orbit_audio_relay = _LiveContainerRelay()
+
+
+def _ffmpeg_path():
+    """ffmpeg for the muxed feed (/api/orbit-mux): $WEED_FFMPEG, else on PATH, else None."""
+    p = os.environ.get('WEED_FFMPEG')
+    if p and os.access(p, os.X_OK):
+        return p
+    return shutil.which('ffmpeg')
 
 
 def _ws_unmask(data, mask_key):
@@ -1219,14 +1228,14 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET endpoints a guest (stream token) may use; everything else under
     # /api/ is admin-only. The stream endpoints also take ?token=.
-    _GUEST_GET = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
+    _GUEST_GET = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
 
     def do_GET(self):
         parsed = urlparse(self.path)
         path, qs = parsed.path, parse_qs(parsed.query)
 
         if path.startswith('/api/'):
-            takes_query_token = path in ('/api/orbit-view', '/api/orbit-audio') or path.startswith('/api/stream/')
+            takes_query_token = path in ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux') or path.startswith('/api/stream/')
             q = qs if takes_query_token else None
             guest_ok = takes_query_token or path in self._GUEST_GET
             if not (self._guest_ok(q) if guest_ok else self._authorized(q)):
@@ -1322,6 +1331,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_orbit_view()
         if path == '/api/orbit-audio-ws':
             return self._handle_orbit_audio_websocket(qs)
+        if path == '/api/orbit-mux':
+            return self._handle_orbit_mux()
         if path == '/api/orbit-audio':
             return self._handle_orbit_audio()
         if path == '/api/orbit-stream':
@@ -2036,6 +2047,11 @@ class Handler(BaseHTTPRequestHandler):
             'audio_listeners': _orbit_audio_relay.subscriber_count(),
             'audio_url': f'{scheme}://{host}/api/orbit-audio{token_qs}',
             'audio_plain_url': f'{plain_base}/api/orbit-audio{token_qs}' if plain_base else None,
+            # picture + audio as one Matroska stream (ffmpeg on the node, stream copy)
+            'ffmpeg': bool(_ffmpeg_path()),
+            'mux': bool(active and audio.get('on') and _ffmpeg_path()),
+            'mux_url': f'{scheme}://{host}/api/orbit-mux{token_qs}',
+            'mux_plain_url': f'{plain_base}/api/orbit-mux{token_qs}' if plain_base else None,
         })
 
     def _handle_orbit_view(self):
@@ -2276,6 +2292,103 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             _orbit_audio_relay.unsubscribe(q)
 
+    def _handle_orbit_mux(self):
+        """Picture and audio as ONE live stream -- Matroska with the MJPEG
+        frames and the Opus audio copied in as they are, no transcoding --
+        for players that can't pair two URLs (Kodi, most TV apps). ffmpeg
+        on the node does the muxing: each viewer gets its own process fed
+        through two FIFOs, the JPEG frames from the picture fanout and the
+        container bytes from the audio relay, and its stdout is this
+        response. Timestamps: the picture is stamped by arrival time, the
+        audio keeps its recorder's own clock, and ffmpeg starts both at
+        zero, so they line up to within the recorder's blob interval.
+        503 with a plain message when there's no ffmpeg on the node, 404
+        while nothing (or no audio) is streaming."""
+        ffmpeg = _ffmpeg_path()
+        if not ffmpeg:
+            return self._json({'error': 'the node has no ffmpeg -- the picture+audio feed needs it '
+                                        '(apt-get install ffmpeg on the node, or set WEED_FFMPEG to the binary)'}, status=503)
+        with _orbit_ws_lock:
+            active = _orbit_ws_connected
+        with _orbit_audio_lock:
+            on, mime = _orbit_audio['on'], _orbit_audio['mime']
+        if not active:
+            return self._json({'error': 'the visualizer is not streaming right now'}, status=404)
+        if not on or not mime:
+            return self._json({'error': 'the stream has no audio right now (the streamer\'s 🔊 toggle is off)'}, status=404)
+        afmt = 'ogg' if 'ogg' in mime else 'webm'
+        tmp = tempfile.mkdtemp(prefix='weed-mux-')
+        vfifo, afifo = os.path.join(tmp, 'v.mjpeg'), os.path.join(tmp, 'a.' + afmt)
+        os.mkfifo(vfifo); os.mkfifo(afifo)
+        vq = queue.Queue(maxsize=4)
+        with _orbit_subs_lock:
+            _orbit_subscribers.add(vq)
+        aq = _orbit_audio_relay.subscribe()
+        stop = threading.Event()
+
+        def pump(q, path):
+            # opening a FIFO for writing blocks until ffmpeg opens it to
+            # read, which it does input by input, so each pump waits its turn
+            try:
+                with open(path, 'wb', buffering=0) as f:
+                    while not stop.is_set():
+                        try:
+                            item = q.get(timeout=1)
+                        except queue.Empty:
+                            continue
+                        if item is None:
+                            break
+                        f.write(item)
+            except OSError:
+                pass
+            finally:
+                stop.set()
+
+        cmd = [ffmpeg, '-nostdin', '-hide_banner', '-loglevel', 'error',
+               '-use_wallclock_as_timestamps', '1', '-f', 'mjpeg', '-i', vfifo,
+               '-f', afmt, '-i', afifo,
+               '-map', '0:v:0', '-map', '1:a:0', '-c', 'copy',
+               '-f', 'matroska', '-live', '1', '-cluster_time_limit', '500', '-cluster_size_limit', '65536',
+               '-flush_packets', '1', 'pipe:1']
+        proc = None
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            for q, path in ((vq, vfifo), (aq, afifo)):
+                threading.Thread(target=pump, args=(q, path), daemon=True).start()
+            try:
+                self.connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            except OSError:
+                pass
+            self.send_response(200)
+            self.send_header('Content-Type', 'video/x-matroska')
+            self.send_header('Cache-Control', 'no-cache')
+            self.send_header('Connection', 'close')
+            self.end_headers()
+            self.wfile.flush()
+            while True:
+                data = proc.stdout.read1(65536)
+                if not data:
+                    break
+                try:
+                    self.wfile.write(data)
+                    self.wfile.flush()
+                except OSError:
+                    break
+        except Exception:
+            pass
+        finally:
+            stop.set()
+            if proc is not None:
+                try:
+                    proc.kill(); proc.wait(timeout=5)
+                except Exception:
+                    pass
+            with _orbit_subs_lock:
+                _orbit_subscribers.discard(vq)
+            _orbit_audio_relay.unsubscribe(aq)
+            vq.put_nowait(None) if not vq.full() else None
+            shutil.rmtree(tmp, ignore_errors=True)
+
     def _handle_stream(self, job_id):
         """Serve an already-downloaded job's file with real HTTP range
         support, so a <video> tag can seek/scrub instead of just
@@ -2396,7 +2509,7 @@ class StreamOnlyHandler(Handler):
     it next to a --tls UI doesn't quietly reopen the whole control
     surface over plain HTTP. Auth, if on, applies exactly as on the main
     port (a player uses ?token=)."""
-    _ALLOWED = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-stream')
+    _ALLOWED = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux', '/api/orbit-stream')
 
     def do_GET(self):
         path = urlparse(self.path).path

@@ -989,3 +989,45 @@ def test_downloads_filter_sort_and_autopilot_skip(page, golden_path_server):
     assert page.evaluate("vm => vm.player.contentHash", vm) in ('b' * 64, 'c' * 64)
     page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: false }))")
     assert page.locator('#audio-transport button[title*="Next"]').first.is_disabled()   # off: nothing to skip to
+
+
+def test_muxed_stream_is_one_matroska_with_both_tracks(page, golden_path_server, monkeypatch):
+    """Ryan: "now I have a choice of audio OR video. How about together?"
+    /api/orbit-mux is the picture and the audio as one live Matroska
+    stream, muxed by ffmpeg on the node with no transcoding: the MJPEG
+    frames as a video track, the recorder's Opus as the audio track.
+    Needs a real ffmpeg (WEED_FFMPEG or on PATH); skipped without one."""
+    import http.client, time
+    from urllib.parse import urlparse
+    ffmpeg = web_ui._ffmpeg_path()
+    if not ffmpeg:
+        pytest.skip('no ffmpeg on this box')
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    page.click('[data-viz="plasma"]')
+    page.click('#orbit-egg-dialog .orbit-audio-btn')
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("() => fetch('/api/orbit-stream').then(r => r.json()).then(s => s.active && s.audio && s.mux)", timeout=10_000)
+    page.wait_for_timeout(1500)                                                # let the recorder's first blobs land
+    u = urlparse(golden_path_server['web_url'])
+    conn = http.client.HTTPConnection(u.hostname, u.port, timeout=30)
+    conn.request('GET', '/api/orbit-mux')
+    resp = conn.getresponse()
+    assert resp.status == 200, resp.read()[:200]
+    assert resp.getheader('Content-Type') == 'video/x-matroska'
+    buf, deadline = b'', time.time() + 25
+    while time.time() < deadline and (len(buf) < 200_000 or b'A_OPUS' not in buf):
+        chunk = resp.fp.read1(65536)
+        if not chunk:
+            break
+        buf += chunk
+    conn.close()
+    assert buf[:4] == b'\x1a\x45\xdf\xa3', buf[:16]                        # EBML
+    assert b'matroska' in buf[:64]
+    import re
+    assert b'A_OPUS' in buf and re.search(rb'V_[A-Z][A-Z0-9/]+', buf[:4096])   # both tracks declared (audio Opus, a V_ video codec)
+    assert buf.count(b'\xff\xd8\xff') >= 5, buf.count(b'\xff\xd8\xff')        # JPEG frames are flowing through
+    assert b'\x1f\x43\xb6\x75' in buf                                         # in real clusters
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)

@@ -469,3 +469,25 @@ def test_audio_endpoint_takes_the_token_in_the_query(web_server, monkeypatch):
     s, head = audio_connect(web_server, '/api/orbit-audio?token=guest-tok')
     assert head.startswith(b'HTTP/1.1 404')   # past auth; just no audio yet
     s.close()
+
+
+def test_mux_endpoint_says_plainly_why_it_cannot(web_server, monkeypatch):
+    from testutil import http_get_json
+    import urllib.error, urllib.request, json as _json
+    def get(path):
+        try:
+            with urllib.request.urlopen(web_server + path) as r:
+                return r.status, _json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, _json.loads(e.read())
+    monkeypatch.setattr(web_ui, '_ffmpeg_path', lambda: None)
+    status, body = get('/api/orbit-mux')
+    assert status == 503 and 'ffmpeg' in body['error']
+    monkeypatch.setattr(web_ui, '_ffmpeg_path', lambda: '/usr/bin/ffmpeg')
+    status, body = get('/api/orbit-mux')
+    assert status == 404 and 'not streaming' in body['error']
+    monkeypatch.setattr(web_ui, '_orbit_ws_connected', True)
+    status, body = get('/api/orbit-mux')
+    assert status == 404 and 'audio' in body['error']
+    st = http_get_json(web_server + '/api/orbit-stream')
+    assert st['ffmpeg'] is True and st['mux'] is False and st['mux_url'].endswith('/api/orbit-mux')
