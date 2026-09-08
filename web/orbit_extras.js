@@ -1810,29 +1810,6 @@
       g.addColorStop(0, `hsl(${hueBase | 0},35%,7%)`); g.addColorStop(1, '#000');
       vctx.fillStyle = g; vctx.fillRect(0, 0, W, H);
     }
-    // the picture for a mode: the video frame as a canvas, or, with no
-    // video, the spectrum as coloured bars so there's still something on
-    // the faces
-    const texOff = offscreen();
-    let texFrame = null;
-    function texture(videoFrame, freqData, hueBase) {
-      if (videoFrame) {
-        const { c, ctx } = texOff(videoFrame.w, videoFrame.h);
-        if (texFrame !== videoFrame) { texFrame = videoFrame; ctx.putImageData(videoFrame.imageData, 0, 0); }
-        return c;
-      }
-      texFrame = null;
-      const { c, ctx: x } = texOff(256, 144);
-      const maxBin = Math.floor(freqData.length * 0.7), n = 32;
-      x.fillStyle = '#101018'; x.fillRect(0, 0, 256, 144);
-      for (let i = 0; i < n; i++) {
-        const v = freqData[Math.floor((i / n) * maxBin)] / 255;
-        x.fillStyle = `hsl(${(hueBase + i * 9) | 0},90%,${(35 + v * 40) | 0}%)`;
-        x.fillRect(i * 8, 144 - v * 130, 7, v * 130);
-      }
-      return c;
-    }
-
     // ── Desktop cube (transition): Compiz. The old picture on the front
     // face, the new one on the side, the cube turns a quarter and zooms
     // out a little on the way, over a dark sky.
@@ -1901,91 +1878,87 @@
       },
     });
 
-    // ── Desktop cube (mode): the video on all four sides of a cube that
-    // turns with the music, tilted so the top shows, over its own
-    // reflection in a dark floor. Speed drives the turn, the bass gives
-    // it a shove and swells it, Zoom sizes it.
+    // ── Starfield (mode): the classic warp. A few hundred stars fly
+    // past, streaking with their speed; Speed sets the cruise, the bass
+    // punches the throttle, the hue drifts, and Zoom pulls the field in
+    // and out. Pure lines, so it's cheap at any size.
     (function () {
-      let spin = 0, kick = 0, last = 0;
+      const N = 420, stars = [];
+      let last = 0, kick = 0;
+      const spawn = (st, far) => { st.x = (Math.random() - 0.5) * 2; st.y = (Math.random() - 0.5) * 2; st.z = far ? 1 : Math.random(); st.pz = st.z; };
+      for (let i = 0; i < N; i++) { const st = {}; spawn(st, false); stars.push(st); }
       viz.registerMode({
-        id: 'desktopcube', label: 'Desktop cube',
+        id: 'starfield', label: 'Starfield',
         draw(ctx) {
-          const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+          const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
           const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
-          const bass = bassOf(freqData);
-          kick = Math.max(kick * 0.9, bass > 0.6 ? bass : 0);
-          spin += dt * (0.35 * speed + kick * 1.5);
-          const img = texture(videoFrame, freqData, hueBase), iw = img.width, ih = img.height;
-          const size = Math.min(VW, VH) * 0.42 * vizUserScale * (1 + bass * 0.08);
-          const hw = size, hh = size * 0.6, hd = size;
-          const cam = { cx: VW / 2, cy: VH / 2 - hh * 0.25, D: size * 6, f: size * 6 - size * 1.7 };
-          const tilt = -0.32;   // negative: the top tips toward us (y runs down on screen)
-          const place = (p, mirror) => { let q = rotY(p, spin); q = rotX(q, tilt); return mirror ? [q[0], 2 * (hh * 1.05) - q[1] + hh * 0.3, q[2]] : q; };
-          backdrop(vctx, VW, VH, hueBase);
-          const names = ['front', 'right', 'back', 'left'];
-          const build = (mirror) => names.map((n, i) => {
-            const angle = spin + i * Math.PI / 2;
-            return { img, sx: 0, sy: 0, sw: iw, sh: ih, pts: boxFace(n, hw, hh, hd).map(p => place(p, mirror)), shade: turned(angle) * 0.75 + (mirror ? 0.45 : 0) };
-          });
-          // the reflection first, then a fade over it, then the cube
-          drawFaces(vctx, build(true), cam, 28);
-          const g = vctx.createLinearGradient(0, VH * 0.55, 0, VH);
-          g.addColorStop(0, 'rgba(0,0,0,0.35)'); g.addColorStop(1, 'rgba(0,0,0,1)');
-          vctx.fillStyle = g; vctx.fillRect(0, VH * 0.5, VW, VH * 0.5);
-          drawFaces(vctx, build(false), cam, 40);
-          // the top face: a plain lit lid so the tilt reads
-          const top = [[-hw, -hh, -hd], [hw, -hh, -hd], [hw, -hh, hd], [-hw, -hh, hd]].map(p => project(place(p, false), cam));
-          if (visible(top)) {
-            vctx.fillStyle = `hsla(${hueBase | 0},60%,${(30 + bass * 30) | 0}%,0.9)`;
-            vctx.beginPath(); vctx.moveTo(top[0][0], top[0][1]); for (let k = 1; k < 4; k++) vctx.lineTo(top[k][0], top[k][1]); vctx.closePath(); vctx.fill();
+          const bass = bassOf(freqData), energy = energyOf(freqData);
+          kick = Math.max(kick * 0.9, bass > 0.55 ? bass : 0);
+          const v = dt * (0.25 * speed + kick * 1.4 + energy * 0.3);
+          fadeFrame(vctx, VW, VH, 0.35 + Math.min(0.4, v * 4));
+          const f = Math.min(VW, VH) * 0.9 * vizUserScale;
+          vctx.lineCap = 'round';
+          for (const st of stars) {
+            st.pz = st.z; st.z -= v;
+            if (st.z <= 0.02) { spawn(st, true); continue; }
+            const s1 = f / st.z, s0 = f / st.pz;
+            const x1 = cx + st.x * s1, y1 = cy + st.y * s1, x0 = cx + st.x * s0, y0 = cy + st.y * s0;
+            if (x1 < -20 || x1 > VW + 20 || y1 < -20 || y1 > VH + 20) { spawn(st, true); continue; }
+            const near = 1 - st.z;
+            vctx.strokeStyle = `hsla(${(hueBase + near * 60) | 0},${(40 + near * 50) | 0}%,${(55 + near * 40) | 0}%,${(0.25 + near * 0.75).toFixed(2)})`;
+            vctx.lineWidth = 0.6 + near * 2.6;
+            vctx.beginPath(); vctx.moveTo(x0, y0); vctx.lineTo(x1, y1); vctx.stroke();
           }
         },
       });
     })();
 
-    // ── Coverflow (mode): the last few seconds of the picture as a row
-    // of cards, the one in the middle facing you, the rest angled away
-    // either side, sliding along with the beat, reflected in the floor.
+    // ── Spectrum 3D (mode): the spectrum as a landscape. Each frame's
+    // bands become the nearest row of bars and older rows recede into
+    // the distance, drawn as flat-shaded boxes far to near with a low
+    // camera, the whole thing swaying gently. Bass lifts the camera.
     (function () {
-      const N = 9, cards = [];
-      let lastSnap = 0, pos = 0, kick = 0, last = 0;
+      const BANDS = 28, ROWS = 22, rows = [];
+      let last = 0, sway = 0, lift = 0;
       viz.registerMode({
-        id: 'coverflow', label: 'Coverflow',
+        id: 'spectrum3d', label: 'Spectrum 3D',
         draw(ctx) {
-          const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+          const { vctx, VW, VH, hueBase, freqData, speed, vizUserScale } = ctx;
           const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
-          const bass = bassOf(freqData);
-          kick = Math.max(kick * 0.88, bass > 0.6 ? bass : 0);
-          pos += dt * (0.25 * speed + kick * 1.2);
-          const src = texture(videoFrame, freqData, hueBase);
-          if (now - lastSnap > 450 || !cards.length) {   // a new card every so often, oldest one recycled
-            lastSnap = now;
-            const card = cards.length < N ? offscreen() : cards.shift();
-            card(256, 144).ctx.drawImage(src, 0, 0, 256, 144);
-            cards.push(card);
+          const bass = bassOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+          const row = new Float32Array(BANDS);
+          for (let b = 0; b < BANDS; b++) { const k = b / (BANDS - 1); row[b] = freqData[Math.floor(k * k * maxBin)] / 255; }
+          rows.unshift(row); if (rows.length > ROWS) rows.pop();
+          sway += dt * 0.35 * speed; lift = lift * 0.9 + bass * 0.1;
+          vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+          const unit = Math.min(VW, VH) * 0.075 * vizUserScale;      // one cell
+          // camera camD in front of the nearest row and camY above the
+          // ground, looking at a horizon 40% down the screen; rows run
+          // away to -z, so distance = camD - z grows with the row
+          const camY = -unit * (4.5 + lift * 2.5), camD = unit * 6, f = unit * 7, horizon = VH * 0.4;
+          const ang = Math.sin(sway) * 0.35;
+          const proj = (x, y, z) => {            // rotate about Y, then perspective
+            const xr = x * Math.cos(ang) + z * Math.sin(ang), zr = -x * Math.sin(ang) + z * Math.cos(ang);
+            const sc = f / Math.max(unit * 0.5, camD - zr);
+            return [VW / 2 + xr * sc, horizon + (y - camY) * sc, sc];
+          };
+          const poly = (pts, col) => { vctx.fillStyle = col; vctx.beginPath(); vctx.moveTo(pts[0][0], pts[0][1]); for (let i = 1; i < pts.length; i++) vctx.lineTo(pts[i][0], pts[i][1]); vctx.closePath(); vctx.fill(); };
+          for (let r = rows.length - 1; r >= 0; r--) {
+            const data = rows[r], z = -r * unit * 1.1, depth = 1 - r / ROWS;
+            const order = ang >= 0 ? [...Array(BANDS).keys()] : [...Array(BANDS).keys()].reverse();   // far side of the row first
+            for (const b of order) {
+              const v = data[b], h = (0.08 + v * 3.2) * unit;
+              const x0 = (b - BANDS / 2) * unit, x1 = x0 + unit * 0.86;
+              const hue = (hueBase + b * 6 + r * 3) | 0, L = 28 + v * 35;
+              const top = [proj(x0, -h, z), proj(x1, -h, z), proj(x1, -h, z - unit * 0.86), proj(x0, -h, z - unit * 0.86)];
+              const front = [proj(x0, 0, z), proj(x1, 0, z), proj(x1, -h, z), proj(x0, -h, z)];
+              const sideX = ang >= 0 ? x1 : x0;
+              const side = [proj(sideX, 0, z), proj(sideX, 0, z - unit * 0.86), proj(sideX, -h, z - unit * 0.86), proj(sideX, -h, z)];
+              poly(side, `hsla(${hue},80%,${(L * 0.55 * depth + 8) | 0}%,${(0.35 + depth * 0.65).toFixed(2)})`);
+              poly(front, `hsla(${hue},85%,${(L * 0.8 * depth + 10) | 0}%,${(0.35 + depth * 0.65).toFixed(2)})`);
+              poly(top, `hsla(${hue},90%,${(L * 1.2 * depth + 18) | 0}%,${(0.4 + depth * 0.6).toFixed(2)})`);
+            }
           }
-          backdrop(vctx, VW, VH, hueBase);
-          const cw = VW * 0.34 * vizUserScale, ch = cw * 9 / 16, gap = cw * 0.36;
-          const cam = { cx: VW / 2, cy: VH / 2 - ch * 0.1, D: VW * 1.6, f: VW * 1.6 };
-          const centre = pos % cards.length;   // which card is in the middle, fractional
-          const faces = [], mirrors = [];
-          cards.forEach((card, i) => {
-            const cc = card(256, 144).c;
-            let off = i - centre; off = ((off + cards.length / 2) % cards.length + cards.length) % cards.length - cards.length / 2;
-            const side = Math.sign(off), d = Math.abs(off);
-            const angle = -side * Math.min(1, d * 1.6) * 1.05;
-            const x = side * (Math.min(1, d * 1.6) * gap * 1.6 + Math.max(0, d - 0.6) * gap * 0.9);
-            const z = -Math.min(1, d * 1.6) * cw * 0.7;
-            const pts = [[-cw / 2, -ch / 2, 0], [cw / 2, -ch / 2, 0], [cw / 2, ch / 2, 0], [-cw / 2, ch / 2, 0]]
-              .map(p => rotY(p, angle)).map(p => [p[0] + x, p[1], p[2] + z]);
-            faces.push({ img: cc, sx: 0, sy: 0, sw: 256, sh: 144, pts, shade: Math.min(1, d) * 0.5 });
-            mirrors.push({ img: cc, sx: 0, sy: 0, sw: 256, sh: 144, pts: [pts[3], pts[2], pts[1], pts[0]].map(p => [p[0], ch + (ch - p[1]) + ch * 0.06, p[2]]), shade: 0.6 + Math.min(1, d) * 0.3 });
-          });
-          drawFaces(vctx, mirrors, cam, 20);
-          const g = vctx.createLinearGradient(0, cam.cy + ch * 0.55, 0, VH);
-          g.addColorStop(0, 'rgba(0,0,0,0.3)'); g.addColorStop(1, 'rgba(0,0,0,1)');
-          vctx.fillStyle = g; vctx.fillRect(0, cam.cy + ch * 0.5, VW, VH);
-          drawFaces(vctx, faces, cam, 36);
         },
       });
     })();
