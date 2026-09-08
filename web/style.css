@@ -393,6 +393,27 @@ td button {
      actually needed more room. A fixed width turns .swipe-back's own
      footprint constant across every row again, same fix shape as
      .dl-log's already-fixed width for the exact same reason. */
+  /* Downloads on one line too (Ryan: "fix up the Downloads section list"):
+     title, then its tag chips and the + tag field, then ♫+, then the
+     actions, all on one row. .title-row dissolves (display: contents) so
+     its title text and icon group become flex items of .swipe-front
+     directly, alongside .tag-row, and `order` puts the tags before ♫+.
+     The actions box has a fixed width so Play lands at the same x on
+     every row whatever the row's status text is. */
+  #jobs-table { table-layout: fixed; width: 100%; }
+  #jobs-table th:nth-child(1) { width: 66%; }
+  #jobs-table th:nth-child(2) { width: 12%; }
+  #jobs-table th:nth-child(3) { width: 12%; }
+  #jobs-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #jobs-table .swipe-front { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+  #jobs-table .title-row { display: contents; }
+  #jobs-table .title-text { flex: 1 1 8rem; min-width: 6rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #jobs-table .tag-row { order: 1; margin-top: 0; flex: none; max-width: 55%; overflow: hidden; }
+  #jobs-table .title-icons { order: 2; }
+  #jobs-table .swipe-back { width: 15rem; }
+  #jobs-table .actions-row { flex-wrap: nowrap; overflow: hidden; }
+  #jobs-table .actions-row .status-error, #jobs-table .actions-row .dl-log { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+  #jobs-table .dl-stats { display: none; }   /* on the Play button's tooltip instead, as in Discover */
   /* Discover on one line (Ryan: "maybe it can fit on a single line?"):
      same side-by-side layout as the Downloads rows above. The actions
      never wrap here -- the title column gives way instead (it's flex: 1

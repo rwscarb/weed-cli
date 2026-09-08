@@ -404,13 +404,13 @@
               <div class="swipe-back">
                 <div class="actions-row">
                   <template v-if="j.status === 'done'">
-                    <button type="button" class="play-btn"
+                    <button type="button" class="play-btn" :title="statsText(j) || 'Play'"
                             @click="openPlayer(j.job_id, j.title || shortHash(j.content_hash), j.content_hash, j.signer_pubkey)">▶ Play</button>
                     <button type="button" class="play-btn qr-btn" title="scan to open this video on your phone"
                             @click="toggleQr($event, qrBaseUrl + 'api/stream/' + j.job_id)">📱</button>
                     <span class="dl-stats" v-if="statsText(j)">{{ statsText(j) }}</span>
                   </template>
-                  <span v-else-if="j.status === 'error'" class="status-error">{{ j.error }}</span>
+                  <span v-else-if="j.status === 'error'" class="status-error" :title="j.error">{{ j.error }}</span>
                   <span v-else class="dl-log" :title="j.log">{{ lastLogLine(j.log) || 'starting…' }}</span>
                 </div>
               </div>
