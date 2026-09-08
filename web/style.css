@@ -355,7 +355,7 @@ td button {
    buttons/state to fit -- one line there is a separate, bigger layout
    question this wasn't asked to touch). */
 @media (min-width: 461px) {
-  #jobs-table .swipe-row {
+  #jobs-table .swipe-row, #discover-table .swipe-row {
     display: flex;
     align-items: center;
     gap: 0.75rem;
@@ -368,14 +368,14 @@ td button {
        happened to be, landing at a different x position per row. */
     width: 100%;
   }
-  #jobs-table .swipe-front {
+  #jobs-table .swipe-front, #discover-table .swipe-front {
     flex: 1;
     min-width: 0;
   }
-  #jobs-table .swipe-back {
+  #jobs-table .swipe-back, #discover-table .swipe-back {
     flex: none;
   }
-  #jobs-table .actions-row {
+  #jobs-table .actions-row, #discover-table .actions-row {
     /* only needed to separate it from .title-row when stacked beneath
        it (see .actions-row's own comment) -- they're side-by-side
        siblings here instead, so the gap above already spaces them */
@@ -393,8 +393,37 @@ td button {
      actually needed more room. A fixed width turns .swipe-back's own
      footprint constant across every row again, same fix shape as
      .dl-log's already-fixed width for the exact same reason. */
-  #jobs-table .dl-stats {
-    width: 8.5rem;
+  /* Discover on one line (Ryan: "maybe it can fit on a single line?"):
+     same side-by-side layout as the Downloads rows above. The actions
+     never wrap here -- the title column gives way instead (it's flex: 1
+     with min-width 0, and the marquee handles a long name) -- and the
+     reserved download-log box is dropped while nothing is downloading,
+     since on one line its empty width would push every button a hand's
+     width in from the right edge. */
+  #discover-table .actions-row { flex-wrap: nowrap; }
+  /* the size/speed text rides on the Play button's tooltip instead of
+     taking a hand's width of the row */
+  #discover-table .dl-stats { display: none; }
+  /* the title itself stays on one line too: ellipsis at rest, and the
+     marquee directive scrolls it when it overflows; the Title column
+     gets the lion's share of the width so it has room to */
+  /* fixed layout: with the title on one line (nowrap) an auto-layout
+     table sizes the Title column to the longest title and runs off the
+     page; fixed layout holds the table to the page width and the cells
+     truncate instead */
+  #discover-table { table-layout: fixed; width: 100%; }
+  #discover-table th:nth-child(1) { width: 40%; }
+  #discover-table th:nth-child(2) { width: 8%; }
+  #discover-table th:nth-child(3) { width: 11%; }
+  #discover-table th:nth-child(4), #discover-table th:nth-child(5), #discover-table th:nth-child(7) { width: 5%; }
+  #discover-table th:nth-child(6) { width: 8%; }
+  #discover-table th:nth-child(8) { width: 10%; }
+  #discover-table td { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #discover-table .title-row { min-width: 0; }
+  #discover-table .title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
+  #discover-table .dl-log.dl-hidden { display: none; }
+  #jobs-table .dl-stats, #discover-table .dl-stats {
+    width: 7.5rem;
     flex-shrink: 0;
     overflow: hidden;
     text-overflow: ellipsis;

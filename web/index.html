@@ -184,7 +184,7 @@
               <div class="swipe-back swipe-back-mirror">
                 <div class="actions-row">
                   <template v-if="library.downloads[r.content_hash]">
-                    <button type="button" class="play-btn"
+                    <button type="button" class="play-btn" :title="statsText(library.downloads[r.content_hash]) || 'Play'"
                             @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
                     <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
                             @click="download(r)">↻</button>
@@ -221,7 +221,7 @@
               <div class="swipe-back">
                 <div class="actions-row">
                   <template v-if="library.downloads[r.content_hash]">
-                    <button type="button" class="play-btn"
+                    <button type="button" class="play-btn" :title="statsText(library.downloads[r.content_hash]) || 'Play'"
                             @click="openPlayer(library.downloads[r.content_hash].job_id, r.title || library.downloads[r.content_hash].title || shortHash(r.content_hash), r.content_hash, r.signer_pubkey || library.downloads[r.content_hash].signer_pubkey)">▶ Play</button>
                     <button type="button" class="play-btn icon-only" :class="{'dl-hidden': r._dl.downloading}" title="Re-download"
                             @click="download(r)">↻</button>
