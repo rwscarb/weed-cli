@@ -798,6 +798,9 @@
   <div id="orbit-egg-dialog" role="dialog" aria-label="Orbit Visualizer" :class="{'stream-bg': !easterEggVisible}">
     <header>
       <h1>Orbit Visualizer</h1>
+      <!-- the playing track's title, scrolling when it doesn't fit, same
+           as the player's own header -->
+      <span class="viz-title" v-marquee :title="player.title"><span>{{ displayTitle(player.title) || player.title }}</span></span>
       <div class="transport">
         <button class="viz-mode-btn" @click="easterEggVisible = false">← Back</button>
         <!-- Autopilot: the visualizer drives itself off the music and

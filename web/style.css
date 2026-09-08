@@ -1264,9 +1264,16 @@ td button {
 }
 #orbit-egg-dialog header h1 {
   font-size: 0.78rem; color: var(--muted); font-weight: 600; letter-spacing: 0.02em;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex: 1; min-width: 0;
+  white-space: nowrap; flex: none;
   margin: 0;
 }
+/* the track title beside it: takes what the transport leaves, ellipsis
+   at rest, v-marquee scrolls it when it overflows (as .player-title) */
+#orbit-egg-dialog header .viz-title {
+  font-size: 0.78rem; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  flex: 1 1 auto; min-width: 4rem;
+}
+#orbit-egg-dialog header .viz-title::before { content: '·'; color: var(--muted); margin-right: 0.5rem; }
 #orbit-egg-dialog .transport { display: flex; gap: 0.4rem; align-items: center; flex-shrink: 0; white-space: nowrap; }
 .orbit-res-select { font-size: 0.72rem; background: var(--surface); color: var(--fg); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.2rem; cursor: pointer; }
 /* copy-the-/api/orbit-view-URL button; the URL itself lives in its
