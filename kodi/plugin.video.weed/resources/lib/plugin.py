@@ -55,6 +55,13 @@ class Plugin:
         if not handler:
             self.ui.notify('unknown action: %s' % action)
             return self.do_root()
+        # Kodi adds parameters of its own to the URL it calls us with --
+        # content_type=video when it opens the add-on from the video
+        # section, since addon.xml provides both video and audio -- so a
+        # screen only gets the parameters it declares
+        import inspect
+        accepted = inspect.signature(handler).parameters
+        params = {k: v for k, v in params.items() if k in accepted}
         try:
             return handler(**params)
         except weedapi.WeedError as e:

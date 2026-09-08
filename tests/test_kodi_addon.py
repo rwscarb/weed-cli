@@ -178,3 +178,16 @@ def test_default_py_builds_plugin_urls_with_stubbed_kodi(monkeypatch):
     monkeypatch.setattr(sys, 'argv', ['plugin://plugin.video.weed/', '7', '?action=play&job_id=j1'])
     ui.play('http://node:8080/api/stream/j1?token=t', 'Track', {'title': 'Track'})
     assert calls[-1] == ('resolved', 'http://node:8080/api/stream/j1?token=t')
+
+
+def test_kodi_own_url_parameters_are_ignored(web_server):
+    """Ryan's first launch: Kodi opens a video+audio add-on with
+    ?content_type=video, which crashed do_root(). Any parameter a screen
+    doesn't declare is dropped, on every screen."""
+    _seed()
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(content_type='video')
+    assert [f[1] for f in ui.folders][:2] == ['downloads', 'playlists'] and not ui.notices
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='downloads', content_type='audio', tag='chill')
+    assert [m[0] for m in ui.items] == ['Track 1', 'Track 0'] and not ui.notices
