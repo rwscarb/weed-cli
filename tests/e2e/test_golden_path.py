@@ -866,8 +866,22 @@ def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_pat
     assert page.locator('#jobs-table tbody tr').count() == 2
     bar.locator('button.tag-chip', has_text='party').click()
     assert page.locator('#jobs-table tbody tr').count() == 1
+    # checkbox-style: with party lit, every other chip's count is the
+    # intersection with party -- chill 1 (Test Clip has both), other 0
+    # (dimmed) -- and lighting chill too keeps the row, lighting other
+    # would leave nothing
+    counts = lambda: {b.inner_text().split()[0]: b.inner_text().split()[-1] for b in bar.locator('button.tag-chip').all() if not b.inner_text().startswith('all')}
+    assert counts() == {'party': '1', 'chill': '1', 'other': '0'}, counts()
+    assert 'empty' in bar.locator('button.tag-chip', has_text='other').get_attribute('class')
+    bar.locator('button.tag-chip', has_text='chill').click()
+    assert page.locator('#jobs-table tbody tr').count() == 1
+    assert page.evaluate("vm => vm.tagFilters", vm) == ['party', 'chill']
+    bar.locator('button.tag-chip', has_text='party').click()                # unlight one: chill alone
+    assert page.evaluate("vm => vm.tagFilters", vm) == ['chill']
+    assert counts() == {'chill': '1', 'party': '1', 'other': '0'}, counts()
     bar.locator('button.tag-chip', has_text='all').click()
     assert page.locator('#jobs-table tbody tr').count() == 2
+    assert counts() == {'chill': '1', 'party': '1', 'other': '1'}, counts()
     # remove one: the chip goes, the bar follows
     page.locator('#jobs-table .tag-row .tag-chip', has_text='party').locator('.tag-x').click()
     page.wait_for_function("() => document.querySelector('#jobs-table tbody tr .tag-row').querySelectorAll('.tag-chip').length === 1")
@@ -906,3 +920,11 @@ def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_pat
     page.wait_for_selector('#vizModes')
     page.click('#autoPoolBtn')
     assert [o.strip() for o in page.locator('#autoTagSelect option').all_inner_texts()][:2] == ['any', 'chill (2)']
+    # the ⇄ video-swap picker has the same tag dropdown, narrowing its candidates
+    page.evaluate("vm => { vm.easterEggVisible = false; vm.player.contentHash = 'zzz'; vm.swapPicker.visible = true; vm.swapPicker.tag = 'other'; }", vm)
+    assert page.evaluate("vm => vm.swapCandidatesFiltered.map(d => d.title)", vm) == ['Other']
+    page.evaluate("vm => { vm.swapPicker.tag = 'chill'; }", vm)
+    assert sorted(page.evaluate("vm => vm.swapCandidatesFiltered.map(d => d.title)", vm)) == ['Chilly too', 'Test Clip']
+    page.evaluate("vm => { vm.swapPicker.tag = ''; }", vm)
+    assert len(page.evaluate("vm => vm.swapCandidatesFiltered", vm)) == 3
+    assert [o.strip() for o in page.locator('#swap-picker select.swap-tag option').all_inner_texts()] == ['any tag', 'chill (2)', 'other (1)']

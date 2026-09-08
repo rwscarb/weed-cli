@@ -187,7 +187,7 @@ const app = createApp({
       orbitDelay: 0,
       // Downloads tab: the tag chip that's filtering the table (null =
       // all), and the tag Autopilot draws its next track from ('' = any)
-      tagFilter: null,
+      tagFilters: [],     // the lit chips; a download must carry every one of them to show
       tagEditing: null,   // job_id whose "+ tag" field has focus (its suggestion chips show)
       tagDraft: '',       // what's typed in it
       autopilotTag: (() => { try { return localStorage.getItem('weed.autopilot.tag') || ''; } catch (e) { return ''; } })(),
@@ -235,7 +235,7 @@ const app = createApp({
         // the swapped video's own clock, for the seek slider in the ⇄ picker
         swapTime: 0, swapDuration: 0,
       },
-      swapPicker: { visible: false, top: 0, left: null, right: null, query: '' },
+      swapPicker: { visible: false, top: 0, left: null, right: null, query: '', tag: '' },
 
       // one shared QR popup, repositioned/retargeted by whichever button
       // (header "open on phone", or a per-item share button) last clicked it
@@ -421,9 +421,11 @@ const app = createApp({
     },
     // the picker's search box narrows the candidates by title
     swapCandidatesFiltered() {
-      const q = this.swapPicker.query.trim().toLowerCase();
-      if (!q) return this.swapCandidates;
-      return this.swapCandidates.filter(d => (this.displayTitle(d.title) || d.title || d.content_hash).toLowerCase().includes(q));
+      const q = this.swapPicker.query.trim().toLowerCase(), tag = this.swapPicker.tag;
+      let list = this.swapCandidates;
+      if (tag) list = list.filter(d => (d.tags || []).includes(tag));   // the picker's tag dropdown
+      if (!q) return list;
+      return list.filter(d => (this.displayTitle(d.title) || d.title || d.content_hash).toLowerCase().includes(q));
     },
     playlistPickerStyle() {
       return {
@@ -2168,15 +2170,36 @@ const app = createApp({
       for (const d of Object.values(this.library.downloads)) for (const t of (d.tags || [])) counts[t] = (counts[t] || 0) + 1;
       return Object.keys(counts).sort((a, b) => counts[b] - counts[a] || a.localeCompare(b)).map(t => ({ tag: t, count: counts[t] }));
     },
+    hasAllTags(contentHash, tags) {
+      const have = this.tagsOf(contentHash);
+      return tags.every(t => have.includes(t));
+    },
     jobsShown() {
-      if (!this.tagFilter) return this.jobs;
-      return this.jobs.filter(j => this.tagsOf(j.content_hash).includes(this.tagFilter));
+      if (!this.tagFilters.length) return this.jobs;
+      return this.jobs.filter(j => this.hasAllTags(j.content_hash, this.tagFilters));
+    },
+    // The filter bar's chips work like checkboxes: the lit ones AND
+    // together, and every chip's count is how many downloads carry it
+    // *and* everything already lit -- so lighting "chill" turns the
+    // others into "how many chill tracks are also 90s / party / ...".
+    // A chip that would leave nothing is dimmed rather than hidden.
+    tagBar() {
+      const lit = this.tagFilters;
+      return this.allTags().map(({ tag }) => {
+        const need = lit.includes(tag) ? lit : [...lit, tag];
+        const count = Object.values(this.library.downloads).filter(d => this.hasAllTags(d.content_hash, need)).length;
+        return { tag, count, active: lit.includes(tag) };
+      });
+    },
+    toggleTagFilter(tag) {
+      this.tagFilters = this.tagFilters.includes(tag) ? this.tagFilters.filter(t => t !== tag) : [...this.tagFilters, tag];
     },
     async setTags(contentHash, tags) {
       const r = await this.apiPost('/api/tags', { content_hash: contentHash, tags });
       if (r && Array.isArray(r.tags) && this.library.downloads[contentHash]) {
         this.library.downloads[contentHash].tags = r.tags;
-        if (this.tagFilter && !this.allTags().some(t => t.tag === this.tagFilter)) this.tagFilter = null;
+        const live = new Set(this.allTags().map(t => t.tag));
+        this.tagFilters = this.tagFilters.filter(t => live.has(t));   // a tag that's gone can't stay lit
       }
       return r;
     },

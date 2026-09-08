@@ -356,9 +356,11 @@
          the lit one narrows the table to downloads carrying it -->
     <div class="tag-filter" id="tag-filter" v-if="allTags().length">
       <span class="tag-filter-label">tags</span>
-      <button type="button" class="tag-chip" :class="{active: !tagFilter}" @click="tagFilter = null">all</button>
-      <button type="button" class="tag-chip" v-for="t in allTags()" :key="t.tag" :class="{active: tagFilter === t.tag}"
-              @click="tagFilter = tagFilter === t.tag ? null : t.tag">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
+      <!-- checkbox-style: lit chips AND together, counts are the
+           intersection with what's lit (vue-app.js tagBar) -->
+      <button type="button" class="tag-chip" :class="{active: !tagFilters.length}" @click="tagFilters = []">all</button>
+      <button type="button" class="tag-chip" v-for="t in tagBar()" :key="t.tag" :class="{active: t.active, empty: !t.count}"
+              @click="toggleTagFilter(t.tag)">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
     </div>
     <div class="table-wrap"><table id="jobs-table">
       <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th></tr></thead>
@@ -696,6 +698,11 @@
     </div>
   </div>
   <input type="text" ref="swapSearch" class="swap-search" v-model="swapPicker.query" placeholder="search downloads…" autocomplete="off">
+  <!-- narrow the candidates to one tag (vue-app.js swapCandidatesFiltered) -->
+  <select class="swap-tag" v-if="allTags().length" v-model="swapPicker.tag" @click.stop title="Only downloads carrying this tag">
+    <option value="">any tag</option>
+    <option v-for="t in allTags()" :key="t.tag" :value="t.tag">{{ t.tag }} ({{ t.count }})</option>
+  </select>
   <div class="playlist-picker-list">
     <div class="playlist-picker-item" v-if="player.swap">
       <button type="button" class="playlist-picker-item-add" title="Back to this track's own picture" @click="setVideoSwap(null)">

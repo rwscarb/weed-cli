@@ -849,6 +849,7 @@ td button {
 #global-player.swap-audio #audio-transport { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: rgba(20,20,20,0.85); }
 .swap-picker { min-width: 240px; max-width: 340px; }
 .swap-search { width: 100%; box-sizing: border-box; margin: 0 0 0.4rem; font-size: 0.8rem; }
+.swap-tag { width: 100%; box-sizing: border-box; margin: 0 0 0.4rem; font-size: 0.8rem; }
 .swap-seek { margin-bottom: 0.5rem; padding-bottom: 0.4rem; border-bottom: 1px solid var(--border); }
 .swap-seek-title { font-size: 0.8rem; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 0.2rem; }
 .swap-seek-row { display: flex; align-items: center; gap: 0.35rem; }
@@ -2113,6 +2114,7 @@ code {
 button.tag-chip { cursor: pointer; color: var(--muted); }
 button.tag-chip:hover { color: var(--text); border-color: var(--text); }
 .tag-chip.active { color: var(--accent); border-color: var(--accent); }
+button.tag-chip.empty:not(.active) { opacity: 0.4; }
 .tag-count { color: var(--muted); font-size: 0.65rem; }
 .tag-x { background: none; border: 0; padding: 0 0 0 0.1rem; margin: 0; color: var(--muted); font-size: 0.85rem; line-height: 1; cursor: pointer; }
 .tag-x:hover { color: var(--text); }
