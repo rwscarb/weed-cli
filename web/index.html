@@ -591,7 +591,7 @@
      current fullscreen element also makes the browser auto-exit
      fullscreen (spec behavior, not something this needs to do by hand),
      so hiding it here doubles as leaving Fullscreen cleanly as well. -->
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio && !player.swap, 'swap-audio': player.isAudio && !!player.swap}]">
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio && !player.swap, 'swap-audio': player.isAudio && !!player.swap, paused: !player.isPlaying}]">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>
@@ -648,12 +648,15 @@
     </div>
   </div>
   <div class="player-video-wrap">
-    <video ref="playerVideo" :controls="!player.isAudio"
+    <!-- no native controls: Chrome toggles play/pause on any click on the
+         picture with them on, and the bar below is the one set of controls
+         for every track, video or audio, swapped or not -->
+    <video ref="playerVideo"
            @play="onPlayerPlay" @pause="onPlayerPause" @ended="onPlayerEnded"
            @loadedmetadata="player.isAudio = $refs.playerVideo.videoWidth === 0; player.audioDuration = $refs.playerVideo.duration || 0"
            @timeupdate="player.audioCurrentTime = $refs.playerVideo.currentTime"
            @durationchange="player.audioDuration = $refs.playerVideo.duration || 0"
-           @volumechange="player.audioMuted = $refs.playerVideo.muted"></video>
+           @volumechange="player.audioMuted = $refs.playerVideo.muted; player.audioVolume = $refs.playerVideo.volume"></video>
     <!-- the video swap's picture, muted and looping over the track's own
          (pointer-events: none -- the real controls underneath still work) -->
     <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
@@ -663,15 +666,23 @@
     <div class="chat-overlay" v-if="chat.enabled && chat.overlay && chatRecent.length">
       <div class="chat-line" v-for="m in chatRecent" :key="m.id"><b :class="'chat-' + m.role">{{ m.name }}:</b> {{ m.text }}</div>
     </div>
-    <div v-if="player.isAudio" id="audio-transport" @click.stop>
+    <!-- the transport: prev / play-pause / next, seek, mute and volume.
+         Audio tracks get it as their whole picture area; video tracks get
+         it as a bar over the bottom of the picture that shows on hover or
+         while paused (style.css). -->
+    <div id="audio-transport" @click.stop>
+      <button class="audio-btn" @click.stop="playQueueOffset(-1)" :disabled="!player.queue || player.queue.index <= 0" title="Previous track (p)">⏮</button>
       <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
-              :title="player.isPlaying ? 'Pause' : 'Play'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
+              :title="player.isPlaying ? 'Pause (Space)' : 'Play (Space)'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
+      <button class="audio-btn" @click.stop="playQueueOffset(1)" :disabled="!player.queue || player.queue.index >= player.queue.items.length - 1" title="Next track (n)">⏭</button>
       <span class="audio-time">{{ formatAudioTime(player.audioCurrentTime) }}</span>
       <input type="range" class="audio-seek" min="0" :max="player.audioDuration || 0" step="0.5"
              :value="player.audioCurrentTime" @input="audioSeek($event.target.value)">
       <span class="audio-time">{{ formatAudioTime(player.audioDuration) }}</span>
       <button class="audio-btn" @click.stop="audioToggleMute"
-              :title="player.audioMuted ? 'Unmute' : 'Mute'">{{ player.audioMuted ? '🔇' : '🔊' }}</button>
+              :title="player.audioMuted ? 'Unmute (m)' : 'Mute (m)'">{{ player.audioMuted ? '🔇' : '🔊' }}</button>
+      <input type="range" class="audio-vol" min="0" max="1" step="0.02" :value="player.audioVolume" title="Volume"
+             @input="audioSetVolume($event.target.value)">
     </div>
     <div class="player-transport-overlay" v-if="player.queue">
       <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="player.queue.index <= 0"

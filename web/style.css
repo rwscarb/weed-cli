@@ -924,6 +924,20 @@ td button {
 /* an audio track with a swap keeps the full picture area; its transport
    bar becomes an overlay along the bottom instead of the whole box */
 #global-player.swap-audio #audio-transport { position: absolute; left: 0; right: 0; bottom: 0; height: 40px; background: rgba(20,20,20,0.85); }
+/* video tracks: the same transport as a bar over the bottom of the
+   picture, shown on hover, while paused, or while one of its controls
+   has focus; hidden otherwise so the picture is clean (the native
+   controls are off, see index.html's <video>) */
+#global-player:not(.audio-mode) #audio-transport {
+  position: absolute; left: 0; right: 0; bottom: 0; height: 40px; z-index: 3;
+  background: rgba(20, 20, 20, 0.85); border-top: 0;
+  opacity: 0; transition: opacity 0.2s;
+}
+#global-player:not(.audio-mode) .player-video-wrap:hover #audio-transport,
+#global-player:not(.audio-mode) #audio-transport:focus-within,
+#global-player.paused:not(.audio-mode) #audio-transport { opacity: 1; }
+.audio-vol { width: 64px; flex-shrink: 0; accent-color: var(--accent); margin: 0; }
+.audio-btn:disabled { opacity: 0.35; cursor: default; }
 .swap-picker { min-width: 240px; max-width: 340px; }
 .swap-search { width: 100%; box-sizing: border-box; margin: 0 0 0.4rem; font-size: 0.8rem; }
 .swap-tag { width: 100%; box-sizing: border-box; margin: 0 0 0.4rem; font-size: 0.8rem; }

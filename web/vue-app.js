@@ -211,7 +211,7 @@ const app = createApp({
       player: {
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
-        audioCurrentTime: 0, audioDuration: 0, audioMuted: false,
+        audioCurrentTime: 0, audioDuration: 0, audioMuted: false, audioVolume: 1,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -278,6 +278,7 @@ const app = createApp({
         { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
         { keys: 's', desc: 'Shuffle the current queue (while a video is open)' },
         { keys: 'Space', desc: 'Play / pause (while a video is open)' },
+        { keys: 'm', desc: 'Mute / unmute (while a video is open)' },
         { keys: 'Esc', desc: 'Close QR popup / error dialog / this list (does not stop playback)' },
         { keys: '?', desc: 'Toggle this list' },
       ],
@@ -1462,6 +1463,10 @@ const app = createApp({
         return;
       }
 
+      if (e.key === 'm' && this.player.visible) {
+        this.audioToggleMute();
+        return;
+      }
       if (e.key === ' ' && this.player.visible) {
         // preventDefault matters here beyond "don't scroll the page"
         // (Space's other native default): whatever last had focus (e.g.
@@ -2106,6 +2111,14 @@ const app = createApp({
       if (!isFinite(s) || s < 0) return '0:00';
       const m = Math.floor(s / 60);
       return `${m}:${Math.floor(s % 60).toString().padStart(2, '0')}`;
+    },
+    audioSetVolume(val) {
+      const v = Math.min(1, Math.max(0, parseFloat(val) || 0));
+      const video = this.$refs.playerVideo;
+      if (!video) return;
+      video.volume = v;
+      if (v > 0 && video.muted) video.muted = false;
+      this.player.audioVolume = v;
     },
     audioSeek(val) {
       const video = this.$refs.playerVideo;
