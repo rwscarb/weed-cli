@@ -188,6 +188,11 @@ const app = createApp({
       // Downloads tab: the tag chip that's filtering the table (null =
       // all), and the tag Autopilot draws its next track from ('' = any)
       tagFilters: [],     // the lit chips; a download must carry every one of them to show
+      // the Downloads toolbar: title search, status, and the sort order
+      // (persisted, since a preferred order is a preference)
+      jobsQuery: '',
+      jobsStatus: 'all',
+      jobsSort: (() => { try { return localStorage.getItem('weed.downloads.sort') || 'newest'; } catch (e) { return 'newest'; } })(),
       tagEditing: null,   // job_id whose "+ tag" field has focus (its suggestion chips show)
       tagDraft: '',       // what's typed in it
       autopilotTag: (() => { try { return localStorage.getItem('weed.autopilot.tag') || ''; } catch (e) { return ''; } })(),
@@ -2151,10 +2156,7 @@ const app = createApp({
         // Autopilot: nothing queued, so pick something -- the download
         // played least recently, ties broken at random, never the one
         // that just ended
-        if (window.orbitViz && window.orbitViz.autopilot()) {
-          const pick = this.autopilotPick();
-          if (pick) this.openPlayer(pick.job_id, pick.title || this.shortHash(pick.content_hash), pick.content_hash, pick.signer_pubkey || null);
-        }
+        if (this.autopilotOn()) this.autopilotNext();
         return;
       }
       const rec = this.library.downloads[next.content_hash];
@@ -2188,8 +2190,29 @@ const app = createApp({
       return tags.every(t => have.includes(t));
     },
     jobsShown() {
-      if (!this.tagFilters.length) return this.jobs;
-      return this.jobs.filter(j => this.hasAllTags(j.content_hash, this.tagFilters));
+      let list = this.jobs;
+      if (this.tagFilters.length) list = list.filter(j => this.hasAllTags(j.content_hash, this.tagFilters));
+      if (this.jobsStatus !== 'all') list = list.filter(j => j.status === this.jobsStatus);
+      const q = this.jobsQuery.trim().toLowerCase();
+      if (q) list = list.filter(j => ((j.title || '') + ' ' + (j.content_hash || '')).toLowerCase().includes(q));
+      const rec = j => this.library.downloads[j.content_hash] || {};
+      const title = j => (this.displayTitle(j.title) || j.title || j.content_hash || '').toLowerCase();
+      const by = {
+        newest: (a, b) => (rec(b).downloaded_at || 0) - (rec(a).downloaded_at || 0),
+        oldest: (a, b) => (rec(a).downloaded_at || 0) - (rec(b).downloaded_at || 0),
+        title: (a, b) => title(a).localeCompare(title(b), undefined, { numeric: true }),
+        titleDesc: (a, b) => title(b).localeCompare(title(a), undefined, { numeric: true }),
+        plays: (a, b) => (rec(b).play_count || 0) - (rec(a).play_count || 0),
+        recent: (a, b) => (rec(b).last_played || 0) - (rec(a).last_played || 0),
+        largest: (a, b) => (rec(b).size || 0) - (rec(a).size || 0),
+      }[this.jobsSort];
+      if (!by) return list;
+      // stable: the original order breaks ties, so a running job with no
+      // record yet keeps its place rather than jumping around each poll
+      return list.map((j, i) => [j, i]).sort((x, y) => by(x[0], y[0]) || x[1] - y[1]).map(x => x[0]);
+    },
+    saveJobsSort() {
+      try { localStorage.setItem('weed.downloads.sort', this.jobsSort); } catch (e) { /* private mode */ }
     },
     // The filter bar's chips work like checkboxes: the lit ones AND
     // together, and every chip's count is how many downloads carry it
@@ -2288,9 +2311,23 @@ const app = createApp({
     // first track), and the right response is simply nothing -- the
     // current track (and the rest of the queue) keeps playing
     // undisturbed, not queue getting silently cleared out from under it.
+    // Autopilot's between-tracks pick, as a method so the Next button
+    // and the n key can call it: skip what's playing and jump to what
+    // Autopilot would have played after it
+    autopilotOn() {
+      return !!(window.orbitViz && window.orbitViz.autopilot && window.orbitViz.autopilot());
+    },
+    autopilotNext() {
+      const pick = this.autopilotPick();
+      if (!pick) return false;
+      this.openPlayer(pick.job_id, pick.title || this.shortHash(pick.content_hash), pick.content_hash, pick.signer_pubkey || null);
+      return true;
+    },
     playQueueOffset(delta) {
       const q = this.player.queue;
-      if (!q) return;
+      // no queue: with Autopilot on, Next skips to its next pick (Ryan:
+      // "the next button should skip the current song in Autopilot")
+      if (!q) { if (delta > 0 && this.autopilotOn()) this.autopilotNext(); return; }
       const target = q.items[q.index + delta];
       if (!target) return;
       const rec = this.library.downloads[target.content_hash];

@@ -2201,6 +2201,14 @@ code {
 #orbit-egg-dialog .autopilot-toggle:hover { color: var(--text); border-color: var(--text); }
 #orbit-egg-dialog .autopilot-toggle[data-state="down"], #orbit-egg-dialog .autopilot-toggle[data-state="up"] { color: var(--accent); border-color: var(--accent); }
 
+/* ── Downloads toolbar: search, status, sort ─────────────────────── */
+.jobs-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 0.75rem; margin: 0.4rem 0 0.6rem; }
+.jobs-search { flex: 1 1 14rem; min-width: 10rem; max-width: 22rem; font-size: 0.8rem; margin: 0; padding: 0.25rem 0.5rem; }
+.jobs-status button { font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+.jobs-sort { display: inline-flex; flex-direction: row; align-items: center; gap: 0.35rem; font-size: 0.75rem; color: var(--muted); margin: 0; white-space: nowrap; }
+.jobs-sort select { width: auto; font-size: 0.75rem; margin: 0; padding: 0.15rem 0.3rem; }
+.jobs-count { font-size: 0.72rem; margin-left: auto; }
+
 /* ── tags (Downloads rows, the filter bar, Autopilot's tag pick) ──── */
 .tag-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.3rem; margin: 0.4rem 0 0.6rem; }
 .tag-filter-label { font-size: 0.75rem; color: var(--muted); margin-right: 0.2rem; }

@@ -362,6 +362,25 @@
       <button type="button" class="tag-chip" v-for="t in tagBar()" :key="t.tag" :class="{active: t.active, empty: !t.count}"
               @click="toggleTagFilter(t.tag)">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
     </div>
+    <!-- filter and sort (vue-app.js jobsShown): title search, status, order -->
+    <div class="jobs-toolbar" id="jobs-toolbar">
+      <input type="search" class="jobs-search" v-model="jobsQuery" placeholder="filter by title or hash…" autocomplete="off">
+      <span class="filter-toggle jobs-status">
+        <button type="button" v-for="st in ['all', 'done', 'running', 'error']" :key="st" :class="{active: jobsStatus === st}" @click="jobsStatus = st">{{ st }}</button>
+      </span>
+      <label class="jobs-sort">sort
+        <select v-model="jobsSort" @change="saveJobsSort">
+          <option value="newest">newest first</option>
+          <option value="oldest">oldest first</option>
+          <option value="title">title A–Z</option>
+          <option value="titleDesc">title Z–A</option>
+          <option value="plays">most played</option>
+          <option value="recent">recently played</option>
+          <option value="largest">largest</option>
+        </select>
+      </label>
+      <span class="jobs-count muted">{{ jobsShown().length }} / {{ jobs.length }}</span>
+    </div>
     <div class="table-wrap"><table id="jobs-table">
       <thead><tr><th>Job</th><th>Content hash</th><th>Progress</th><th>Status</th></tr></thead>
       <tbody>
@@ -674,7 +693,8 @@
       <button class="audio-btn" @click.stop="playQueueOffset(-1)" :disabled="!player.queue || player.queue.index <= 0" title="Previous track (p)">⏮</button>
       <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
               :title="player.isPlaying ? 'Pause (Space)' : 'Play (Space)'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
-      <button class="audio-btn" @click.stop="playQueueOffset(1)" :disabled="!player.queue || player.queue.index >= player.queue.items.length - 1" title="Next track (n)">⏭</button>
+      <button class="audio-btn" @click.stop="playQueueOffset(1)" :disabled="player.queue ? player.queue.index >= player.queue.items.length - 1 : !autopilotOn()"
+              :title="player.queue ? 'Next track (n)' : 'Skip to Autopilot\'s next pick (n)'">⏭</button>
       <span class="audio-time">{{ formatAudioTime(player.audioCurrentTime) }}</span>
       <input type="range" class="audio-seek" min="0" :max="player.audioDuration || 0" step="0.5"
              :value="player.audioCurrentTime" @input="audioSeek($event.target.value)">
@@ -684,10 +704,11 @@
       <input type="range" class="audio-vol" min="0" max="1" step="0.02" :value="player.audioVolume" title="Volume"
              @input="audioSetVolume($event.target.value)">
     </div>
-    <div class="player-transport-overlay" v-if="player.queue">
-      <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="player.queue.index <= 0"
+    <div class="player-transport-overlay" v-if="player.queue || autopilotOn()">
+      <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="!player.queue || player.queue.index <= 0"
               @click.stop="playQueueOffset(-1)">⏮</button>
-      <button type="button" class="transport-overlay-btn" title="Next track (N)" :disabled="player.queue.index >= player.queue.items.length - 1"
+      <button type="button" class="transport-overlay-btn" :title="player.queue ? 'Next track (N)' : 'Skip to Autopilot\'s next pick (N)'"
+              :disabled="player.queue ? player.queue.index >= player.queue.items.length - 1 : !autopilotOn()"
               @click.stop="playQueueOffset(1)">⏭</button>
     </div>
   </div>

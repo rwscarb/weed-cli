@@ -940,3 +940,52 @@ def test_tags_on_downloads_filter_the_table_and_steer_autopilot(page, golden_pat
     page.evaluate("vm => { vm.swapPicker.tag = ''; }", vm)
     assert len(page.evaluate("vm => vm.swapCandidatesFiltered", vm)) == 3
     assert [o.strip() for o in page.locator('#swap-picker select.swap-tag option').all_inner_texts()] == ['any tag', 'chill (2)', 'other (1)']
+
+
+def test_downloads_filter_sort_and_autopilot_skip(page, golden_path_server):
+    """Ryan: "add filtering and sorting to the Downloads page? Also, the
+    next button should skip the current song in Autopilot". The toolbar
+    above the table narrows by title/hash and by status and orders the
+    rows; the order persists. With no queue and Autopilot on, ⏭ (and n)
+    skip to Autopilot's next pick instead of doing nothing."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('.tab-btn:has-text("Downloads")')
+    page.evaluate("""vm => {
+      // a library record exists only for a finished download, as on the server
+      const mk = (c, t, status, extra) => { if (status === 'done') vm.library.downloads[c.repeat(64)] = { content_hash: c.repeat(64), job_id: 'j' + c, title: t, path: '/x/' + c + '.mp4', ...extra }; vm.jobs.push({ job_id: 'j' + c, content_hash: c.repeat(64), title: t, status, pct: 50, log: '' }); };
+      const h = Object.keys(vm.library.downloads)[0]; Object.assign(vm.library.downloads[h], { downloaded_at: 100, play_count: 1, last_played: 10, size: 300 });
+      mk('b', 'Beta Track', 'done', { downloaded_at: 300, play_count: 5, last_played: 30, size: 100 });
+      mk('c', 'Alpha Track', 'done', { downloaded_at: 200, play_count: 0, last_played: 0, size: 200 });
+      mk('d', 'Delta Loading', 'running', {});
+      mk('e', 'Epsilon Broken', 'error', {}); vm.jobs[4].error = 'boom'; }""", vm)
+    titles = lambda: [t.strip() for t in page.locator('#jobs-table tbody tr .title-text').all_inner_texts()]
+    assert page.locator('#jobs-toolbar').is_visible()
+    assert page.locator('.jobs-count').inner_text().strip() == '5 / 5'
+    assert titles() == ['Beta Track', 'Alpha Track', 'Test Clip', 'Delta Loading', 'Epsilon Broken']   # newest first; unfinished (no record) last, in their own order
+    page.select_option('.jobs-sort select', 'title')
+    assert titles() == ['Alpha Track', 'Beta Track', 'Delta Loading', 'Epsilon Broken', 'Test Clip']
+    assert page.evaluate("() => localStorage.getItem('weed.downloads.sort')") == 'title'
+    page.select_option('.jobs-sort select', 'plays')
+    assert titles()[:2] == ['Beta Track', 'Test Clip']
+    page.select_option('.jobs-sort select', 'largest')
+    assert titles()[:3] == ['Test Clip', 'Alpha Track', 'Beta Track']
+    page.locator('.jobs-status button', has_text='error').click()
+    assert titles() == ['Epsilon Broken']
+    page.locator('.jobs-status button', has_text='all').click()
+    page.fill('.jobs-search', 'track')
+    assert sorted(titles()) == ['Alpha Track', 'Beta Track']
+    assert page.locator('.jobs-count').inner_text().strip() == '2 / 5'
+    page.fill('.jobs-search', 'cccccc')                                    # a hash prefix works too
+    assert titles() == ['Alpha Track']
+    page.fill('.jobs-search', '')
+    # Autopilot skip: no queue, Autopilot on -> Next jumps to a pick that isn't the current track
+    page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: true }))")
+    assert page.evaluate("vm => vm.autopilotOn()", vm) is True
+    page.evaluate("vm => { vm.player.queue = null; }", vm)
+    before = page.evaluate("vm => vm.player.contentHash", vm)
+    page.locator('#audio-transport button[title*="Autopilot"]').first.click(force=True)
+    page.wait_for_function("([vm, h]) => vm.player.contentHash !== h", arg=[vm, before], timeout=5_000)
+    assert page.evaluate("vm => vm.player.contentHash", vm) in ('b' * 64, 'c' * 64)
+    page.evaluate("() => localStorage.setItem('weed.orbit.settings', JSON.stringify({ autopilot: false }))")
+    assert page.locator('#audio-transport button[title*="Next"]').first.is_disabled()   # off: nothing to skip to
