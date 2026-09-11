@@ -687,3 +687,28 @@ def test_autopilot_pool_checkboxes_limit_what_autopilot_picks(page, golden_path_
     # everything unticked: the pool is everything again rather than nothing
     page.evaluate("() => document.querySelectorAll('#autoPoolList input:checked').forEach(i => i.click())")
     assert len(page.evaluate("() => window.orbitViz.debugState().autoPool")) == len(ids)
+
+
+def test_a_pad_on_the_reset_rotation_row_squares_the_picture_up(page, golden_path_server):
+    """Ryan: "add a MIDI key binding for reset rotation". A new unbound
+    row; a pad learned onto it puts the rotation back to straight and
+    leaves zoom and pan alone (unlike the reset zoom/pan row)."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Reset rotation$')))
+    assert row.locator('.midi-what').inner_text().startswith('reset rotation')
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0x99, 40, 100])")            # learned onto pad note 40, channel 10 -- Pad 5's factory wildcard note
+    page.evaluate("() => { window.orbitViz.control('rotate', 0.8); window.orbitViz.control('zoom', 0.9); }")
+    assert abs(page.evaluate("() => window.orbitViz.controlPosition('rotate')") - 0.8) < 0.01
+    page.evaluate("() => window.__midi.send([0x99, 40, 100])")            # the pad: the learned exact-channel row wins over the wildcard
+    assert page.evaluate("() => window.orbitViz.current().mode") != 'spiral'
+    assert page.evaluate("() => window.orbitViz.controlPosition('rotate')") == 0.5
+    assert abs(page.evaluate("() => window.orbitViz.controlPosition('zoom')") - 0.9) < 0.01   # zoom untouched

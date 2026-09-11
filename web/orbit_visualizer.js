@@ -1937,6 +1937,8 @@ window.orbitViz = (function () {
         if (allTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav();
+      } else if (action === 'resetRot') {
+        setRotation(0);   // straight again, zoom and pan left alone
       } else if (action === 'autopilot:toggle') {
         cycleAutopilot();   // off -> ↓ -> ↑ -> off, same as the button
       } else if (action.startsWith('ascii:ramp:')) {

@@ -81,6 +81,7 @@ window.orbitMidi = (function () {
     { id: 'kFreeN', label: 'Freefall count', target: 'param:buildingCount', key: null },
     { id: 'kRot', label: 'Rotate', target: 'param:rotate', key: null },
     { id: 'actAuto', label: 'Autopilot', target: 'autopilot:toggle', key: null },
+    { id: 'actResetRot', label: 'Reset rotation', target: 'resetRot', key: null },
   ];
   const TARGET_LABELS = {
     video: 'video only (toggle)', flash: 'fire transition', 'transition:next': 'next fade style',
@@ -91,7 +92,7 @@ window.orbitMidi = (function () {
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
     'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay',
-    'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot: off → ↓ → ↑',
+    'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot: off → ↓ → ↑', resetRot: 'reset rotation (zoom/pan kept)',
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
 
@@ -277,7 +278,10 @@ window.orbitMidi = (function () {
     return (kind === 'n' ? 'note ' : 'CC ') + n + (ch === '*' ? '' : ' ch' + (parseInt(ch, 10) + 1));
   }
   function find(kind, ch, n) {
-    return bindings.find(b => b.key === `${kind}${ch}:${n}` || b.key === `${kind}*:${n}`);
+    // a row learned on this exact channel beats a factory wildcard row
+    // (n*:40 is Pad 5's default; a pad learned onto another row on
+    // channel 10 must still win)
+    return bindings.find(b => b.key === `${kind}${ch}:${n}`) || bindings.find(b => b.key === `${kind}*:${n}`);
   }
 
   // ── applying a control to a target ──────────────────────────────
