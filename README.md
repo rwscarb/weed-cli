@@ -257,7 +257,9 @@ Zoom retune every mode; every setting persists in the browser.
   row): cues the next track -- the queue's next, else Autopilot's pick --
   on a second hidden deck and fades to it, equal-power on the sound and
   opacity on the picture; the far end of the fader makes it the track
-  with no gap. A track ending mid-cue jumps to the cued one.
+  with no gap. The fader stays where it landed and the next fade runs
+  the other way, as on a DJ mixer, so a knob left at an end never
+  commits by accident. A track ending mid-cue jumps to the cued one.
 - **Video swap** (⇄ on the player): another download's picture stands
   in for the current track's — for an mp3 or a static-image video, so
   the visuals have real footage. Audio stays with the track; the

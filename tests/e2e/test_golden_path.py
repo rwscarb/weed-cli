@@ -1044,18 +1044,20 @@ def test_crossfader_cues_the_next_track_mixes_and_commits(page, golden_path_serv
     h = golden_path_server['content_hash']
     # a two-item queue of the same real download, so deck B has a real file to load
     page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'One'}, {content_hash: h, title: 'Two'}], index: 0, playlistId: null }; }", [vm, h])
-    assert page.locator('#audio-transport .xfade-slider').count() == 0
+    assert page.locator('#audio-transport .xfade-slider').is_disabled()          # present but idle until something is cued
     page.locator('#audio-transport .xfade-cue').click(force=True)
     page.wait_for_function("vm => vm.xfade.armed", arg=vm)
     assert page.evaluate("vm => vm.xfade.next.title", vm) == 'Two'
     assert page.evaluate("vm => vm.$refs.deckB.getAttribute('src')", vm) == '/api/stream/' + job
-    assert page.locator('#audio-transport .xfade-slider').is_visible()
-    page.evaluate("vm => vm.xfadeSet(0.5)", vm)
+    assert page.locator('#audio-transport .xfade-slider').is_enabled()
+    assert page.evaluate("vm => [vm.xfade.ui, vm.xfade.flip]", vm) == [0, False]     # first fade runs left to right
+    page.evaluate("vm => vm.xfadeSetUi(0.5)", vm)
     gains = page.evaluate("vm => [vm._orbitAnalyser.gainA.gain.value, vm._deckB.gainB.gain.value, vm.$refs.deckB.style.opacity]", vm)
     assert abs(gains[0] - 0.7071) < 0.01 and abs(gains[1] - 0.7071) < 0.01 and gains[2] == '0.5'   # equal-power, picture half over
     assert page.evaluate("() => document.getElementById('vizToast') === null || true")           # no visualizer open: the toast is optional
-    page.evaluate("vm => vm.xfadeSet(1)", vm)
+    page.evaluate("vm => vm.xfadeSetUi(1)", vm)
     page.wait_for_function("vm => !vm.xfade.armed && vm.player.queue.index === 1", arg=vm)
+    assert page.evaluate("vm => [vm.xfade.ui, vm.xfade.flip]", vm) == [1, True]      # stays at the right end; that end is current now
     assert page.evaluate("vm => vm.player.title", vm) == 'Two'
     page.wait_for_function("vm => vm._orbitAnalyser.gainA.gain.value > 0.99 && vm._deckB.gainB.gain.value < 0.01", arg=vm, timeout=6_000)
     page.wait_for_function("vm => vm.$refs.deckB.getAttribute('src') === null", arg=vm, timeout=3_000)   # deck B released
@@ -1063,11 +1065,15 @@ def test_crossfader_cues_the_next_track_mixes_and_commits(page, golden_path_serv
     page.locator('#audio-transport .xfade-cue').click(force=True)
     page.wait_for_timeout(200)
     assert page.evaluate("vm => vm.xfade.armed", vm) is False
-    # ⇆ on an armed deck cancels the cue and puts deck A back to full
+    # the next fade runs the other way: cue again (a fresh queue with a next item) and the
+    # fader still reads 1 at the current end; halfway down is a half mix, 0 would commit
     page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'Two'}, {content_hash: h, title: 'Three'}], index: 0, playlistId: null }; }", [vm, h])
     page.locator('#audio-transport .xfade-cue').click(force=True)
     page.wait_for_function("vm => vm.xfade.armed", arg=vm)
-    page.evaluate("vm => vm.xfadeSet(0.4)", vm)
+    assert page.evaluate("vm => [vm.xfade.ui, vm.xfade.pos]", vm) == [1, 0]
+    page.evaluate("vm => vm.xfadeSetUi(0.5)", vm)
+    assert abs(page.evaluate("vm => vm.xfade.pos", vm) - 0.5) < 0.001
+    # ⇆ on an armed deck cancels: the mix snaps back to the current track and the fader to its end
     page.locator('#audio-transport .xfade-cue').click(force=True)
     page.wait_for_function("vm => !vm.xfade.armed", arg=vm)
-    assert page.evaluate("vm => vm._orbitAnalyser.gainA.gain.value", vm) == 1
+    assert page.evaluate("vm => [vm._orbitAnalyser.gainA.gain.value, vm.xfade.ui]", vm) == [1, 1]

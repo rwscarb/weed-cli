@@ -922,7 +922,8 @@ td button {
    passes clicks through to the real controls beneath */
 #global-player video.swap-video { position: absolute; inset: 0; pointer-events: none; }
 #global-player video.deck-b { position: absolute; inset: 0; pointer-events: none; background: transparent; z-index: 2; }
-.xfade-slider { width: 110px; flex-shrink: 0; accent-color: var(--accent); margin: 0; }
+.xfade-slider { width: 110px; flex-shrink: 0; accent-color: var(--accent); margin: 0; opacity: 0.35; }
+.xfade-slider.armed { opacity: 1; }
 .audio-btn.active { color: var(--accent); }
 /* an audio track with a swap keeps the full picture area; its transport
    bar becomes an overlay along the bottom instead of the whole box */

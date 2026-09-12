@@ -190,7 +190,12 @@ const app = createApp({
       tagFilters: [],     // the lit chips; a download must carry every one of them to show
       // the crossfader (see xfadeCue/xfadeSet/xfadeCommit): the cued next
       // track on deck B, and the fader position 0 (deck A) .. 1 (deck B)
-      xfade: { armed: false, pos: 0, next: null, ready: false },
+      // pos is the mix (0 = the current track, 1 = the cued one); ui is
+      // where the fader sits (0..1 left to right) and flip says which end
+      // is "current": like a real crossfader it alternates, so after a
+      // fade to the right the next one runs back to the left, and a knob
+      // left at either end never commits by accident
+      xfade: { armed: false, pos: 0, ui: 0, flip: false, next: null, ready: false },
       // the Downloads toolbar: title search, status, and the sort order
       // (persisted, since a preferred order is a preference)
       jobsQuery: '',
@@ -588,7 +593,7 @@ const app = createApp({
     window.addEventListener('weed:orbit-xfade', (e) => {
       if (!this.player.visible) return;
       if (!this.xfade.armed && !this.xfadeCue()) return;
-      this.xfadeSet(e.detail);
+      this.xfadeSetUi(e.detail);
     });
     try {
       const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
@@ -2173,6 +2178,7 @@ const app = createApp({
       if (!next) { this.xfadeNotify('nothing to cue'); return false; }
       const deck = this._ensureDeckB();
       this.xfade.next = next; this.xfade.pos = 0; this.xfade.armed = true; this.xfade.ready = false;
+      this.xfade.ui = this.xfade.flip ? 1 : 0;                 // the current track's end, whichever that is now
       deck.gainB.gain.value = 0;
       deck.el.src = '/api/stream/' + next.job_id;
       deck.el.load();
@@ -2185,6 +2191,14 @@ const app = createApp({
       if (deck) { deck.el.pause(); deck.el.removeAttribute('src'); deck.el.load(); deck.gainB.gain.value = 0; }
       if (this._orbitAnalyser) this._orbitAnalyser.gainA.gain.value = 1;
       this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
+      this.xfade.ui = this.xfade.flip ? 1 : 0;                 // back to the current track's end
+    },
+    // the fader's own position (the slider, or a knob): converted to the
+    // mix according to which end is "current" right now
+    xfadeSetUi(v) {
+      const ui = Math.min(1, Math.max(0, parseFloat(v) || 0));
+      this.xfade.ui = ui;
+      this.xfadeSet(this.xfade.flip ? 1 - ui : ui);
     },
     xfadeSet(v) {
       if (!this.xfade.armed) return;
@@ -2203,6 +2217,9 @@ const app = createApp({
       if (!next || !deck) return;
       const q = this.player.queue;
       const queue = (next.queueIndex != null && q) ? { items: q.items, index: next.queueIndex, playlistId: q.playlistId } : null;
+      // the fader stays at the end it reached; that end is now "current"
+      this.xfade.ui = this.xfade.flip ? 0 : 1;
+      this.xfade.flip = !this.xfade.flip;
       this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
       this.openPlayer(next.job_id, next.title || this.shortHash(next.content_hash), next.content_hash, next.signer_pubkey || null, queue);
       this.$nextTick(() => {

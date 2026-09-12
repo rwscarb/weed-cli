@@ -711,8 +711,10 @@
            pick) on deck B, the fader mixes over to it, the far end commits -->
       <button class="audio-btn xfade-cue" :class="{active: xfade.armed}" @click.stop="xfade.armed ? xfadeCancel() : xfadeCue()"
               :title="xfade.armed ? 'Drop the cued track (' + (displayTitle(xfade.next && xfade.next.title) || '') + ')' : 'Cue the next track for a crossfade'">⇆</button>
-      <input v-if="xfade.armed" type="range" class="xfade-slider" min="0" max="1" step="0.01" :value="xfade.pos"
-             :title="'Crossfade A → ' + (displayTitle(xfade.next && xfade.next.title) || 'B')" @input="xfadeSet($event.target.value)" @click.stop>
+      <input type="range" class="xfade-slider" :class="{armed: xfade.armed}" min="0" max="1" step="0.01" :value="xfade.ui"
+             :disabled="!xfade.armed"
+             :title="xfade.armed ? (xfade.flip ? '← fade to ' : 'fade to → ') + (displayTitle(xfade.next && xfade.next.title) || 'the cued track') : 'crossfader: press ⇆ to cue the next track'"
+             @input="xfadeSetUi($event.target.value)" @click.stop>
     </div>
     <div class="player-transport-overlay" v-if="player.queue || autopilotOn()">
       <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="!player.queue || player.queue.index <= 0"
