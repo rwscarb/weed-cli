@@ -1977,28 +1977,49 @@
   (function () {
     let seed = 1234;
     const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
-    // ── hemispheres: rings of shell points from the front of the brain
-    // over the top to the back, the radius wrinkled into gyri and sulci;
-    // the same count per ring so the rings mesh into quads
-    const RINGS = 24, PER = 40;
-    function makeShell(side) {
+    // ── the shape. A mesh is rings of points, the same count per ring
+    // so neighbouring rings tie into quads; fn(phi, th) gives the point
+    // and its fold (-1 sulcus .. +1 gyrus) for the shading.
+    const clampf = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+    function makeMesh(rings, per, fn, opts) {
       const pts = [];
-      for (let r = 1; r < RINGS; r++) {
-        const phi = Math.PI * r / RINGS, sp = Math.sin(phi);
-        for (let i = 0; i < PER; i++) {
-          const th = Math.PI * (i + 0.5) / PER;
-          // -1 sulcus .. +1 gyrus: two folded sine fields, a big and a small
-          const wr = Math.sin(9 * phi + 3 * Math.sin(4 * th)) * Math.sin(7 * th + 2 * Math.sin(3 * phi)) * 0.7 + Math.sin(17 * th + 5 * phi + 2 * Math.sin(6 * th)) * 0.3;
-          const k = 1 + wr * 0.085;
-          let x = 0.62 * sp * Math.sin(th) * k, y = -0.72 * Math.cos(phi) * k, z = 1.0 * sp * Math.cos(th) * k;
-          if (y > 0) y *= 0.78;                   // a flattish underside
-          if (z > 0) x *= 0.86 + 0.14 * (1 - z);  // the frontal lobe narrows
-          pts.push({ x: side * x, y, z, wr });
-        }
-      }
-      return { side, pts, pulse: 0, avg: 0.2, scale: 1, P: new Array(pts.length) };
+      for (let r = 1; r < rings; r++) for (let i = 0; i < per; i++) pts.push(fn(Math.PI * r / rings, (opts.closed ? 2 * Math.PI : Math.PI) * (i + 0.5) / per));
+      return { pts, rings: rings - 1, per, closed: !!opts.closed, every: opts.every || 2, dim: opts.dim || 1, P: new Array(pts.length) };
     }
-    const hemis = [makeShell(-1), makeShell(1)];
+    // a cerebral hemisphere: a fullish superellipsoid, narrower and a
+    // little lower at the front, a temporal lobe bulging low on the side,
+    // a flattened underside, wrinkled all over
+    const full = (v) => Math.sign(v) * Math.pow(Math.abs(v), 0.78);
+    const cerebrum = (side) => makeMesh(26, 44, (phi, th) => {
+      const sp = Math.sin(phi);
+      let x = full(sp * Math.sin(th)), y = full(-Math.cos(phi)), z = full(sp * Math.cos(th));
+      x *= 0.56; y *= 0.6; z *= 0.98;
+      const front = clamp01((z - 0.15) / 0.8);
+      x *= 1 - front * front * 0.3; y += front * front * 0.1;              // frontal lobe: narrower, lower
+      const back = clamp01((-z - 0.3) / 0.65);
+      y += back * back * 0.12;                                              // occipital: the top slopes down at the back
+      const low = clamp01((y + 0.02) / 0.3) * (1 - clamp01((y - 0.3) / 0.2)), tz = Math.exp(-Math.pow((z - 0.2) / 0.45, 2));
+      x *= 1 + 0.4 * low * tz;                                              // temporal lobe
+      if (y > 0.28) y = 0.28 + (y - 0.28) * 0.55;                           // the flat underside
+      const wr = Math.sin(9 * phi + 3 * Math.sin(4 * th)) * Math.sin(7 * th + 2 * Math.sin(3 * phi)) * 0.7 + Math.sin(17 * th + 5 * phi + 2 * Math.sin(6 * th)) * 0.3;
+      const k = 1 + wr * 0.075;
+      return { x: side * x * k, y: y * k, z: z * k, wr };
+    }, { every: 2 });
+    // a cerebellum: a small lobe tucked under the back, finely ridged
+    const cerebellum = (side) => makeMesh(16, 26, (phi, th) => {
+      const sp = Math.sin(phi), wr = Math.sin(15 * phi + Math.sin(3 * th)) * 0.9;
+      const k = 1 + wr * 0.05;
+      return { x: side * 0.2 + side * 0.22 * sp * Math.sin(th) * k, y: 0.4 + 0.15 * -Math.cos(phi) * k, z: -0.56 + 0.26 * sp * Math.cos(th) * k, wr };
+    }, { closed: true, every: 4, dim: 0.6 });
+    // the brainstem: a tube down from the middle, leaning back
+    const brainstem = makeMesh(10, 18, (phi, th) => {
+      const t = phi / Math.PI, r = 0.09 - t * 0.02;
+      return { x: r * Math.cos(th), y: 0.3 + t * 0.5, z: -0.2 - t * 0.14 + r * Math.sin(th), wr: 0 };
+    }, { closed: true, every: 2 });
+    const hemis = [
+      { side: -1, meshes: [cerebrum(-1), cerebellum(-1)], env: 0, avg: 0.2, peak: 0.3, scale: 1 },
+      { side: 1, meshes: [cerebrum(1), cerebellum(1)], env: 0, avg: 0.2, peak: 0.3, scale: 1 },
+    ];
     // ── neurons
     const N = 22, neurons = [];
     const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
@@ -2013,7 +2034,7 @@
     for (let i = 0; i < N; i++) {
       // the soma somewhere in either hemisphere, off the fissure
       const side = i % 2 ? 1 : -1, a = rnd() * Math.PI * 2, u = 0.3 + Math.cbrt(rnd()) * 0.42;
-      const soma = [side * (0.12 + Math.abs(Math.cos(a)) * u * 0.4), -0.05 + Math.sin(a) * u * 0.5, (rnd() - 0.5) * 1.4 * u];
+      const soma = [side * (0.1 + Math.abs(Math.cos(a)) * u * 0.38), -0.08 + Math.sin(a) * u * 0.42, (rnd() - 0.5) * 1.35 * u];
       const dend = [];
       const arms = 3 + Math.floor(rnd() * 3);
       for (let k = 0; k < arms; k++) grow(dend, soma, norm([rnd() - 0.5, rnd() - 0.5, rnd() - 0.5]), 0.11 + rnd() * 0.06, 0, 3, k);
@@ -2050,15 +2071,19 @@
         const react = 0.5 + reactivity * 0.5;
         const maxBin = Math.max(2, Math.floor(freqData.length * 0.7));
         const bandAt = (k, w) => { const c = Math.floor(k * k * (maxBin - 1)); let s = 0, n = 0; for (let i = Math.max(0, c - w); i <= Math.min(maxBin - 1, c + w); i++) { s += freqData[i]; n++; } return s / (n * 255); };
-        // the hemispheres: a jump in the bass swells the left, in the top end the right
-        const feed = [bassOf(freqData), bandAt(0.75, 8)];
+        // the hemispheres: the left rides the bass, the right the mids.
+        // Each hit is measured against the band's own recent floor and
+        // peak, so a beat reads as a full punch whatever the level, and
+        // an envelope with a quick release lets it drop between hits.
+        const feed = [bassOf(freqData), bandAt(0.45, 6)];
         for (let h = 0; h < 2; h++) {
           const H = hemis[h], v = feed[h];
-          const onset = v / (H.avg + 0.04);
-          H.avg = H.avg * 0.92 + v * 0.08;
-          if (onset > 1.35 && v > 0.08) H.pulse = Math.max(H.pulse, Math.min(1, (onset - 1) * 0.8) * react);
-          H.pulse *= Math.pow(0.05, dt);   // ~ gone in a second
-          H.scale += ((1 + H.pulse * 0.13) - H.scale) * Math.min(1, dt * 18);
+          H.avg += (v - H.avg) * (v < H.avg ? 0.02 : 0.005);
+          H.peak = Math.max(v, H.peak * Math.pow(0.5, dt));
+          const hit = clamp01((v - H.avg) / (H.peak - H.avg + 0.04)) * clamp01((v - 0.03) / 0.1);
+          H.env = Math.max(hit, H.env * Math.pow(0.01, dt));
+          H.pulse = clamp01(H.env * react);
+          H.scale += ((1 + H.pulse * 0.18) - H.scale) * Math.min(1, dt * 45);
         }
         // the neurons: each on its own band, plus the odd spontaneous one so a quiet brain still thinks
         for (const n of neurons) {
@@ -2076,7 +2101,7 @@
         // camera: yaw about Y, a gentle nod about X, the shared screen rotation, perspective
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
         const R = Math.min(VW, VH) * 0.36 * vizUserScale, f = 3.2;
-        const cyw = Math.cos(yaw), syw = Math.sin(yaw), tilt = 0.7 + Math.sin(tick * 0.3) * 0.2, ct = Math.cos(tilt), st = Math.sin(tilt);
+        const cyw = Math.cos(yaw), syw = Math.sin(yaw), tilt = 0.5 + Math.sin(tick * 0.3) * 0.18, ct = Math.cos(tilt), st = -Math.sin(tilt);   // looking down from a little above the front
         const cr = Math.cos(vizRot || 0), sr = Math.sin(vizRot || 0);
         const proj = (x, y, z) => {
           const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
@@ -2086,34 +2111,40 @@
           return [cx + px * cr - py * sr, cy + px * sr + py * cr, z2, sc];
         };
         const shellHue = (hueBase + 200) % 360, cellHue = (hueBase + 40) % 360;
-        // shells: the mesh as faintly filled quads lit by their fold
-        // (gyri bright, sulci dark) with every other ring drawn as a
-        // contour; the back half faint so the neurons read through it
+        // shells: each mesh as faintly filled quads lit by their fold
+        // (gyri bright, sulci dark) with some rings drawn as contours;
+        // the back half faint so the neurons read through it
         const shellHueS = shellHue | 0;
+        const place = (mesh, tx, ty, sc) => { for (let i = 0; i < mesh.pts.length; i++) { const p = mesh.pts[i]; mesh.P[i] = proj(tx + p.x * sc, ty + p.y * sc, p.z * sc); } };
         for (const H of hemis) {
-          const gap = 0.07 + H.pulse * 0.06, bounce = H.pulse * 0.06, sc = H.scale;
-          for (let i = 0; i < H.pts.length; i++) { const p = H.pts[i]; H.P[i] = proj(H.side * gap + p.x * sc, p.y * sc - bounce, p.z * sc); }
+          const gap = 0.07 + H.pulse * 0.07, bounce = H.pulse * 0.06;
+          for (const m of H.meshes) place(m, H.side * gap, -bounce, H.scale);
         }
-        const drawShell = (front) => {
-          for (const H of hemis) {
-            const P = H.P, nR = RINGS - 1;
-            for (let r = 0; r < nR - 1; r++) {
-              for (let i = 0; i < PER - 1; i++) {
-                const a = P[r * PER + i], b = P[r * PER + i + 1], c = P[(r + 1) * PER + i + 1], d = P[(r + 1) * PER + i];
-                const zc = (a[2] + c[2]) / 2;
-                if ((zc >= 0) !== front) continue;
-                const depth = clamp01((zc + 1.1) / 2.2), wr = (H.pts[r * PER + i].wr + H.pts[(r + 1) * PER + i + 1].wr) / 2;
-                const lum = 16 + depth * 22 + wr * 16 + H.pulse * 14;
-                vctx.fillStyle = `hsla(${shellHueS},65%,${lum | 0}%,${(front ? 0.07 + depth * 0.13 : 0.05 + depth * 0.07).toFixed(2)})`;
-                vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.lineTo(c[0], c[1]); vctx.lineTo(d[0], d[1]); vctx.closePath(); vctx.fill();
-                if (r % 2 === 0) {
-                  vctx.strokeStyle = `hsla(${shellHueS},75%,${(lum + 22) | 0}%,${(front ? 0.22 + depth * 0.4 : 0.06 + depth * 0.1).toFixed(2)})`;
-                  vctx.lineWidth = 0.6 + depth * 1.1;
-                  vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.stroke();
-                }
+        const stemPulse = (hemis[0].pulse + hemis[1].pulse) / 2;
+        place(brainstem, 0, -stemPulse * 0.06, 1 + stemPulse * 0.05);
+        const drawMesh = (m, front, pulse) => {
+          const P = m.P, per = m.per, cols = m.closed ? per : per - 1;
+          for (let r = 0; r < m.rings - 1; r++) {
+            for (let i = 0; i < cols; i++) {
+              const i1 = (i + 1) % per;
+              const a = P[r * per + i], b = P[r * per + i1], c = P[(r + 1) * per + i1], d = P[(r + 1) * per + i];
+              const zc = (a[2] + c[2]) / 2;
+              if ((zc >= 0) !== front) continue;
+              const depth = clamp01((zc + 1.1) / 2.2), wr = (m.pts[r * per + i].wr + m.pts[(r + 1) * per + i1].wr) / 2;
+              const lum = 16 + depth * 22 + wr * 16 + pulse * 16;
+              vctx.fillStyle = `hsla(${shellHueS},65%,${lum | 0}%,${((front ? 0.07 + depth * 0.13 : 0.05 + depth * 0.07) * m.dim).toFixed(2)})`;
+              vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.lineTo(c[0], c[1]); vctx.lineTo(d[0], d[1]); vctx.closePath(); vctx.fill();
+              if (r % m.every === 0) {
+                vctx.strokeStyle = `hsla(${shellHueS},75%,${(lum + 22) | 0}%,${((front ? 0.3 + depth * 0.45 : 0.06 + depth * 0.1) * m.dim).toFixed(2)})`;
+                vctx.lineWidth = 0.6 + depth * 1.1;
+                vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.stroke();
               }
             }
           }
+        };
+        const drawShell = (front) => {
+          drawMesh(brainstem, front, stemPulse);
+          for (const H of hemis) for (const m of H.meshes) drawMesh(m, front, H.pulse);
         };
         drawShell(false);
         // neurons: resting dendrites and axons dim; a firing cell lights up
