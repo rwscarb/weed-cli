@@ -2315,7 +2315,8 @@
     let fx = 0, fy = 0, dir = 1, frame = 0, lastStep = 0, cannonX = 0, cannonTarget = 0, lastShot = 0, score = 0, hi = 0, quiet = 0, wave = 1, last = 0;
     const shots = [], bombs = [], sparks = [];
     const bandAvg = new Float32Array(COLS).fill(0.2);
-    let bassAvg = 0.2, stepPulse = 0;
+    let bassAvg = 0.2, stepPulse = 0, beatPulse = 0, lastRespawn = 0;
+    const ufo = { alive: false, x: 0, dir: 1, boom: 0 };
     let bunkers = null, bunkerKey = '';
     const PAL = [];                     // a 3-level-per-channel console palette for the picture behind
     for (let i = 0; i < 27; i++) PAL.push([(i % 3) * 110, (((i / 3) | 0) % 3) * 110, ((i / 9) | 0) * 110]);
@@ -2343,33 +2344,42 @@
         bassAvg = bassAvg * 0.95 + bass * 0.05;
         quiet = energy < 0.02 ? quiet + dt : 0;
         // ── the formation marches: a step on the beat, or on its own clock
-        const stepEvery = 0.55 / speed;
-        if ((beat && now - lastStep > 110) || now - lastStep > stepEvery * 1000) {
+        if (beat) beatPulse = 1;
+        beatPulse *= Math.pow(0.02, dt);
+        const stepEvery = 1.1 / speed;
+        if ((beat && now - lastStep > 260) || now - lastStep > stepEvery * 1000) {
           lastStep = now; frame ^= 1; stepPulse = 1;
           const span = COLS * CELL_W;
           fx += dir * 4;
-          if (fx < 4 || fx + span > PW - 4) { dir = -dir; fx = Math.max(4, Math.min(PW - 4 - span, fx)); fy += 4; }
-          if (fy > PH * 0.45) { fy = 0; wave++; }
+          if (fx < 4 || fx + span > PW - 4) { dir = -dir; fx = Math.max(4, Math.min(PW - 4 - span, fx)); fy += 2; }
+          if (fy > PH * 0.42) { fy = 0; wave++; }
           if (beat && bass > 0.5 && Math.random() < 0.5) {   // a heavy hit: an invader drops a bomb
             const live = inv.filter(i => i.alive); if (live.length) { const i = live[Math.floor(Math.random() * live.length)]; bombs.push({ x: fx + i.c * CELL_W + 6, y: fy + 18 + i.r * CELL_H + 8, t: 0 }); }
           }
         }
         stepPulse *= Math.pow(0.02, dt);
+        if (!inv.some(i => i.alive || i.boom > 0)) { wave++; fy = 0; for (const i of inv) i.alive = true; lastRespawn = now; }
+        else if (now - lastRespawn > 7000) { lastRespawn = now; const dead = inv.filter(i => !i.alive && i.boom <= 0); if (dead.length) dead[Math.floor(Math.random() * dead.length)].alive = true; }
+        const bassOnset = bass / (bassAvg + 0.05);
+        if (!ufo.alive && ufo.boom <= 0 && bassOnset > 2.2 * (1.3 - Math.min(1, react) * 0.3) && bass > 0.35) { ufo.alive = true; ufo.dir = Math.random() < 0.5 ? 1 : -1; ufo.x = ufo.dir > 0 ? -16 : PW; }
         // ── the cannon: slide under the band that jumped and shoot it
         let best = -1, bestV = 1.6;
         for (let b = 0; b < COLS; b++) if (onset[b] > bestV && level[b] > 0.12) { best = b; bestV = onset[b]; }
-        if (best >= 0 && now - lastShot > 140) { cannonTarget = fx + best * CELL_W + 2; if (Math.abs(cannonX - cannonTarget) < 24) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: best }); } }
-        cannonX += (cannonTarget - cannonX) * Math.min(1, dt * 14);
+        if (best >= 0) cannonTarget = fx + best * CELL_W + 2;
+        if (best >= 0 && now - lastShot > 90 && Math.abs(cannonX - cannonTarget) < 40) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: best }); }
+        else if (ufo.alive && now - lastShot > 90 && Math.abs(cannonX + 6 - (ufo.x + 8)) < 6) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: -1 }); }
+        if (best < 0 && ufo.alive) cannonTarget = ufo.x + 2;
+        cannonX = Math.max(0, Math.min(PW - 13, cannonX + (cannonTarget - cannonX) * Math.min(1, dt * 30)));
         // ── the picture behind, posterised, dim, and a starfield when there is none
         g.imageSmoothingEnabled = false;
         g.fillStyle = '#000'; g.fillRect(0, 0, PW, PH);
         if (videoFrame) {
-          const img = g.createImageData(PW, PH), d = img.data, vf = videoFrame, vd = vf.imageData.data;
+          const img = g.createImageData(PW, PH), d = img.data, vf = videoFrame, vd = vf.imageData.data, lumStep = 45 + Math.min(1, energy * 1.5 + beatPulse * 0.5) * 50;
           for (let y = 0; y < PH; y++) {
             const sy = Math.min(vf.h - 1, (y / PH * vf.h) | 0);
             for (let x = 0; x < PW; x++) {
               const sx = Math.min(vf.w - 1, (x / PW * vf.w) | 0), o = (sy * vf.w + sx) * 4, q = (y * PW + x) * 4;
-              d[q] = Math.round(vd[o] / 127) * 60; d[q + 1] = Math.round(vd[o + 1] / 127) * 60; d[q + 2] = Math.round(vd[o + 2] / 127) * 60; d[q + 3] = 255;
+              d[q] = Math.round(vd[o] / 127) * lumStep; d[q + 1] = Math.round(vd[o + 1] / 127) * lumStep; d[q + 2] = Math.round(vd[o + 2] / 127) * lumStep; d[q + 3] = 255;
             }
           }
           g.putImageData(img, 0, 0);
@@ -2388,20 +2398,28 @@
           bunkerKey = bkey; bunkers = [];
           for (let b = 0; b < 4; b++) { const bx = 28 + b * 60, by = PH - 44, cells = []; for (let y = 0; y < 10; y++) for (let x = 0; x < 20; x++) if (!(y > 6 && x > 5 && x < 14) && !(y < 2 && (x < 2 || x > 17))) cells.push([bx + x, by + y]); bunkers.push({ cells }); }
         }
-        g.fillStyle = '#54fc54'; for (const b of bunkers) for (const [x, y] of b.cells) g.fillRect(x, y, 1, 1);
+        g.fillStyle = beatPulse > 0.5 ? '#a8ffa8' : '#54fc54'; for (const b of bunkers) for (const [x, y] of b.cells) g.fillRect(x, y, 1, 1);
+        if (ufo.alive) {
+          ufo.x += ufo.dir * 70 * dt;
+          if (ufo.x < -18 || ufo.x > PW + 2) ufo.alive = false;
+          const ux = ufo.x | 0, blink = Math.floor(now / 120) % 2;
+          g.fillStyle = '#fc5454'; g.fillRect(ux + 5, 14, 6, 1); g.fillRect(ux + 2, 15, 12, 1); g.fillRect(ux, 16, 16, 2); g.fillRect(ux + 2, 18, 12, 1);
+          g.fillStyle = blink ? '#fcfc54' : '#fff'; g.fillRect(ux + 3, 16, 1, 1); g.fillRect(ux + 7, 16, 1, 1); g.fillRect(ux + 11, 16, 1, 1);
+        } else if (ufo.boom > 0) { ufo.boom -= dt; text(g, '100', (ufo.x | 0) + 2, 14, '#fc5454'); }
         // ── invaders: brightness from their column's band, a lift on the level
         for (const i of inv) {
-          const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H - Math.round(level[i.c] * 3 * react);
+          const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H - Math.round(level[i.c] * 6 * react);
           if (i.boom > 0) { i.boom -= dt; sprite(g, SPRITES.boom, x, y, '#fff'); if (i.boom <= 0) i.respawn = now + 4000; continue; }
           if (!i.alive) { if (now >= i.respawn) i.alive = true; else continue; }
-          const l = level[i.c], col = ROW_COLORS[i.r];
-          g.globalAlpha = 0.45 + 0.55 * Math.min(1, l * 1.6);
+          const l = level[i.c], flash = onset[i.c] > 1.5 && l > 0.1, col = flash ? '#fff' : ROW_COLORS[i.r];
+          g.globalAlpha = flash ? 1 : 0.4 + 0.6 * Math.min(1, l * 1.8 * react);
           sprite(g, SPRITES[KIND[i.r]][frame], x, y, col);
           g.globalAlpha = 1;
         }
         // ── shots and bombs
         for (let k = shots.length - 1; k >= 0; k--) {
-          const sh = shots[k]; sh.y -= 3;
+          const sh = shots[k]; sh.y -= 5;
+          if (ufo.alive && sh.y <= 22 && sh.x >= ufo.x && sh.x < ufo.x + 16) { ufo.alive = false; ufo.boom = 0.4; score += 100 * wave; hi = Math.max(hi, score); shots.splice(k, 1); for (let n = 0; n < 14; n++) sparks.push({ x: ufo.x + 8, y: 18, vx: (Math.random() - 0.5) * 80, vy: (Math.random() - 0.5) * 80, t: 0.5, col: '#fc5454' }); continue; }
           g.fillStyle = '#fff'; g.fillRect(sh.x, sh.y, 1, 4);
           let hit = null;
           for (const i of inv) { if (!i.alive || i.boom > 0) continue; const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H; if (sh.x >= x && sh.x < x + 12 && sh.y <= y + 8 && sh.y + 4 >= y && (!hit || i.r > hit.r)) hit = i; }
@@ -2424,7 +2442,7 @@
         if (quiet > 2 && Math.floor(now / 600) % 2) text(g, 'INSERT COIN', PW / 2 - 22, PH / 2, '#fff');
         // ── blow it up, fat pixels, under scanlines, with a nudge on the step
         vctx.imageSmoothingEnabled = false;
-        const jog = Math.round(stepPulse * 2 * react) * (VW / PW);
+        const jog = Math.round(Math.max(stepPulse, beatPulse) * 2 * react) * (VW / PW);
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
         vctx.drawImage(sc, 0, 0, PW, PH, jog, 0, VW, VH);
         vctx.fillStyle = scanlines(vctx); vctx.fillRect(0, 0, VW, VH);
