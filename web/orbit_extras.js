@@ -2277,4 +2277,160 @@
     });
   })();
 
+
+  // ── Arcade (mode): Space Invaders on an 8-bit console. Everything is
+  // drawn on a 256-pixel-wide screen and blown up with no smoothing, so
+  // the pixels are fat. The formation marches a step on every beat, the
+  // eleven columns light up with eleven bands of the spectrum, and the
+  // cannon slides under whichever band jumps and shoots it; a hit
+  // invader bursts into pixels and scores. The picture, when there is
+  // one, plays behind it posterised to a console palette under
+  // scanlines. Ryan: "another visualization themed on 8bit console/
+  // arcade games".
+  (function () {
+    const PW = 256;
+    const bits = (rows) => rows.map(r => r.split('').map(c => c === '1'));
+    const SPRITES = {
+      squid: [bits(['00011000', '00111100', '01111110', '11011011', '11111111', '00100100', '01011010', '10100101']),
+              bits(['00011000', '00111100', '01111110', '11011011', '11111111', '01011010', '10000001', '01000010'])],
+      crab: [bits(['00100000100', '00010001000', '00111111100', '01101110110', '11111111111', '10111111101', '10100000101', '00011011000']),
+             bits(['00100000100', '10010001001', '10111111101', '11101110111', '11111111111', '01111111110', '00100000100', '01000000010'])],
+      octo: [bits(['000011110000', '011111111110', '111111111111', '111001100111', '111111111111', '000110011000', '001101101100', '110000000011']),
+             bits(['000011110000', '011111111110', '111111111111', '111001100111', '111111111111', '001110011100', '011001100110', '001100001100'])],
+      cannon: bits(['0000001000000', '0000011100000', '0000011100000', '0111111111110', '1111111111111', '1111111111111', '1111111111111', '1111111111111']),
+      boom: bits(['0001000010000', '0100100100010', '0010000001000', '1000000000001', '0010000001000', '0100100100010', '0001000010000', '0000000000000']),
+    };
+    const FONT = {
+      '0': '111101101101111', '1': '010110010010111', '2': '111001111100111', '3': '111001111001111', '4': '101101111001001', '5': '111100111001111', '6': '111100111101111', '7': '111001001001001', '8': '111101111101111', '9': '111101111001111',
+      A: '010101111101101', C: '111100100100111', E: '111100111100111', G: '111100101101111', H: '101101111101101', I: '111010010010111', L: '100100100100111', M: '101111111101101', N: '110101101101101', O: '111101101101111', P: '111101111100100', R: '111101111110101', S: '111100111001111', T: '111010010010010', U: '101101101101111', V: '101101101101010', W: '101101101111101', '-': '000000111000000', '<': '001010100010001', '>': '100010001010100',
+    };
+    const text = (g, str, x, y, color) => { g.fillStyle = color; for (const ch of str) { const f = FONT[ch]; if (f) for (let i = 0; i < 15; i++) if (f[i] === '1') g.fillRect(x + (i % 3), y + ((i / 3) | 0), 1, 1); x += 4; } };
+    const sprite = (g, sp, x, y, color) => { g.fillStyle = color; for (let r = 0; r < sp.length; r++) for (let c = 0; c < sp[r].length; c++) if (sp[r][c]) g.fillRect(x + c, y + r, 1, 1); };
+    const ROW_COLORS = ['#fc5454', '#fcfc54', '#54fc54', '#54fcfc', '#fc54fc'];
+    const ROWS = 5, COLS = 11, CELL_W = 16, CELL_H = 12, KIND = ['squid', 'crab', 'crab', 'octo', 'octo'], SCORE = [30, 20, 20, 10, 10];
+    const screen = offscreen();
+    // state
+    const inv = [];                     // { r, c, alive, boom, respawn }
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) inv.push({ r, c, alive: true, boom: 0, respawn: 0 });
+    let fx = 0, fy = 0, dir = 1, frame = 0, lastStep = 0, cannonX = 0, cannonTarget = 0, lastShot = 0, score = 0, hi = 0, quiet = 0, wave = 1, last = 0;
+    const shots = [], bombs = [], sparks = [];
+    const bandAvg = new Float32Array(COLS).fill(0.2);
+    let bassAvg = 0.2, stepPulse = 0;
+    let bunkers = null, bunkerKey = '';
+    const PAL = [];                     // a 3-level-per-channel console palette for the picture behind
+    for (let i = 0; i < 27; i++) PAL.push([(i % 3) * 110, (((i / 3) | 0) % 3) * 110, ((i / 9) | 0) * 110]);
+    viz.registerMode({
+      id: 'arcade', label: 'Arcade',
+      draw(ctx) {
+        const { vctx, VW, VH, freqData, videoFrame, speed, reactivity } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+        const PH = Math.max(120, Math.min(200, Math.round(PW * VH / VW)));
+        const { c: sc, ctx: g } = screen(PW, PH);
+        const react = 0.5 + reactivity * 0.5;
+        // ── the sound: eleven bands for the columns, the bass for the march
+        const maxBin = Math.max(2, Math.floor(freqData.length * 0.7));
+        const level = new Float32Array(COLS), onset = new Float32Array(COLS);
+        for (let b = 0; b < COLS; b++) {
+          const k0 = Math.pow(b / COLS, 1.7), k1 = Math.pow((b + 1) / COLS, 1.7);
+          const i0 = Math.floor(k0 * maxBin), i1 = Math.max(i0 + 1, Math.floor(k1 * maxBin));
+          let sum = 0; for (let i = i0; i < i1; i++) sum += freqData[i];
+          level[b] = sum / ((i1 - i0) * 255);
+          onset[b] = level[b] / (bandAvg[b] + 0.05);
+          bandAvg[b] = bandAvg[b] * 0.9 + level[b] * 0.1;
+        }
+        const bass = bassOf(freqData), energy = energyOf(freqData);
+        const beat = bass / (bassAvg + 0.05) > 1.3 * (1.3 - Math.min(1, react) * 0.3) && bass > 0.08;
+        bassAvg = bassAvg * 0.95 + bass * 0.05;
+        quiet = energy < 0.02 ? quiet + dt : 0;
+        // ── the formation marches: a step on the beat, or on its own clock
+        const stepEvery = 0.55 / speed;
+        if ((beat && now - lastStep > 110) || now - lastStep > stepEvery * 1000) {
+          lastStep = now; frame ^= 1; stepPulse = 1;
+          const span = COLS * CELL_W;
+          fx += dir * 4;
+          if (fx < 4 || fx + span > PW - 4) { dir = -dir; fx = Math.max(4, Math.min(PW - 4 - span, fx)); fy += 4; }
+          if (fy > PH * 0.45) { fy = 0; wave++; }
+          if (beat && bass > 0.5 && Math.random() < 0.5) {   // a heavy hit: an invader drops a bomb
+            const live = inv.filter(i => i.alive); if (live.length) { const i = live[Math.floor(Math.random() * live.length)]; bombs.push({ x: fx + i.c * CELL_W + 6, y: fy + 18 + i.r * CELL_H + 8, t: 0 }); }
+          }
+        }
+        stepPulse *= Math.pow(0.02, dt);
+        // ── the cannon: slide under the band that jumped and shoot it
+        let best = -1, bestV = 1.6;
+        for (let b = 0; b < COLS; b++) if (onset[b] > bestV && level[b] > 0.12) { best = b; bestV = onset[b]; }
+        if (best >= 0 && now - lastShot > 140) { cannonTarget = fx + best * CELL_W + 2; if (Math.abs(cannonX - cannonTarget) < 24) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: best }); } }
+        cannonX += (cannonTarget - cannonX) * Math.min(1, dt * 14);
+        // ── the picture behind, posterised, dim, and a starfield when there is none
+        g.imageSmoothingEnabled = false;
+        g.fillStyle = '#000'; g.fillRect(0, 0, PW, PH);
+        if (videoFrame) {
+          const img = g.createImageData(PW, PH), d = img.data, vf = videoFrame, vd = vf.imageData.data;
+          for (let y = 0; y < PH; y++) {
+            const sy = Math.min(vf.h - 1, (y / PH * vf.h) | 0);
+            for (let x = 0; x < PW; x++) {
+              const sx = Math.min(vf.w - 1, (x / PW * vf.w) | 0), o = (sy * vf.w + sx) * 4, q = (y * PW + x) * 4;
+              d[q] = Math.round(vd[o] / 127) * 60; d[q + 1] = Math.round(vd[o + 1] / 127) * 60; d[q + 2] = Math.round(vd[o + 2] / 127) * 60; d[q + 3] = 255;
+            }
+          }
+          g.putImageData(img, 0, 0);
+        } else {
+          g.fillStyle = '#888';
+          for (let i = 0; i < 40; i++) { const sx = (hash(i * 7.1) * PW) | 0, sy = ((hash(i * 3.3) * PH + now * 0.01 * speed * (1 + (i % 3))) % PH) | 0; g.fillRect(sx, sy, 1, 1); }
+        }
+        // ── HUD
+        text(g, 'SCORE<1>', 4, 3, '#fff'); text(g, String(score).padStart(6, '0'), 4, 10, '#54fc54');
+        text(g, 'HI-SCORE', PW / 2 - 16, 3, '#fff'); text(g, String(hi).padStart(6, '0'), PW / 2 - 16, 10, '#fc5454');
+        text(g, 'WAVE ' + wave, PW - 36, 3, '#fff');
+        if (Math.floor(now / 500) % 2) text(g, '1UP', PW - 36, 10, '#fcfc54');
+        // ── bunkers: four green shields, eaten by bombs and shots
+        const bkey = PH + ':' + wave;
+        if (bunkerKey !== bkey) {
+          bunkerKey = bkey; bunkers = [];
+          for (let b = 0; b < 4; b++) { const bx = 28 + b * 60, by = PH - 44, cells = []; for (let y = 0; y < 10; y++) for (let x = 0; x < 20; x++) if (!(y > 6 && x > 5 && x < 14) && !(y < 2 && (x < 2 || x > 17))) cells.push([bx + x, by + y]); bunkers.push({ cells }); }
+        }
+        g.fillStyle = '#54fc54'; for (const b of bunkers) for (const [x, y] of b.cells) g.fillRect(x, y, 1, 1);
+        // ── invaders: brightness from their column's band, a lift on the level
+        for (const i of inv) {
+          const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H - Math.round(level[i.c] * 3 * react);
+          if (i.boom > 0) { i.boom -= dt; sprite(g, SPRITES.boom, x, y, '#fff'); if (i.boom <= 0) i.respawn = now + 4000; continue; }
+          if (!i.alive) { if (now >= i.respawn) i.alive = true; else continue; }
+          const l = level[i.c], col = ROW_COLORS[i.r];
+          g.globalAlpha = 0.45 + 0.55 * Math.min(1, l * 1.6);
+          sprite(g, SPRITES[KIND[i.r]][frame], x, y, col);
+          g.globalAlpha = 1;
+        }
+        // ── shots and bombs
+        for (let k = shots.length - 1; k >= 0; k--) {
+          const sh = shots[k]; sh.y -= 3;
+          g.fillStyle = '#fff'; g.fillRect(sh.x, sh.y, 1, 4);
+          let hit = null;
+          for (const i of inv) { if (!i.alive || i.boom > 0) continue; const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H; if (sh.x >= x && sh.x < x + 12 && sh.y <= y + 8 && sh.y + 4 >= y && (!hit || i.r > hit.r)) hit = i; }
+          if (hit) { hit.alive = false; hit.boom = 0.3; score += SCORE[hit.r] * wave; hi = Math.max(hi, score); shots.splice(k, 1); for (let n = 0; n < 8; n++) sparks.push({ x: sh.x, y: sh.y, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, t: 0.4, col: ROW_COLORS[hit.r] }); continue; }
+          for (const b of bunkers) { const n = b.cells.findIndex(([x, y]) => x === sh.x && y >= sh.y && y < sh.y + 4); if (n >= 0) { b.cells.splice(n, 1); shots.splice(k, 1); break; } }
+          if (sh.y < 0) shots.splice(k, 1);
+        }
+        for (let k = bombs.length - 1; k >= 0; k--) {
+          const b = bombs[k]; b.y += 1.5; b.t += dt;
+          g.fillStyle = '#fcfc54'; g.fillRect(b.x + (Math.floor(now / 80) % 2), b.y, 1, 3);
+          let gone = b.y > PH;
+          for (const bk of bunkers) { const n = bk.cells.findIndex(([x, y]) => Math.abs(x - b.x) <= 1 && Math.abs(y - b.y) <= 1); if (n >= 0) { for (let m = 0; m < 6; m++) { const j = bk.cells.findIndex(([x, y]) => Math.abs(x - b.x) <= 2 && Math.abs(y - b.y) <= 2); if (j >= 0) bk.cells.splice(j, 1); } gone = true; break; } }
+          if (gone) bombs.splice(k, 1);
+        }
+        for (let k = sparks.length - 1; k >= 0; k--) { const p = sparks[k]; p.t -= dt; p.x += p.vx * dt; p.y += p.vy * dt; if (p.t <= 0) { sparks.splice(k, 1); continue; } g.fillStyle = p.col; g.fillRect(p.x | 0, p.y | 0, 1, 1); }
+        // ── the cannon and the ground
+        sprite(g, SPRITES.cannon, cannonX | 0, PH - 21, '#54fc54');
+        g.fillStyle = '#54fc54'; g.fillRect(0, PH - 11, PW, 1);
+        for (let n = 0; n < 3; n++) sprite(g, SPRITES.cannon, 4 + n * 16, PH - 9, '#54fc54');
+        if (quiet > 2 && Math.floor(now / 600) % 2) text(g, 'INSERT COIN', PW / 2 - 22, PH / 2, '#fff');
+        // ── blow it up, fat pixels, under scanlines, with a nudge on the step
+        vctx.imageSmoothingEnabled = false;
+        const jog = Math.round(stepPulse * 2 * react) * (VW / PW);
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        vctx.drawImage(sc, 0, 0, PW, PH, jog, 0, VW, VH);
+        vctx.fillStyle = scanlines(vctx); vctx.fillRect(0, 0, VW, VH);
+        vctx.imageSmoothingEnabled = true;
+      },
+    });
+  })();
+
 })();

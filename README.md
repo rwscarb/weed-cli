@@ -311,7 +311,7 @@ taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
 built entirely on that API and adds Halftone, Lava, Terrain, Rain,
 Lissajous, Vinyl 33, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
 glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe, Starfield,
-Spectrum 3D and Brain, plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
+Spectrum 3D, Brain and Arcade, plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
 draw perspective faces as runs of affine strips, since Canvas 2D has no
