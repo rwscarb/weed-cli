@@ -1383,6 +1383,17 @@ td button {
   -webkit-appearance: none; width: 10px; height: 10px;
   border-radius: 50%; background: var(--accent);
 }
+/* the value readout over the canvas: a pill at the top left, fading in
+   with the first change and out a moment after the last */
+#orbit-egg-dialog .viz-toast {
+  position: absolute; top: 0.8rem; left: 1.1rem; z-index: 4;
+  padding: 0.3rem 0.7rem; border-radius: 999px;
+  background: rgba(14, 16, 20, 0.85); color: var(--accent); border: 1px solid rgba(110, 231, 183, 0.35);
+  font-size: 0.85rem; font-variant-numeric: tabular-nums; white-space: nowrap; pointer-events: none;
+  opacity: 0; transition: opacity 0.18s ease;
+}
+#orbit-egg-dialog .viz-toast.show { opacity: 1; }
+#orbit-egg-dialog:fullscreen .viz-toast { top: 3.2rem !important; left: 1.1rem !important; }
 #orbit-egg-dialog #vizCanvas {
   image-rendering: pixelated; cursor: grab;
   width: 100%; flex: 1; min-height: 0;

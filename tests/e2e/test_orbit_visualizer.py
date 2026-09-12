@@ -712,3 +712,35 @@ def test_a_pad_on_the_reset_rotation_row_squares_the_picture_up(page, golden_pat
     assert page.evaluate("() => window.orbitViz.current().mode") != 'spiral'
     assert page.evaluate("() => window.orbitViz.controlPosition('rotate')") == 0.5
     assert abs(page.evaluate("() => window.orbitViz.controlPosition('zoom')") - 0.9) < 0.01   # zoom untouched
+
+
+def test_knobs_and_drags_show_a_value_readout(page, golden_path_server):
+    """Ryan: "a toast notifying the user of the new values of whatever
+    knob they might be turning ... knowing where zoom/rotation is". A pill
+    over the canvas names the parameter and its value on every knob
+    message, wheel or drag, and fades after the last one. Never drawn
+    into the canvas, so the stream doesn't carry it."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    toast = page.locator('#vizToast')
+    assert 'show' not in (toast.get_attribute('class') or '')
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Rotate$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 30, 100])")            # learned; a pot
+    page.evaluate("() => window.__midi.send([0xB0, 30, 100])")
+    assert 'show' in toast.get_attribute('class') and toast.inner_text() == 'Rotate +103°'
+    page.evaluate("() => window.__midi.send([0xB0, 30, 64])")             # the detent
+    assert toast.inner_text() == 'Rotate 0° (straight)'
+    box = page.locator('#vizCanvas').bounding_box()
+    page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2); page.mouse.wheel(0, -100)   # wheel over the canvas: zoom
+    assert toast.inner_text().startswith('Zoom 1.')
+    page.wait_for_function("() => !document.getElementById('vizToast').classList.contains('show')", timeout=4_000)   # fades
+    page.evaluate("() => window.orbitViz.trigger('resetRot')")
+    assert toast.inner_text() == 'Rotate 0° (straight)'

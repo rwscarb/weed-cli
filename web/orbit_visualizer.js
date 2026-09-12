@@ -667,9 +667,46 @@ window.orbitViz = (function () {
     s.resizeObserver = resizeObserver;
 
     // Viz pan/zoom
+    // ── the value readout: a small toast over the canvas that names the
+    // parameter being changed and its current value (Ryan: "knowing where
+    // zoom/rotation is"). Shown by every knob, drag, wheel and reset,
+    // gone a moment after the last change. HTML over the canvas, not
+    // drawn into it, so the stream and its viewers never see it.
+    const vizToast = document.getElementById('vizToast');
+    let toastTimer = null;
+    function showToast(text) {
+      if (!vizToast) return;
+      // over the canvas's own top-left corner, not the section's (the
+      // control rows sit between the two); fullscreen overrides in CSS
+      vizToast.style.top = (vizCanvas.offsetTop + 12) + 'px';
+      vizToast.style.left = (vizCanvas.offsetLeft + 14) + 'px';
+      vizToast.textContent = text;
+      vizToast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => vizToast.classList.remove('show'), 1400);
+    }
+    const deg = () => Math.round(s.vizUserRot * 180 / Math.PI);
+    const READOUT = {
+      rotate: () => (deg() === 0 ? 'Rotate 0° (straight)' : `Rotate ${deg() > 0 ? '+' : ''}${deg()}°`),
+      zoom: () => `Zoom ${s.vizUserScale.toFixed(2)}×`,
+      speed: () => `Speed ${s.speed.toFixed(1)}×`,
+      reactivity: () => `React ${s.reactivity.toFixed(1)}×`,
+      transitionMs: () => `Fade ${(s.transitionMs / 1000).toFixed(1)}s`,
+      asciiBrightness: () => `ASCII brightness ${s.asciiBrightness.toFixed(1)}×`,
+      asciiStride: () => `ASCII resolution ${s.asciiStride}`,
+      asciiBgAlpha: () => `ASCII background ${Math.round(s.asciiBgAlpha * 100)}%`,
+      buildingWidth: () => `Freefall size ${s.buildingWidthScale.toFixed(1)}×`,
+      buildingHeight: () => `Freefall bloom ${s.buildingHeightScale.toFixed(1)}×`,
+      buildingCount: () => `Freefall count ${s.buildingCount}`,
+      pan: () => `Pan ${Math.round(s.vizPanX / devicePixelRatio)}, ${Math.round(s.vizPanY / devicePixelRatio)}`,
+    };
+    function readout(param) { const f = READOUT[param]; if (f) showToast(f()); }
+    s.readout = readout;
+
     on(vizCanvas, 'wheel', e => {
       e.preventDefault();
       setZoom(s.vizUserScale * (e.deltaY > 0 ? 0.93 : 1.07));
+      readout('zoom');
     }, { passive: false });
     // Blender's hand: left-drag pans (as before); middle-drag rotates
     // the view, shift+middle pans, ctrl+middle zooms (drag up to zoom
@@ -683,14 +720,14 @@ window.orbitViz = (function () {
       vizCanvas.style.cursor = s.dragMode === 'pan' ? 'grabbing' : s.dragMode === 'zoom' ? 'ns-resize' : 'alias';
     });
     on(vizCanvas, 'auxclick', e => { if (e.button === 1) e.preventDefault(); });
-    on(vizCanvas, 'dblclick', () => resetVizNav());
+    on(vizCanvas, 'dblclick', () => { resetVizNav(); showToast('Zoom 1.00× · straight · centred'); });
     on(document, 'mousemove', e => {
       if (!s.panning) return;
       const dx = e.clientX - s.lastX, dy = e.clientY - s.lastY;
       s.lastX = e.clientX; s.lastY = e.clientY;
-      if (s.dragMode === 'rotate') setRotation(s.vizUserRot + dx * 0.006);
-      else if (s.dragMode === 'zoom') setZoom(s.vizUserScale * Math.exp(-dy * 0.006));
-      else { s.vizPanX += dx * devicePixelRatio; s.vizPanY += dy * devicePixelRatio; }
+      if (s.dragMode === 'rotate') { setRotation(s.vizUserRot + dx * 0.006); readout('rotate'); }
+      else if (s.dragMode === 'zoom') { setZoom(s.vizUserScale * Math.exp(-dy * 0.006)); readout('zoom'); }
+      else { s.vizPanX += dx * devicePixelRatio; s.vizPanY += dy * devicePixelRatio; readout('pan'); }
     });
     on(document, 'mouseup', () => { if (!s.panning) return; s.panning = false; s.dragMode = null; vizCanvas.style.cursor = 'grab'; });
 
@@ -1885,6 +1922,7 @@ window.orbitViz = (function () {
         case 'buildingCount': setBuildingCount(x); break;
         case 'rotate': setRotation(x); break;
       }
+      readout(param);
     };
     // the inverse of control(): where a parameter currently sits in its
     // range as 0..1 -- what a relative encoder starts nudging from, so a
@@ -1936,9 +1974,10 @@ window.orbitViz = (function () {
         const name = action.slice('transition:set:'.length);
         if (allTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
-        resetVizNav();
+        resetVizNav(); showToast('Zoom 1.00× · straight · centred');
       } else if (action === 'resetRot') {
         setRotation(0);   // straight again, zoom and pan left alone
+        readout('rotate');
       } else if (action === 'autopilot:toggle') {
         cycleAutopilot();   // off -> ↓ -> ↑ -> off, same as the button
       } else if (action.startsWith('ascii:ramp:')) {
