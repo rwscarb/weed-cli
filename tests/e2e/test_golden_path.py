@@ -1077,3 +1077,25 @@ def test_crossfader_cues_the_next_track_mixes_and_commits(page, golden_path_serv
     page.locator('#audio-transport .xfade-cue').click(force=True)
     page.wait_for_function("vm => !vm.xfade.armed", arg=vm)
     assert page.evaluate("vm => [vm._orbitAnalyser.gainA.gain.value, vm.xfade.ui]", vm) == [1, 1]
+
+
+def test_the_visualizer_has_the_player_transport(page, golden_path_server):
+    """Ryan: "add the play controls to the Orbit Visualizer? I keep having
+    to escape it to get to the main controls". The same transport bar
+    component sits under the canvas: its buttons drive the player."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    bar = page.locator('#vizTransport')
+    assert bar.is_visible()
+    assert bar.locator('.audio-seek').count() == 1 and bar.locator('.xfade-cue').count() == 1
+    assert page.evaluate("vm => vm.player.audioMuted", vm) is False
+    bar.locator('button[title^="Mute"]').click()
+    page.wait_for_function("vm => vm.player.audioMuted === true", arg=vm)
+    bar.locator('button[title^="Unmute"]').click()
+    page.wait_for_function("vm => vm.player.audioMuted === false", arg=vm)
+    bar.locator('.audio-vol').fill('0.3')
+    page.wait_for_function("vm => Math.abs(vm.player.audioVolume - 0.3) < 0.01", arg=vm)
+    # the player's own bar is the same component, still under its old id for everything that uses it
+    assert page.locator('#audio-transport').count() == 1

@@ -2919,6 +2919,43 @@ function _updateMarquee(el) {
     el.style.removeProperty('--marquee-duration');
   }
 }
+// The transport bar (prev / play-pause / next, seek, mute, volume, the
+// crossfader) as a component so the player and the Orbit Visualizer
+// show the very same one. It has no state of its own: everything reads
+// and calls the root app (the player, the crossfader, the methods).
+app.component('transport-bar', {
+  props: { barId: { type: String, default: null } },
+  computed: {
+    player() { return this.$root.player; },
+    xfade() { return this.$root.xfade; },
+  },
+  methods: Object.fromEntries(['playQueueOffset', 'autopilotOn', 'audioSeek', 'audioToggleMute', 'audioSetVolume',
+    'xfadeCue', 'xfadeCancel', 'xfadeSetUi', 'displayTitle', 'formatAudioTime'].map(n => [n, function (...a) { return this.$root[n](...a); }])),
+  template: `<div :id="barId" class="transport-bar" @click.stop>
+      <button class="audio-btn" @click.stop="playQueueOffset(-1)" :disabled="!player.queue || player.queue.index <= 0" title="Previous track (p)">⏮</button>
+      <button class="audio-btn" @click.stop="player.isPlaying ? $root.$refs.playerVideo.pause() : $root.$refs.playerVideo.play()"
+              :title="player.isPlaying ? 'Pause (Space)' : 'Play (Space)'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
+      <button class="audio-btn" @click.stop="playQueueOffset(1)" :disabled="player.queue ? player.queue.index >= player.queue.items.length - 1 : !autopilotOn()"
+              :title="player.queue ? 'Next track (n)' : 'Skip to Autopilot\\'s next pick (n)'">⏭</button>
+      <span class="audio-time">{{ formatAudioTime(player.audioCurrentTime) }}</span>
+      <input type="range" class="audio-seek" min="0" :max="player.audioDuration || 0" step="0.5"
+             :value="player.audioCurrentTime" @input="audioSeek($event.target.value)">
+      <span class="audio-time">{{ formatAudioTime(player.audioDuration) }}</span>
+      <button class="audio-btn" @click.stop="audioToggleMute"
+              :title="player.audioMuted ? 'Unmute (m)' : 'Mute (m)'">{{ player.audioMuted ? '🔇' : '🔊' }}</button>
+      <input type="range" class="audio-vol" min="0" max="1" step="0.02" :value="player.audioVolume" title="Volume"
+             @input="audioSetVolume($event.target.value)">
+      <!-- the crossfader: ⇆ cues the next track (queue, else Autopilot's
+           pick) on deck B, the fader mixes over to it, the far end commits -->
+      <button class="audio-btn xfade-cue" :class="{active: xfade.armed}" @click.stop="xfade.armed ? xfadeCancel() : xfadeCue()"
+              :title="xfade.armed ? 'Drop the cued track (' + (displayTitle(xfade.next && xfade.next.title) || '') + ')' : 'Cue the next track for a crossfade'">⇆</button>
+      <input type="range" class="xfade-slider" :class="{armed: xfade.armed}" min="0" max="1" step="0.01" :value="xfade.ui"
+             :disabled="!xfade.armed"
+             :title="xfade.armed ? (xfade.flip ? '← fade to ' : 'fade to → ') + (displayTitle(xfade.next && xfade.next.title) || 'the cued track') : 'crossfader: press ⇆ to cue the next track'"
+             @input="xfadeSetUi($event.target.value)" @click.stop>
+    </div>`,
+});
+
 app.directive('marquee', {
   mounted(el) {
     _updateMarquee(el);

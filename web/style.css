@@ -966,7 +966,7 @@ td button {
   display: none;
 }
 
-#audio-transport {
+#audio-transport, .viz-transport {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -1432,6 +1432,15 @@ td button {
 #orbit-egg-dialog:fullscreen.ui-idle .viz-controls,
 #orbit-egg-dialog:fullscreen.ui-idle .hint { opacity: 0; pointer-events: none; }
 #orbit-egg-dialog:fullscreen.ui-idle { cursor: none; }
+/* the visualizer's copy of the transport: a row under the canvas, and in
+   fullscreen a strip floating just above the hint that fades with the
+   rest of the chrome */
+#orbit-egg-dialog .viz-transport { height: auto; padding: 0.3rem 0.75rem; margin-top: 0.4rem; flex-shrink: 0; border-radius: 4px; border: 1px solid var(--border); }
+#orbit-egg-dialog:fullscreen .viz-transport {
+  position: absolute; left: 0; right: 0; bottom: 1.5rem; z-index: 2; margin: 0; border: 0; border-radius: 0;
+  background: rgba(14, 16, 20, 0.86); backdrop-filter: blur(6px); transition: opacity 0.35s ease;
+}
+#orbit-egg-dialog:fullscreen.ui-idle .viz-transport { opacity: 0; pointer-events: none; }
 #orbit-egg-dialog .hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.4rem; flex-shrink: 0; }
 
 #host-result, #reputation-result {

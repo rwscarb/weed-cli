@@ -693,29 +693,7 @@
          Audio tracks get it as their whole picture area; video tracks get
          it as a bar over the bottom of the picture that shows on hover or
          while paused (style.css). -->
-    <div id="audio-transport" @click.stop>
-      <button class="audio-btn" @click.stop="playQueueOffset(-1)" :disabled="!player.queue || player.queue.index <= 0" title="Previous track (p)">⏮</button>
-      <button class="audio-btn" @click.stop="player.isPlaying ? $refs.playerVideo.pause() : $refs.playerVideo.play()"
-              :title="player.isPlaying ? 'Pause (Space)' : 'Play (Space)'">{{ player.isPlaying ? '⏸' : '▶' }}</button>
-      <button class="audio-btn" @click.stop="playQueueOffset(1)" :disabled="player.queue ? player.queue.index >= player.queue.items.length - 1 : !autopilotOn()"
-              :title="player.queue ? 'Next track (n)' : 'Skip to Autopilot\'s next pick (n)'">⏭</button>
-      <span class="audio-time">{{ formatAudioTime(player.audioCurrentTime) }}</span>
-      <input type="range" class="audio-seek" min="0" :max="player.audioDuration || 0" step="0.5"
-             :value="player.audioCurrentTime" @input="audioSeek($event.target.value)">
-      <span class="audio-time">{{ formatAudioTime(player.audioDuration) }}</span>
-      <button class="audio-btn" @click.stop="audioToggleMute"
-              :title="player.audioMuted ? 'Unmute (m)' : 'Mute (m)'">{{ player.audioMuted ? '🔇' : '🔊' }}</button>
-      <input type="range" class="audio-vol" min="0" max="1" step="0.02" :value="player.audioVolume" title="Volume"
-             @input="audioSetVolume($event.target.value)">
-      <!-- the crossfader: ⇆ cues the next track (queue, else Autopilot's
-           pick) on deck B, the fader mixes over to it, the far end commits -->
-      <button class="audio-btn xfade-cue" :class="{active: xfade.armed}" @click.stop="xfade.armed ? xfadeCancel() : xfadeCue()"
-              :title="xfade.armed ? 'Drop the cued track (' + (displayTitle(xfade.next && xfade.next.title) || '') + ')' : 'Cue the next track for a crossfade'">⇆</button>
-      <input type="range" class="xfade-slider" :class="{armed: xfade.armed}" min="0" max="1" step="0.01" :value="xfade.ui"
-             :disabled="!xfade.armed"
-             :title="xfade.armed ? (xfade.flip ? '← fade to ' : 'fade to → ') + (displayTitle(xfade.next && xfade.next.title) || 'the cued track') : 'crossfader: press ⇆ to cue the next track'"
-             @input="xfadeSetUi($event.target.value)" @click.stop>
-    </div>
+    <transport-bar bar-id="audio-transport"></transport-bar>
     <div class="player-transport-overlay" v-if="player.queue || autopilotOn()">
       <button type="button" class="transport-overlay-btn" title="Previous track (P)" :disabled="!player.queue || player.queue.index <= 0"
               @click.stop="playQueueOffset(-1)">⏮</button>
@@ -1047,6 +1025,9 @@
       <!-- the value readout (orbit_visualizer.js showToast): the knob, drag
            or wheel that just moved and where it left the value -->
       <div id="vizToast" class="viz-toast" aria-live="polite"></div>
+      <!-- the same transport as the player, so play/pause, skip, seek,
+           volume and the crossfader are here without leaving the visualizer -->
+      <transport-bar bar-id="vizTransport" class="viz-transport"></transport-bar>
       <div class="hint">click lit mode·video only &nbsp;·&nbsp; scroll·zoom &nbsp;·&nbsp; drag·pan &nbsp;·&nbsp; middle-drag·rotate &nbsp;·&nbsp; shift+middle·pan &nbsp;·&nbsp; ctrl+middle·zoom &nbsp;·&nbsp; dbl·reset &nbsp;·&nbsp; f·fullscreen &nbsp;·&nbsp; ←/→ cycle mode (fullscreen) &nbsp;·&nbsp; shift+1-9,0 jump to mode &nbsp;·&nbsp; ↑/↓ brightness &nbsp;·&nbsp; [/] resolution</div>
     </div>
   </div>
