@@ -259,7 +259,7 @@ def test_extras_bundle_registers_modes_that_all_render_without_errors(page, gold
     _download_and_play(page, golden_path_server)
     _open_orbit_viz(page)
     extra = [m['id'] for m in page.evaluate("() => window.orbitViz.listModes()") if not m['builtin']]
-    assert set(extra) >= {'halftone', 'lava', 'terrain', 'rain', 'lissajous', 'ripples', 'cube'}
+    assert set(extra) >= {'halftone', 'lava', 'terrain', 'rain', 'lissajous', 'ripples', 'cube', 'starfield', 'spectrum3d', 'brain'}
     _select_transition(page, 'none')
     for mode in extra:
         page.click(f'[data-viz="{mode}"]')

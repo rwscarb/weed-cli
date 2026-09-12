@@ -1964,4 +1964,196 @@
     })();
   })();
 
+
+  // ── Brain (mode): a glass brain. Two hemispheres of wrinkled shell
+  // contours turn slowly and each swells and bounces on the beat, the
+  // left on the bass, the right on the top end. Inside, a couple of
+  // dozen neurons: a soma with branching dendrites, and an axon reaching
+  // another cell. Each neuron listens to one band of the spectrum; a
+  // jump in that band fires it -- light runs in from the dendrite tips
+  // to the soma, then down the axon to the next cell, which fires in
+  // turn. Ryan: "a 3d brain with hemispheres and neurons firing to the
+  // music ... the hemispheres could bounce/grow-shrink to the beat".
+  (function () {
+    let seed = 1234;
+    const rnd = () => { seed = (seed * 16807) % 2147483647; return (seed - 1) / 2147483646; };
+    // ── hemispheres: rings of shell points from the front of the brain
+    // over the top to the back, the radius wrinkled into gyri and sulci;
+    // the same count per ring so the rings mesh into quads
+    const RINGS = 24, PER = 40;
+    function makeShell(side) {
+      const pts = [];
+      for (let r = 1; r < RINGS; r++) {
+        const phi = Math.PI * r / RINGS, sp = Math.sin(phi);
+        for (let i = 0; i < PER; i++) {
+          const th = Math.PI * (i + 0.5) / PER;
+          // -1 sulcus .. +1 gyrus: two folded sine fields, a big and a small
+          const wr = Math.sin(9 * phi + 3 * Math.sin(4 * th)) * Math.sin(7 * th + 2 * Math.sin(3 * phi)) * 0.7 + Math.sin(17 * th + 5 * phi + 2 * Math.sin(6 * th)) * 0.3;
+          const k = 1 + wr * 0.085;
+          let x = 0.62 * sp * Math.sin(th) * k, y = -0.72 * Math.cos(phi) * k, z = 1.0 * sp * Math.cos(th) * k;
+          if (y > 0) y *= 0.78;                   // a flattish underside
+          if (z > 0) x *= 0.86 + 0.14 * (1 - z);  // the frontal lobe narrows
+          pts.push({ x: side * x, y, z, wr });
+        }
+      }
+      return { side, pts, pulse: 0, avg: 0.2, scale: 1, P: new Array(pts.length) };
+    }
+    const hemis = [makeShell(-1), makeShell(1)];
+    // ── neurons
+    const N = 22, neurons = [];
+    const norm = (v) => { const l = Math.hypot(v[0], v[1], v[2]) || 1; return [v[0] / l, v[1] / l, v[2] / l]; };
+    const jitter = (d, a) => norm([d[0] + (rnd() - 0.5) * a, d[1] + (rnd() - 0.5) * a, d[2] + (rnd() - 0.5) * a]);
+    function grow(segs, from, dir, len, level, maxLevel, order) {
+      const to = [from[0] + dir[0] * len, from[1] + dir[1] * len, from[2] + dir[2] * len];
+      segs.push({ a: from, b: to, level, order });
+      if (level >= maxLevel) return;
+      const kids = level === 0 ? 3 : (rnd() < 0.7 ? 2 : 1);
+      for (let i = 0; i < kids; i++) grow(segs, to, jitter(dir, 1.6), len * (0.55 + rnd() * 0.2), level + 1, maxLevel, order);
+    }
+    for (let i = 0; i < N; i++) {
+      // the soma somewhere in either hemisphere, off the fissure
+      const side = i % 2 ? 1 : -1, a = rnd() * Math.PI * 2, u = 0.3 + Math.cbrt(rnd()) * 0.42;
+      const soma = [side * (0.12 + Math.abs(Math.cos(a)) * u * 0.4), -0.05 + Math.sin(a) * u * 0.5, (rnd() - 0.5) * 1.4 * u];
+      const dend = [];
+      const arms = 3 + Math.floor(rnd() * 3);
+      for (let k = 0; k < arms; k++) grow(dend, soma, norm([rnd() - 0.5, rnd() - 0.5, rnd() - 0.5]), 0.11 + rnd() * 0.06, 0, 3, k);
+      neurons.push({ soma, dend, band: i / N, avg: 0.2, fire: -1, t: 0, refr: 0, target: -1, axon: [] });
+    }
+    // axons: each cell reaches a partner some way off, with a wobble and
+    // a few terminal twigs at the far end
+    for (let i = 0; i < N; i++) {
+      const n = neurons[i]; let best = -1, bd = 0;
+      for (let j = 0; j < N; j++) {
+        if (j === i) continue;
+        const m = neurons[j], d = Math.hypot(m.soma[0] - n.soma[0], m.soma[1] - n.soma[1], m.soma[2] - n.soma[2]);
+        const score = d * (0.6 + rnd());               // not always the nearest
+        if (best < 0 || score < bd) { best = j; bd = score; }
+      }
+      n.target = best;
+      const m = neurons[best], steps = 6, path = [n.soma];
+      for (let k = 1; k <= steps; k++) {
+        const t = k / steps, w = Math.sin(t * Math.PI) * 0.12;
+        path.push([n.soma[0] + (m.soma[0] - n.soma[0]) * t + (rnd() - 0.5) * w, n.soma[1] + (m.soma[1] - n.soma[1]) * t + (rnd() - 0.5) * w, n.soma[2] + (m.soma[2] - n.soma[2]) * t + (rnd() - 0.5) * w]);
+      }
+      path[steps] = m.soma;
+      n.axon = path;
+    }
+    const FIRE_MS = 900;                   // one firing, dendrite tips to the far synapse
+    function fire(n, now) { if (n.fire >= 0 || now < n.refr) return; n.fire = now; n.refr = now + FIRE_MS * 1.3; }
+    let last = 0, yaw = 0, tick = 0, spont = 0;
+    viz.registerMode({
+      id: 'brain', label: 'Brain',
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, reactivity, vizRot, vizUserScale } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+        tick += dt; yaw += dt * 0.28 * speed;
+        const react = 0.5 + reactivity * 0.5;
+        const maxBin = Math.max(2, Math.floor(freqData.length * 0.7));
+        const bandAt = (k, w) => { const c = Math.floor(k * k * (maxBin - 1)); let s = 0, n = 0; for (let i = Math.max(0, c - w); i <= Math.min(maxBin - 1, c + w); i++) { s += freqData[i]; n++; } return s / (n * 255); };
+        // the hemispheres: a jump in the bass swells the left, in the top end the right
+        const feed = [bassOf(freqData), bandAt(0.75, 8)];
+        for (let h = 0; h < 2; h++) {
+          const H = hemis[h], v = feed[h];
+          const onset = v / (H.avg + 0.04);
+          H.avg = H.avg * 0.92 + v * 0.08;
+          if (onset > 1.35 && v > 0.08) H.pulse = Math.max(H.pulse, Math.min(1, (onset - 1) * 0.8) * react);
+          H.pulse *= Math.pow(0.05, dt);   // ~ gone in a second
+          H.scale += ((1 + H.pulse * 0.13) - H.scale) * Math.min(1, dt * 18);
+        }
+        // the neurons: each on its own band, plus the odd spontaneous one so a quiet brain still thinks
+        for (const n of neurons) {
+          const v = bandAt(0.08 + n.band * 0.9, 2), onset = v / (n.avg + 0.05);
+          n.avg = n.avg * 0.9 + v * 0.1;
+          if (onset > 1.6 * (1.3 - Math.min(1, react) * 0.3) && v > 0.06) fire(n, now);
+        }
+        spont += dt; if (spont > 2.5) { spont = 0; fire(neurons[Math.floor(rnd() * N)], now); }
+        for (const n of neurons) {
+          if (n.fire < 0) continue;
+          n.t = (now - n.fire) / FIRE_MS;
+          if (n.t >= 0.85 && !n.handed) { n.handed = true; fire(neurons[n.target], now); }   // the synapse
+          if (n.t >= 1) { n.fire = -1; n.handed = false; }
+        }
+        // camera: yaw about Y, a gentle nod about X, the shared screen rotation, perspective
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        const R = Math.min(VW, VH) * 0.36 * vizUserScale, f = 3.2;
+        const cyw = Math.cos(yaw), syw = Math.sin(yaw), tilt = 0.7 + Math.sin(tick * 0.3) * 0.2, ct = Math.cos(tilt), st = Math.sin(tilt);
+        const cr = Math.cos(vizRot || 0), sr = Math.sin(vizRot || 0);
+        const proj = (x, y, z) => {
+          const x1 = x * cyw + z * syw, z1 = -x * syw + z * cyw;
+          const y2 = y * ct - z1 * st, z2 = y * st + z1 * ct;
+          const sc = f / (f - z2);
+          const px = x1 * sc * R, py = y2 * sc * R;
+          return [cx + px * cr - py * sr, cy + px * sr + py * cr, z2, sc];
+        };
+        const shellHue = (hueBase + 200) % 360, cellHue = (hueBase + 40) % 360;
+        // shells: the mesh as faintly filled quads lit by their fold
+        // (gyri bright, sulci dark) with every other ring drawn as a
+        // contour; the back half faint so the neurons read through it
+        const shellHueS = shellHue | 0;
+        for (const H of hemis) {
+          const gap = 0.07 + H.pulse * 0.06, bounce = H.pulse * 0.06, sc = H.scale;
+          for (let i = 0; i < H.pts.length; i++) { const p = H.pts[i]; H.P[i] = proj(H.side * gap + p.x * sc, p.y * sc - bounce, p.z * sc); }
+        }
+        const drawShell = (front) => {
+          for (const H of hemis) {
+            const P = H.P, nR = RINGS - 1;
+            for (let r = 0; r < nR - 1; r++) {
+              for (let i = 0; i < PER - 1; i++) {
+                const a = P[r * PER + i], b = P[r * PER + i + 1], c = P[(r + 1) * PER + i + 1], d = P[(r + 1) * PER + i];
+                const zc = (a[2] + c[2]) / 2;
+                if ((zc >= 0) !== front) continue;
+                const depth = clamp01((zc + 1.1) / 2.2), wr = (H.pts[r * PER + i].wr + H.pts[(r + 1) * PER + i + 1].wr) / 2;
+                const lum = 16 + depth * 22 + wr * 16 + H.pulse * 14;
+                vctx.fillStyle = `hsla(${shellHueS},65%,${lum | 0}%,${(front ? 0.07 + depth * 0.13 : 0.05 + depth * 0.07).toFixed(2)})`;
+                vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.lineTo(c[0], c[1]); vctx.lineTo(d[0], d[1]); vctx.closePath(); vctx.fill();
+                if (r % 2 === 0) {
+                  vctx.strokeStyle = `hsla(${shellHueS},75%,${(lum + 22) | 0}%,${(front ? 0.22 + depth * 0.4 : 0.06 + depth * 0.1).toFixed(2)})`;
+                  vctx.lineWidth = 0.6 + depth * 1.1;
+                  vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.stroke();
+                }
+              }
+            }
+          }
+        };
+        drawShell(false);
+        // neurons: resting dendrites and axons dim; a firing cell lights up
+        // from the tips inward, flares at the soma, then sends a pulse down
+        // the axon
+        vctx.lineCap = 'round';
+        const line = (A, B, col, w) => { vctx.strokeStyle = col; vctx.lineWidth = w; vctx.beginPath(); vctx.moveTo(A[0], A[1]); vctx.lineTo(B[0], B[1]); vctx.stroke(); };
+        for (const n of neurons) {
+          const t = n.fire < 0 ? -1 : n.t;
+          for (const sg of n.dend) {
+            const A = proj(sg.a[0], sg.a[1], sg.a[2]), B = proj(sg.b[0], sg.b[1], sg.b[2]);
+            const depth = clamp01((B[2] + 1.1) / 2.2);
+            // the wave: level 3 (tips) lights first, level 0 last, all in by t = 0.35
+            const when = (3 - sg.level) / 3 * 0.3, glow = t < 0 ? 0 : clamp01(1 - Math.abs(t - when - 0.05) / 0.22);
+            if (glow > 0.02) line(A, B, `hsla(${cellHue | 0},100%,70%,${(glow * 0.35).toFixed(2)})`, (2.5 + glow * 5) * B[3]);
+            line(A, B, `hsla(${cellHue | 0},${(50 + glow * 50) | 0}%,${(35 + depth * 20 + glow * 45) | 0}%,${(0.35 + depth * 0.4 + glow * 0.25).toFixed(2)})`, (0.5 + (3 - sg.level) * 0.35 + glow * 1.2) * B[3]);
+          }
+          const P = [];
+          for (const p of n.axon) P.push(proj(p[0], p[1], p[2]));
+          const head = t < 0.35 ? -1 : (t - 0.35) / 0.5;      // 0..1 along the axon while the pulse runs
+          for (let i = 1; i < P.length; i++) {
+            const depth = clamp01((P[i][2] + 1.1) / 2.2), at = (i - 0.5) / (P.length - 1);
+            const glow = head < 0 ? 0 : clamp01(1 - Math.abs(head - at) / 0.22);
+            if (glow > 0.02) line(P[i - 1], P[i], `hsla(${cellHue | 0},100%,75%,${(glow * 0.4).toFixed(2)})`, (3 + glow * 6) * P[i][3]);
+            line(P[i - 1], P[i], `hsla(${cellHue | 0},70%,${(40 + depth * 15 + glow * 45) | 0}%,${(0.3 + depth * 0.35 + glow * 0.3).toFixed(2)})`, (1.3 + glow * 1.5) * P[i][3]);
+          }
+          const S = proj(n.soma[0], n.soma[1], n.soma[2]), depth = clamp01((S[2] + 1.1) / 2.2);
+          const flare = t < 0 ? 0 : clamp01(1 - Math.abs(t - 0.38) / 0.3);
+          const r = (4 + flare * 7) * S[3] * vizUserScale;
+          if (flare > 0.02) {
+            const g = vctx.createRadialGradient(S[0], S[1], 0, S[0], S[1], r * 3);
+            g.addColorStop(0, `hsla(${cellHue | 0},100%,80%,${(flare * 0.7).toFixed(2)})`); g.addColorStop(1, `hsla(${cellHue | 0},100%,60%,0)`);
+            vctx.fillStyle = g; vctx.beginPath(); vctx.arc(S[0], S[1], r * 3, 0, Math.PI * 2); vctx.fill();
+          }
+          vctx.fillStyle = `hsla(${cellHue | 0},80%,${(45 + depth * 20 + flare * 35) | 0}%,${(0.6 + depth * 0.4).toFixed(2)})`;
+          vctx.beginPath(); vctx.arc(S[0], S[1], r, 0, Math.PI * 2); vctx.fill();
+        }
+        drawShell(true);
+      },
+    });
+  })();
+
 })();

@@ -195,7 +195,7 @@ const app = createApp({
       // is "current": like a real crossfader it alternates, so after a
       // fade to the right the next one runs back to the left, and a knob
       // left at either end never commits by accident
-      xfade: { armed: false, pos: 0, ui: 0, flip: false, next: null, ready: false },
+      xfade: { armed: false, pos: 0, ui: 0, flip: false, next: null, ready: false, committedAt: 0 },
       // the Downloads toolbar: title search, status, and the sort order
       // (persisted, since a preferred order is a preference)
       jobsQuery: '',
@@ -592,8 +592,20 @@ const app = createApp({
     // a knob on the MIDI panel's Crossfader row: cues on the first move if nothing is cued
     window.addEventListener('weed:orbit-xfade', (e) => {
       if (!this.player.visible) return;
-      if (!this.xfade.armed && !this.xfadeCue()) return;
-      this.xfadeSetUi(e.detail);
+      const ui = Math.min(1, Math.max(0, parseFloat(e.detail) || 0));
+      // Ryan: "at 100% ... a slight turn more and it jumps to track C". A
+      // knob that has just landed on an end keeps sending that end (and
+      // jitters around it), so: nothing happens for a moment after a
+      // commit, and with nothing cued a knob within a few percent of the
+      // current track's end is left alone -- it has to travel off the end
+      // to cue the next track and start the fade.
+      if (Date.now() - this.xfade.committedAt < 800) return;
+      if (!this.xfade.armed) {
+        const atCurrentEnd = this.xfade.flip ? ui > 0.95 : ui < 0.05;
+        if (atCurrentEnd) return;
+        if (!this.xfadeCue()) return;
+      }
+      this.xfadeSetUi(ui);
     });
     try {
       const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
@@ -2220,6 +2232,7 @@ const app = createApp({
       // the fader stays at the end it reached; that end is now "current"
       this.xfade.ui = this.xfade.flip ? 0 : 1;
       this.xfade.flip = !this.xfade.flip;
+      this.xfade.committedAt = Date.now();
       this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
       this.openPlayer(next.job_id, next.title || this.shortHash(next.content_hash), next.content_hash, next.signer_pubkey || null, queue);
       this.$nextTick(() => {

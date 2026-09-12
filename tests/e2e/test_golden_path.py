@@ -1099,3 +1099,31 @@ def test_the_visualizer_has_the_player_transport(page, golden_path_server):
     page.wait_for_function("vm => Math.abs(vm.player.audioVolume - 0.3) < 0.01", arg=vm)
     # the player's own bar is the same component, still under its old id for everything that uses it
     assert page.locator('#audio-transport').count() == 1
+
+
+def test_a_knob_resting_on_the_end_after_a_crossfade_does_not_cue_the_next(page, golden_path_server):
+    """Ryan: "it goes from track A to track B at 100% and then a slight turn
+    more and it jumps to track C". A pot that just committed sits on the
+    end and jitters there; the MIDI fader path now ignores input for a
+    moment after a commit and, with nothing cued, ignores a knob within a
+    few percent of the current track's end. Moving off the end cues and
+    starts the fade the other way."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    h = golden_path_server['content_hash']
+    page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'A'}, {content_hash: h, title: 'B'}, {content_hash: h, title: 'C'}], index: 0, playlistId: null }; }", [vm, h])
+    send = lambda v: page.evaluate("v => window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: v }))", v)
+    send(0.3)                                                          # a knob off the bottom end: cues B and mixes
+    page.wait_for_function("vm => vm.xfade.armed && vm.xfade.next.title === 'B'", arg=vm)
+    send(1.0)                                                          # to the top: B becomes the track
+    page.wait_for_function("vm => !vm.xfade.armed && vm.player.title === 'B'", arg=vm)
+    send(1.0); send(0.98); send(1.0)                                   # the pot jitters on the end: nothing
+    page.wait_for_timeout(300)
+    assert page.evaluate("vm => [vm.xfade.armed, vm.player.title]", vm) == [False, 'B']
+    page.wait_for_timeout(700)                                         # past the post-commit hold
+    send(0.99)                                                         # still within the end's dead band: nothing
+    assert page.evaluate("vm => vm.xfade.armed", vm) is False
+    send(0.8)                                                          # off the end: cues C and mixes 20% the other way
+    page.wait_for_function("vm => vm.xfade.armed && vm.xfade.next.title === 'C'", arg=vm)
+    assert abs(page.evaluate("vm => vm.xfade.pos", vm) - 0.2) < 0.001
+    assert page.evaluate("vm => vm.player.title", vm) == 'B'
