@@ -1987,13 +1987,13 @@
     // x is width (the fissure at 0), y down, z forward.
     function makeMesh(rings, per, fn, opts) {
       const pts = [];
-      for (let r = 1; r < rings; r++) for (let i = 0; i < per; i++) pts.push(fn(Math.PI * r / rings, (opts.closed ? 2 * Math.PI : Math.PI) * (i + 0.5) / per));
+      for (let r = 1; r < rings; r++) for (let i = 0; i < per; i++) { const q = fn(Math.PI * r / rings, (opts.closed ? 2 * Math.PI : Math.PI) * (i + 0.5) / per); q.u = r / rings; pts.push(q); }
       const curves = [];
       for (let c = 0; c < (opts.gyri || 0); c++) {
         let phi = 0.25 + rnd() * 2.6, th = (opts.closed ? 2 * Math.PI : Math.PI) * (0.05 + rnd() * 0.9), ang = rnd() * Math.PI * 2;
         const pts2 = [];
         for (let k = 0, n = 6 + Math.floor(rnd() * 8); k < n; k++) {
-          const q = fn(phi, th); pts2.push({ x: q.x * 1.012, y: q.y * 1.012, z: q.z * 1.012 });
+          const q = fn(phi, th); pts2.push({ x: q.x * 1.012, y: q.y * 1.012, z: q.z * 1.012, u: phi / Math.PI });
           ang += (rnd() - 0.5) * 2.4; phi += Math.cos(ang) * 0.085; th += Math.sin(ang) * 0.085 / Math.max(0.35, Math.sin(phi));
           if (phi < 0.2 || phi > 2.9) break;
           if (!opts.closed && (th < 0.05 || th > Math.PI - 0.05)) break;
@@ -2057,7 +2057,7 @@
     }
     const CROSS_MS = 700;
     function crossFrom(side, now) {
-      for (let k = 0; k < 5; k++) { const f = fibres[Math.floor(rnd() * FIBRES)]; if (f.pulse < 0) { f.pulse = 0; f.dir = side; f.t0 = now; } }
+      for (let k = 0; k < 3; k++) { const f = fibres[Math.floor(rnd() * FIBRES)]; if (f.pulse < 0) { f.pulse = 0; f.dir = side; f.t0 = now; } }
     }
     // ── neurons
     const N = 22, neurons = [];
@@ -2099,7 +2099,7 @@
       n.axon = path;
     }
     const FIRE_MS = 900;                   // one firing, dendrite tips to the far synapse
-    function fire(n, now) { if (n.fire >= 0 || now < n.refr) return; n.fire = now; n.refr = now + FIRE_MS * 1.3; crossFrom(n.soma[0] < 0 ? -1 : 1, now); }
+    function fire(n, now) { if (n.fire >= 0 || now < n.refr) return; n.fire = now; n.refr = now + FIRE_MS * 2.5; crossFrom(n.soma[0] < 0 ? -1 : 1, now); }
     let last = 0, yaw = 0, tick = 0, spont = 0;
     viz.registerMode({
       id: 'brain', label: 'Brain',
@@ -2134,7 +2134,7 @@
         for (const n of neurons) {
           if (n.fire < 0) continue;
           n.t = (now - n.fire) / FIRE_MS;
-          if (n.t >= 0.85 && !n.handed) { n.handed = true; fire(neurons[n.target], now); }   // the synapse
+          if (n.t >= 0.85 && !n.handed) { n.handed = true; if (rnd() < 0.5) fire(neurons[n.target], now); }   // the synapse: not every pulse gets through
           if (n.t >= 1) { n.fire = -1; n.handed = false; }
         }
         for (const f of fibres) {
@@ -2143,7 +2143,7 @@
           if (f.pulse >= 1) {
             f.pulse = -1;
             const far = f.dir < 0 ? 1 : -1, pool = neurons.filter(n => Math.sign(n.soma[0]) === far);
-            if (pool.length && rnd() < 0.5) { const n = pool[Math.floor(rnd() * pool.length)]; if (n.fire < 0 && now >= n.refr) { n.fire = now; n.refr = now + FIRE_MS * 1.3; } }
+            if (pool.length && rnd() < 0.15) { const n = pool[Math.floor(rnd() * pool.length)]; if (n.fire < 0 && now >= n.refr) { n.fire = now; n.refr = now + FIRE_MS * 2.5; } }
           }
         }
         // camera: yaw about Y, a gentle nod about X, perspective
@@ -2157,11 +2157,15 @@
           const px = x1 * sc * R, py = y2 * sc * R;
           return [cx + px, cy + py, z2, sc];
         };
-        const shellHue = (hueBase + 200) % 360, cellHue = (hueBase + 40) % 360;
+        const cellHue = 48;   // the shell now runs the whole wheel, so the cells hold one warm gold
         // shells: each mesh as faintly filled quads lit by their fold
         // (gyri bright, sulci dark) with some rings drawn as contours;
         // the back half faint so the neurons read through it
-        const shellHueS = shellHue | 0;
+        // technicolor: every ring its own hue, the rainbow sliding up the
+        // rings and back down (Ryan: "cycle technicolor changing as it
+        // travels up and down the concentric rings"), the beat lighting it
+        const sweep = Math.sin(tick * 0.45 * speed) * 620;
+        const ringHue = (u) => (hueBase + u * 420 + sweep + 3600) % 360;
         const place = (mesh, tx, ty, sc) => {
           for (let i = 0; i < mesh.pts.length; i++) { const p = mesh.pts[i]; mesh.P[i] = proj(tx + p.x * sc, ty + p.y * sc, p.z * sc); }
           for (const c of mesh.curves) for (let i = 0; i < c.pts.length; i++) { const p = c.pts[i]; c.P[i] = proj(tx + p.x * sc, ty + p.y * sc, p.z * sc); }
@@ -2181,11 +2185,11 @@
               const zc = (a[2] + c[2]) / 2;
               if ((zc >= 0) !== front) continue;
               const depth = clamp01((zc + 1.1) / 2.2), wr = (m.pts[r * per + i].wr + m.pts[(r + 1) * per + i1].wr) / 2;
-              const lum = 16 + depth * 22 + wr * 16 + pulse * 16;
-              vctx.fillStyle = `hsla(${shellHueS},65%,${lum | 0}%,${((front ? 0.07 + depth * 0.13 : 0.05 + depth * 0.07) * m.dim).toFixed(2)})`;
+              const lum = 16 + depth * 22 + wr * 16 + pulse * 16, hue = ringHue(m.pts[r * per + i].u) | 0;
+              vctx.fillStyle = `hsla(${hue},85%,${lum | 0}%,${((front ? 0.07 + depth * 0.13 : 0.05 + depth * 0.07) * m.dim).toFixed(2)})`;
               vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.lineTo(c[0], c[1]); vctx.lineTo(d[0], d[1]); vctx.closePath(); vctx.fill();
               if (m.every && r % m.every === 0) {
-                vctx.strokeStyle = `hsla(${shellHueS},75%,${(lum + 22) | 0}%,${((front ? 0.3 + depth * 0.45 : 0.06 + depth * 0.1) * m.dim).toFixed(2)})`;
+                vctx.strokeStyle = `hsla(${hue},90%,${(lum + 22) | 0}%,${((front ? 0.3 + depth * 0.45 : 0.06 + depth * 0.1) * m.dim).toFixed(2)})`;
                 vctx.lineWidth = 0.6 + depth * 1.1;
                 vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.stroke();
               }
@@ -2198,8 +2202,8 @@
             for (let i = 1; i < P.length; i++) {
               const zc = (P[i - 1][2] + P[i][2]) / 2;
               if ((zc >= 0) !== front) continue;
-              const depth = clamp01((zc + 1.1) / 2.2);
-              vctx.strokeStyle = `hsla(${shellHueS},80%,${(45 + depth * 25 + pulse * 15) | 0}%,${((front ? 0.35 + depth * 0.5 : 0.08 + depth * 0.1) * m.dim).toFixed(2)})`;
+              const depth = clamp01((zc + 1.1) / 2.2), hue = ringHue(c.pts[i].u) | 0;
+              vctx.strokeStyle = `hsla(${hue},95%,${(48 + depth * 25 + pulse * 15) | 0}%,${((front ? 0.35 + depth * 0.5 : 0.08 + depth * 0.1) * m.dim).toFixed(2)})`;
               vctx.lineWidth = (1 + depth * 1.4) * P[i][3];
               vctx.beginPath(); vctx.moveTo(P[i - 1][0], P[i - 1][1]); vctx.lineTo(P[i][0], P[i][1]); vctx.stroke();
             }
