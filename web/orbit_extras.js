@@ -2362,14 +2362,23 @@
         else if (now - lastRespawn > 7000) { lastRespawn = now; const dead = inv.filter(i => !i.alive && i.boom <= 0); if (dead.length) dead[Math.floor(Math.random() * dead.length)].alive = true; }
         const bassOnset = bass / (bassAvg + 0.05);
         if (!ufo.alive && ufo.boom <= 0 && bassOnset > 2.2 * (1.3 - Math.min(1, react) * 0.3) && bass > 0.35) { ufo.alive = true; ufo.dir = Math.random() < 0.5 ? 1 : -1; ufo.x = ufo.dir > 0 ? -16 : PW; }
-        // ── the cannon: slide under the band that jumped and shoot it
-        let best = -1, bestV = 1.6;
-        for (let b = 0; b < COLS; b++) if (onset[b] > bestV && level[b] > 0.12) { best = b; bestV = onset[b]; }
-        if (best >= 0) cannonTarget = fx + best * CELL_W + 2;
-        if (best >= 0 && now - lastShot > 90 && Math.abs(cannonX - cannonTarget) < 40) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: best }); }
-        else if (ufo.alive && now - lastShot > 90 && Math.abs(cannonX + 6 - (ufo.x + 8)) < 6) { lastShot = now; shots.push({ x: cannonX + 6, y: PH - 25, col: -1 }); }
-        if (best < 0 && ufo.alive) cannonTarget = ufo.x + 2;
-        cannonX = Math.max(0, Math.min(PW - 13, cannonX + (cannonTarget - cannonX) * Math.min(1, dt * 30)));
+        // ── the cannon: it moves with the music and fires on a clock.
+        // Position rides the spectrum's centre of weight across the
+        // columns, jumping to a band that hits; then it snaps under the
+        // nearest live column so the shots land. Fire is regular, about
+        // three a second, quicker as the music gets louder (Ryan:
+        // "shooting should be rather regular, while the motion of the
+        // player could be to the music").
+        let wsum = 0, lsum = 0, jump = -1, jumpV = 1.5;
+        for (let b = 0; b < COLS; b++) { const w = level[b] * level[b]; wsum += w * b; lsum += w; if (onset[b] > jumpV && level[b] > 0.12) { jump = b; jumpV = onset[b]; } }
+        const musicCol = jump >= 0 ? jump : (lsum > 0 ? wsum / lsum : COLS / 2);
+        let aim = -1, aimD = 99;
+        for (let b = 0; b < COLS; b++) if (inv.some(i => i.c === b && i.alive && i.boom <= 0) && Math.abs(b - musicCol) < aimD) { aim = b; aimD = Math.abs(b - musicCol); }
+        if (ufo.alive) cannonTarget = ufo.x + 2;
+        else if (aim >= 0) cannonTarget = fx + aim * CELL_W + 2;
+        cannonX = Math.max(0, Math.min(PW - 13, cannonX + (cannonTarget - cannonX) * Math.min(1, dt * (12 + 30 * react * energy))));
+        const fireEvery = 340 - Math.min(1, energy * 1.5) * 190;
+        if (now - lastShot > fireEvery) { lastShot = now; shots.push({ x: (cannonX | 0) + 6, y: PH - 25 }); }
         // ── the picture behind, posterised, dim, and a starfield when there is none
         g.imageSmoothingEnabled = false;
         g.fillStyle = '#000'; g.fillRect(0, 0, PW, PH);
@@ -2424,7 +2433,6 @@
           let hit = null;
           for (const i of inv) { if (!i.alive || i.boom > 0) continue; const x = fx + i.c * CELL_W, y = fy + 18 + i.r * CELL_H; if (sh.x >= x && sh.x < x + 12 && sh.y <= y + 8 && sh.y + 4 >= y && (!hit || i.r > hit.r)) hit = i; }
           if (hit) { hit.alive = false; hit.boom = 0.3; score += SCORE[hit.r] * wave; hi = Math.max(hi, score); shots.splice(k, 1); for (let n = 0; n < 8; n++) sparks.push({ x: sh.x, y: sh.y, vx: (Math.random() - 0.5) * 60, vy: (Math.random() - 0.5) * 60, t: 0.4, col: ROW_COLORS[hit.r] }); continue; }
-          for (const b of bunkers) { const n = b.cells.findIndex(([x, y]) => x === sh.x && y >= sh.y && y < sh.y + 4); if (n >= 0) { b.cells.splice(n, 1); shots.splice(k, 1); break; } }
           if (sh.y < 0) shots.splice(k, 1);
         }
         for (let k = bombs.length - 1; k >= 0; k--) {
