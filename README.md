@@ -253,6 +253,11 @@ Zoom retune every mode; every setting persists in the browser.
   tagged" pick in the pool row limits the draw to one tag. The ☑
   button beside the toggle unfolds a checkbox per mode: untick the ones
   Autopilot should leave alone (they stay a click or a pad away).
+- **Crossfader** (⇆ in the transport bar, or the MIDI panel's Crossfader
+  row): cues the next track -- the queue's next, else Autopilot's pick --
+  on a second hidden deck and fades to it, equal-power on the sound and
+  opacity on the picture; the far end of the fader makes it the track
+  with no gap. A track ending mid-cue jumps to the cued one.
 - **Video swap** (⇄ on the player): another download's picture stands
   in for the current track's — for an mp3 or a static-image video, so
   the visuals have real footage. Audio stays with the track; the

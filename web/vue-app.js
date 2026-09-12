@@ -188,6 +188,9 @@ const app = createApp({
       // Downloads tab: the tag chip that's filtering the table (null =
       // all), and the tag Autopilot draws its next track from ('' = any)
       tagFilters: [],     // the lit chips; a download must carry every one of them to show
+      // the crossfader (see xfadeCue/xfadeSet/xfadeCommit): the cued next
+      // track on deck B, and the fader position 0 (deck A) .. 1 (deck B)
+      xfade: { armed: false, pos: 0, next: null, ready: false },
       // the Downloads toolbar: title search, status, and the sort order
       // (persisted, since a preferred order is a preference)
       jobsQuery: '',
@@ -581,6 +584,12 @@ const app = createApp({
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
     window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = Math.min(10000, Math.max(0, e.detail | 0)); });
+    // a knob on the MIDI panel's Crossfader row: cues on the first move if nothing is cued
+    window.addEventListener('weed:orbit-xfade', (e) => {
+      if (!this.player.visible) return;
+      if (!this.xfade.armed && !this.xfadeCue()) return;
+      this.xfadeSet(e.detail);
+    });
     try {
       const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
       if (saved && typeof saved === 'object') {
@@ -1306,7 +1315,7 @@ const app = createApp({
       // renders nothing; the click that started playback lets this resume
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       const dest = ctx.createMediaStreamDestination();
-      source.connect(dest);
+      (graph.mix || source).connect(dest);   // both decks, as heard
       let rec;
       try {
         rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 128000 });
@@ -2133,8 +2142,92 @@ const app = createApp({
       const video = this.$refs.playerVideo;
       if (video) video.muted = !video.muted;
     },
+    // ── crossfader ───────────────────────────────────────────────────
+    // DJ-style: ⇆ cues the next track on a second, hidden <video> (deck
+    // B) and a fader mixes A into B -- equal-power on the audio, opacity
+    // on the picture. At the far end B becomes the track: A reloads B's
+    // file and catches up to B's clock while B keeps playing, then the
+    // gains swap over 150 ms, so nothing audible happens at the handover.
+    _ensureDeckB() {
+      const g = this._ensureOrbitAnalyser();
+      if (!this._deckB) {
+        const el = this.$refs.deckB;
+        const src = g.ctx.createMediaElementSource(el);
+        const gainB = g.ctx.createGain(); gainB.gain.value = 0;
+        src.connect(gainB); gainB.connect(g.mix);
+        this._deckB = { el, src, gainB };
+      }
+      return this._deckB;
+    },
+    // what ⇆ cues: the queue's next track, else Autopilot's pick
+    xfadeCandidate() {
+      const q = this.player.queue;
+      if (q && q.items[q.index + 1]) {
+        const t = q.items[q.index + 1], rec = this.library.downloads[t.content_hash];
+        if (rec) return { ...rec, title: t.title || rec.title, queueIndex: q.index + 1 };
+      }
+      return this.autopilotPick();
+    },
+    xfadeCue() {
+      const next = this.xfadeCandidate();
+      if (!next) { this.xfadeNotify('nothing to cue'); return false; }
+      const deck = this._ensureDeckB();
+      this.xfade.next = next; this.xfade.pos = 0; this.xfade.armed = true; this.xfade.ready = false;
+      deck.gainB.gain.value = 0;
+      deck.el.src = '/api/stream/' + next.job_id;
+      deck.el.load();
+      deck.el.oncanplay = () => { this.xfade.ready = true; };
+      this.xfadeNotify('cued: ' + (this.displayTitle(next.title) || next.title));
+      return true;
+    },
+    xfadeCancel() {
+      const deck = this._deckB;
+      if (deck) { deck.el.pause(); deck.el.removeAttribute('src'); deck.el.load(); deck.gainB.gain.value = 0; }
+      if (this._orbitAnalyser) this._orbitAnalyser.gainA.gain.value = 1;
+      this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
+    },
+    xfadeSet(v) {
+      if (!this.xfade.armed) return;
+      const pos = Math.min(1, Math.max(0, parseFloat(v) || 0));
+      this.xfade.pos = pos;
+      const deck = this._ensureDeckB(), g = this._orbitAnalyser;
+      // equal-power: both decks at -3 dB in the middle, not -6
+      g.gainA.gain.value = Math.cos(pos * Math.PI / 2);
+      deck.gainB.gain.value = Math.sin(pos * Math.PI / 2);
+      if (pos > 0 && deck.el.paused && this.player.isPlaying) deck.el.play().catch(() => {});
+      this.xfadeNotify(`Crossfade ${Math.round(pos * 100)}% → ${this.displayTitle(this.xfade.next.title) || this.xfade.next.title || ''}`);
+      if (pos >= 0.995) this.xfadeCommit();
+    },
+    xfadeCommit() {
+      const next = this.xfade.next, deck = this._deckB;
+      if (!next || !deck) return;
+      const q = this.player.queue;
+      const queue = (next.queueIndex != null && q) ? { items: q.items, index: next.queueIndex, playlistId: q.playlistId } : null;
+      this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
+      this.openPlayer(next.job_id, next.title || this.shortHash(next.content_hash), next.content_hash, next.signer_pubkey || null, queue);
+      this.$nextTick(() => {
+        const video = this.$refs.playerVideo, g = this._orbitAnalyser;
+        g.gainA.gain.value = 0;                                  // A silent while it loads B's file
+        let done = false;
+        const settle = () => {
+          if (done) return;
+          done = true;
+          video.removeEventListener('playing', settle);
+          try { if (deck.el.currentTime > 0) video.currentTime = deck.el.currentTime; } catch (e) { /* not seekable yet */ }
+          const t = g.ctx.currentTime;
+          g.gainA.gain.cancelScheduledValues(t); g.gainA.gain.setValueAtTime(0, t); g.gainA.gain.linearRampToValueAtTime(1, t + 0.15);
+          deck.gainB.gain.cancelScheduledValues(t); deck.gainB.gain.setValueAtTime(deck.gainB.gain.value, t); deck.gainB.gain.linearRampToValueAtTime(0, t + 0.15);
+          setTimeout(() => { deck.el.pause(); deck.el.removeAttribute('src'); deck.el.load(); }, 250);
+        };
+        video.addEventListener('playing', settle);
+        setTimeout(settle, 3000);                                // a file that never reports playing still gets its sound back
+      });
+    },
+    xfadeNotify(text) { if (window.orbitViz && window.orbitViz.toast) window.orbitViz.toast(text); },
     onPlayerEnded() {
       this.player.isPlaying = false;
+      // a track cued on deck B is what comes next, wherever the fader is
+      if (this.xfade.armed && this.xfade.next) { this.xfadeSet(1); return; }
       // party autoplay: the top-voted track (if anyone voted) jumps the
       // queue when a track ends, and its tally is cleared so the next
       // vote starts fresh. Voters can only vote on downloaded tracks
@@ -2389,13 +2482,19 @@ const app = createApp({
       analyser.smoothingTimeConstant = 0.82;
       const delay = ctx.createDelay(11); // ceiling for the slider's 10s max (spec wants an integer)
       delay.delayTime.value = this.orbitDelay / 1000;
-      source.connect(analyser);       // undelayed → visualizer data
-      source.connect(delay);          // delayed → speakers
+      // deck A through its own gain into a mix bus; deck B (the
+      // crossfader's cued next track, _ensureDeckB) joins the bus with a
+      // gain of its own, so analyser, speakers and the stream all hear
+      // the mix
+      const gainA = ctx.createGain(), mix = ctx.createGain();
+      source.connect(gainA); gainA.connect(mix);
+      mix.connect(analyser);          // undelayed → visualizer data
+      mix.connect(delay);             // delayed → speakers
       delay.connect(ctx.destination);
       this._orbitAnalyser = {
         // source is kept so the network stream's audio sender
         // (_startOrbitAudio) can tap it ahead of the delay node
-        ctx, analyser, delay, source,
+        ctx, analyser, delay, source, gainA, mix,
         freq: new Uint8Array(analyser.frequencyBinCount),
         wave: new Uint8Array(analyser.fftSize),
       };

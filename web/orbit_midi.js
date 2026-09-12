@@ -82,6 +82,7 @@ window.orbitMidi = (function () {
     { id: 'kRot', label: 'Rotate', target: 'param:rotate', key: null },
     { id: 'actAuto', label: 'Autopilot', target: 'autopilot:toggle', key: null },
     { id: 'actResetRot', label: 'Reset rotation', target: 'resetRot', key: null },
+    { id: 'kXfade', label: 'Crossfader', target: 'param:xfade', key: null },
   ];
   const TARGET_LABELS = {
     video: 'video only (toggle)', flash: 'fire transition', 'transition:next': 'next fade style',
@@ -91,7 +92,7 @@ window.orbitMidi = (function () {
     'param:speed': 'Speed', 'param:reactivity': 'React', 'param:zoom': 'Zoom', 'param:transitionMs': 'Fade length',
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
-    'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay',
+    'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay', 'param:xfade': 'crossfade to the cued next track (A → B)',
     'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot: off → ↓ → ↑', resetRot: 'reset rotation (zoom/pan kept)',
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
@@ -372,7 +373,7 @@ window.orbitMidi = (function () {
     }
     // first nudge starts from where the parameter actually is
     const cur = relValue[b.id] !== undefined ? relValue[b.id]
-              : (b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
+              : (b.target === 'param:xfade' ? 0 : b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
     const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
     pendingSteps[ccKey] = 0;
     let next = Math.min(1, Math.max(0, cur + steps / 50));
@@ -385,6 +386,7 @@ window.orbitMidi = (function () {
   }
   function applyParam(b, param, pos) {
     if (param === 'delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: Math.round(pos * 10000) }));
+    else if (param === 'xfade') window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: pos }));
     else window.orbitViz.control(param, pos);
   }
 

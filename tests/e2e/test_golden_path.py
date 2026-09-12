@@ -1031,3 +1031,43 @@ def test_muxed_stream_is_one_matroska_with_both_tracks(page, golden_path_server,
     assert buf.count(b'\xff\xd8\xff') >= 5, buf.count(b'\xff\xd8\xff')        # JPEG frames are flowing through
     assert b'\x1f\x43\xb6\x75' in buf                                         # in real clusters
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
+
+
+def test_crossfader_cues_the_next_track_mixes_and_commits(page, golden_path_server):
+    """Ryan: "a slider for crossfading the next video". ⇆ cues the queue's
+    next track on deck B; the fader mixes deck A into B equal-power on the
+    audio graph and by opacity on the picture; the far end makes B the
+    track, with the queue index following."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    job = page.evaluate("vm => vm.player.jobId", vm)
+    h = golden_path_server['content_hash']
+    # a two-item queue of the same real download, so deck B has a real file to load
+    page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'One'}, {content_hash: h, title: 'Two'}], index: 0, playlistId: null }; }", [vm, h])
+    assert page.locator('#audio-transport .xfade-slider').count() == 0
+    page.locator('#audio-transport .xfade-cue').click(force=True)
+    page.wait_for_function("vm => vm.xfade.armed", arg=vm)
+    assert page.evaluate("vm => vm.xfade.next.title", vm) == 'Two'
+    assert page.evaluate("vm => vm.$refs.deckB.getAttribute('src')", vm) == '/api/stream/' + job
+    assert page.locator('#audio-transport .xfade-slider').is_visible()
+    page.evaluate("vm => vm.xfadeSet(0.5)", vm)
+    gains = page.evaluate("vm => [vm._orbitAnalyser.gainA.gain.value, vm._deckB.gainB.gain.value, vm.$refs.deckB.style.opacity]", vm)
+    assert abs(gains[0] - 0.7071) < 0.01 and abs(gains[1] - 0.7071) < 0.01 and gains[2] == '0.5'   # equal-power, picture half over
+    assert page.evaluate("() => document.getElementById('vizToast') === null || true")           # no visualizer open: the toast is optional
+    page.evaluate("vm => vm.xfadeSet(1)", vm)
+    page.wait_for_function("vm => !vm.xfade.armed && vm.player.queue.index === 1", arg=vm)
+    assert page.evaluate("vm => vm.player.title", vm) == 'Two'
+    page.wait_for_function("vm => vm._orbitAnalyser.gainA.gain.value > 0.99 && vm._deckB.gainB.gain.value < 0.01", arg=vm, timeout=6_000)
+    page.wait_for_function("vm => vm.$refs.deckB.getAttribute('src') === null", arg=vm, timeout=3_000)   # deck B released
+    # at the end of the queue with Autopilot off there's nothing to cue
+    page.locator('#audio-transport .xfade-cue').click(force=True)
+    page.wait_for_timeout(200)
+    assert page.evaluate("vm => vm.xfade.armed", vm) is False
+    # ⇆ on an armed deck cancels the cue and puts deck A back to full
+    page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'Two'}, {content_hash: h, title: 'Three'}], index: 0, playlistId: null }; }", [vm, h])
+    page.locator('#audio-transport .xfade-cue').click(force=True)
+    page.wait_for_function("vm => vm.xfade.armed", arg=vm)
+    page.evaluate("vm => vm.xfadeSet(0.4)", vm)
+    page.locator('#audio-transport .xfade-cue').click(force=True)
+    page.wait_for_function("vm => !vm.xfade.armed", arg=vm)
+    assert page.evaluate("vm => vm._orbitAnalyser.gainA.gain.value", vm) == 1

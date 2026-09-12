@@ -702,6 +702,7 @@ window.orbitViz = (function () {
     };
     function readout(param) { const f = READOUT[param]; if (f) showToast(f()); }
     s.readout = readout;
+    s.showToast = showToast;
 
     on(vizCanvas, 'wheel', e => {
       e.preventDefault();
@@ -2235,6 +2236,8 @@ window.orbitViz = (function () {
     control: (param, v01) => { if (state) state.control(param, v01); },
     controlPosition: (param) => (state ? state.controlPosition(param) : 0.5),
     controlDetent: (param) => (state ? state.controlDetent(param) : null),
+    // the value readout pill over the canvas, for vue-app.js's own values (the crossfader)
+    toast: (text) => { if (state) state.showToast(text); },
     trigger: (action) => { if (state) state.trigger(action); },
     modes: allModes,
     transitions: allTransitions,
