@@ -305,7 +305,7 @@ window.orbitMidi = (function () {
         idx = (Math.max(0, cur) + 1) % list.length;
       } else if (isRelative(b, ccKey)) {
         // an encoder moves one entry per b.clicks clicks (the row's own
-        // setting, see clicksOf), clamped at the ends, never skipping
+        // setting, see clicksOf), wrapping at the ends, never skipping
         // one. Clicks accumulate per row, a change of direction resets
         // the count, and a fast spin (bigger steps) still counts its size
         // so it gets down the list quicker.
@@ -316,7 +316,9 @@ window.orbitMidi = (function () {
         const move = Math.trunc(acc / per);
         selectAcc[b.id] = acc - move * per;
         if (!move) return;
-        idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + move));
+        // the list is a ring on an encoder: past the last entry it comes
+        // round to the first, and the other way (Ryan)
+        idx = (((Math.max(0, cur) + move) % list.length) + list.length) % list.length;
         if (idx === cur && !pend) return;
       } else {
         idx = Math.min(list.length - 1, Math.floor(knobPosition(b, v, ccKey) * list.length));

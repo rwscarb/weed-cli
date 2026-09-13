@@ -503,12 +503,16 @@ def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_se
     for _ in range(8):
         page.evaluate("() => window.__midi.send([0xB0, 20, 127])")     # one counter-clockwise click
         seen.append(current())
-    assert seen == [modes[start - 1], modes[start - 2], modes[start - 3], modes[start - 4], modes[start - 5], 'tunnel', 'tunnel', 'tunnel']
+    assert seen == [modes[(start - k) % len(modes)] for k in range(1, 9)]   # past the first it comes round to the last
     for _ in range(3):
         page.evaluate("() => window.__midi.send([0xB0, 20, 1])")       # clockwise
-    assert current() == modes[3]
+    assert current() == modes[(start - 8 + 3) % len(modes)]
+    page.click('[data-viz="scope"]')                                # from a known place: three at once
+    page.wait_for_timeout(100)
     page.evaluate("() => window.__midi.send([0xB0, 20, 3])")           # a fast spin: three entries at once
-    assert current() == modes[6]
+    assert current() == modes[modes.index('scope') + 3]
+    page.click('[data-viz="' + modes[6] + '"]')
+    page.wait_for_timeout(100)
     # the row's clicks field: at 3, only every third click moves, and it persists
     row.locator('.midi-clicks input').fill('3')
     row.locator('.midi-clicks input').dispatch_event('change')
