@@ -700,6 +700,27 @@ window.orbitViz = (function () {
       buildingCount: () => `Freefall count ${s.buildingCount}`,
       pan: () => `Pan ${Math.round(s.vizPanX / devicePixelRatio)}, ${Math.round(s.vizPanY / devicePixelRatio)}`,
     };
+    // the picker: a knob sweeping a list shows where it is in it -- a
+    // window of entries around the selection, the selection lit, the
+    // count -- and stays up while the knob keeps moving (Ryan: "a visual
+    // letting the user see/adjust their selection")
+    function showPicker(label, entries, idx) {
+      if (!vizToast) return;
+      const esc = (t) => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+      const span = 3, lo = Math.max(0, Math.min(idx - span, entries.length - 2 * span - 1)), hi = Math.min(entries.length - 1, lo + 2 * span);
+      let html = `<span class="pick-label">${esc(label)}</span>`;
+      if (lo > 0) html += '<span class="pick dim">…</span>';
+      for (let i = lo; i <= hi; i++) html += `<span class="pick${i === idx ? ' sel' : ''}">${esc(entries[i])}</span>`;
+      if (hi < entries.length - 1) html += '<span class="pick dim">…</span>';
+      html += `<span class="pick-count">${idx + 1}/${entries.length}</span>`;
+      vizToast.style.top = (vizCanvas.offsetTop + 12) + 'px';
+      vizToast.style.left = (vizCanvas.offsetLeft + 14) + 'px';
+      vizToast.innerHTML = html;
+      vizToast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => vizToast.classList.remove('show'), 1400);
+    }
+    s.showPicker = showPicker;
     function readout(param) { const f = READOUT[param]; if (f) showToast(f()); }
     // the discrete switches read out too (Ryan: "the mode/transition/etc
     // changes also show up in the toast"): a mode by its button label, a
@@ -2252,6 +2273,7 @@ window.orbitViz = (function () {
     controlDetent: (param) => (state ? state.controlDetent(param) : null),
     // the value readout pill over the canvas, for vue-app.js's own values (the crossfader)
     toast: (text) => { if (state) state.showToast(text); },
+    picker: (label, entries, idx) => { if (state) state.showPicker(label, entries, idx); },
     trigger: (action) => { if (state) state.trigger(action); },
     modes: allModes,
     transitions: allTransitions,

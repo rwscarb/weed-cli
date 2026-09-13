@@ -494,8 +494,10 @@ def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_se
     row.locator('button', has_text='learn').click()
     # settle the detector as relative with a few clicks, then start from a known mode
     for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 20, 1])")
+    page.wait_for_timeout(500)                                           # let that settle and switch before starting from a known mode
     page.click('[data-viz="ascii"]')
-    current = lambda: page.evaluate("() => window.orbitViz.current().mode")
+    # the switch lands once the knob has rested (the picker shows the selection meanwhile)
+    current = lambda: (page.wait_for_timeout(450), page.evaluate("() => window.orbitViz.current().mode"))[1]
     start = modes.index('ascii')
     seen = []
     for _ in range(8):
@@ -831,3 +833,37 @@ def test_a_rotate_encoder_keeps_turning_past_a_full_turn(page, golden_path_serve
     assert travel > 380, (travel, readings)
     assert max(readings) >= 170 and min(readings) <= -170, readings
     assert readings.count(180) + readings.count(-180) <= 2, readings          # passes the seam, doesn't sit on it
+
+
+def test_a_mode_knob_shows_a_picker_and_switches_once_it_rests(page, golden_path_server):
+    """Ryan: "when changing the mode, can we make the notification show
+    where the other modes are at and if the mode knob is turned quickly it
+    shouldn't switch directly to that mode, but allow the user to keep
+    turning it until they get to their desired mode." A knob on the Mode
+    row moves a selection through the list with the pill showing the
+    neighbours and the count; the switch happens once the knob rests."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    modes = page.evaluate("() => window.orbitViz.modes()")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Mode$')))
+    row.locator('button', has_text='learn').click()
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 20, 1])")   # settles as relative
+    page.wait_for_timeout(500)
+    page.click('[data-viz="tunnel"]')
+    page.wait_for_timeout(100)
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 20, 1])")   # four quick clicks: the selection runs ahead
+    picks = page.evaluate("() => [...document.querySelectorAll('#vizToast .pick')].map(e => [e.textContent, e.classList.contains('sel')])")
+    assert page.evaluate("() => document.getElementById('vizToast').classList.contains('show')")
+    assert [t for t, sel in picks if sel] == [modes[4].capitalize() if modes[4] not in ('ascii',) else 'Ascii'] or [t for t, sel in picks if sel][0].lower() == modes[4].lower()
+    assert page.evaluate("() => document.querySelector('#vizToast .pick-count').textContent") == f'5/{len(modes)}'
+    assert page.evaluate("() => window.orbitViz.current().mode") == 'tunnel'          # not switched yet
+    page.wait_for_function("() => window.orbitViz.current().mode !== 'tunnel'", timeout=2_000)   # the knob rested
+    assert page.evaluate("() => window.orbitViz.current().mode") == modes[4]
+    assert page.evaluate("() => document.getElementById('vizToast').textContent") == 'Mode: ' + (modes[4][0].upper() + modes[4][1:])

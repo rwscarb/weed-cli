@@ -298,7 +298,8 @@ window.orbitMidi = (function () {
       const list = sel.list(viz);
       if (!list.length) return;
       let idx;
-      const cur = list.indexOf((viz.current() || {})[sel.current]);
+      const pend = pendingSelect[b.id];
+      const cur = pend ? pend.idx : list.indexOf((viz.current() || {})[sel.current]);   // a knob still moving works from where its selection is
       if (kind === 'note') {
         // a pad on a selector steps forward through the list
         idx = (Math.max(0, cur) + 1) % list.length;
@@ -316,11 +317,12 @@ window.orbitMidi = (function () {
         selectAcc[b.id] = acc - move * per;
         if (!move) return;
         idx = Math.max(0, Math.min(list.length - 1, Math.max(0, cur) + move));
-        if (idx === cur) return;
+        if (idx === cur && !pend) return;
       } else {
         idx = Math.min(list.length - 1, Math.floor(knobPosition(b, v, ccKey) * list.length));
       }
-      viz.trigger(sel.action + list[idx]);
+      if (kind === 'note') viz.trigger(sel.action + list[idx]);
+      else selectPreview(viz, b, sel, list, idx);
     } else {
       // an action: a pad fires it. An absolute knob fires it once as it
       // crosses the middle going up (twist right = press, turn back and
@@ -341,12 +343,29 @@ window.orbitMidi = (function () {
   const OPPOSITE = { next: 'prev', prev: 'next', 'transition:next': 'transition:prev', 'transition:prev': 'transition:next' };
   // the selector-style targets: what they choose among, which field of
   // orbitViz.current() holds the choice, and the trigger prefix that sets it
+  const cap = (id) => String(id).charAt(0).toUpperCase() + String(id).slice(1);
   const SELECTORS = {
-    mode: { list: viz => viz.modes(), current: 'mode', action: 'mode:' },
-    transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:' },
-    asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:' },
+    mode: { list: viz => viz.modes(), current: 'mode', action: 'mode:', label: 'Mode', names: viz => Object.fromEntries((viz.listModes ? viz.listModes() : []).map(m => [m.id, m.label])) },
+    transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:', label: 'Fade', names: () => ({}) },
+    asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:', label: 'Chars', names: () => ({}) },
   };
   const selectAcc = {};       // binding id -> encoder clicks accumulated toward the next entry
+  // A knob sweeping a list doesn't switch on every click: the selection
+  // moves through the list with the picker showing where it is, and the
+  // switch happens once the knob has rested for SELECT_SETTLE_MS (Ryan:
+  // "if the mode knob is turned quickly it shouldn't switch directly to
+  // that mode, but allow the user to keep turning it until they get to
+  // their desired mode"). A pad still steps at once.
+  const SELECT_SETTLE_MS = 350;
+  const pendingSelect = {};   // binding id -> { idx, timer }
+  function selectPreview(viz, b, sel, list, idx) {
+    const names = sel.names(viz);
+    viz.picker(sel.label, list.map(id => names[id] || cap(id)), idx);
+    const p = pendingSelect[b.id] || (pendingSelect[b.id] = {});
+    p.idx = idx;
+    clearTimeout(p.timer);
+    p.timer = setTimeout(() => { delete pendingSelect[b.id]; viz.trigger(sel.action + list[idx]); }, SELECT_SETTLE_MS);
+  }
   // Detents. A parameter's home value (rotation straight, zoom 1x,
   // speed 1x) is hard to land on exactly: a pot's middle is 64/127, not
   // 0.5, and an encoder's 2% clicks from wherever a mouse drag left the

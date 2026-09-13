@@ -1397,6 +1397,11 @@ td button {
   opacity: 0; transition: opacity 0.18s ease;
 }
 #orbit-egg-dialog .viz-toast.show { opacity: 1; }
+#orbit-egg-dialog .viz-toast .pick-label { color: #aab; margin-right: 0.5rem; }
+#orbit-egg-dialog .viz-toast .pick { color: #8a90a0; margin: 0 0.3rem; }
+#orbit-egg-dialog .viz-toast .pick.dim { color: #555; }
+#orbit-egg-dialog .viz-toast .pick.sel { color: var(--accent); font-weight: 700; padding: 0 0.35rem; border: 1px solid rgba(110, 231, 183, 0.5); border-radius: 999px; }
+#orbit-egg-dialog .viz-toast .pick-count { color: #778; margin-left: 0.5rem; font-size: 0.75rem; }
 #orbit-egg-dialog:fullscreen .viz-toast { top: 3.2rem !important; left: 1.1rem !important; }
 #orbit-egg-dialog #vizCanvas {
   image-rendering: pixelated; cursor: grab;
