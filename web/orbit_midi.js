@@ -376,8 +376,14 @@ window.orbitMidi = (function () {
               : (b.target === 'param:xfade' ? 0 : b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
     const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
     pendingSteps[ccKey] = 0;
-    let next = Math.min(1, Math.max(0, cur + steps / 50));
-    if (d !== null && steps !== 0 && Math.abs(cur - d) > 1e-9) {
+    // rotation is a circle: an encoder keeps turning the picture past a
+    // full turn instead of stopping at the end (Ryan), so its position
+    // wraps -- and a wrap is not a pass through the straight-ahead detent
+    const circular = b.target === 'param:rotate';
+    let next = cur + steps / 50, wrapped = false;
+    if (circular) { if (next >= 1 || next < 0) { next = ((next % 1) + 1) % 1; wrapped = true; } }
+    else next = Math.min(1, Math.max(0, next));
+    if (d !== null && steps !== 0 && !wrapped && Math.abs(cur - d) > 1e-9) {
       const crossed = (cur < d && next >= d) || (cur > d && next <= d);
       if (crossed || Math.abs(next - d) <= zone / 2) next = d;
     }

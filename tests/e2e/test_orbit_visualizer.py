@@ -800,3 +800,34 @@ def test_v_opens_the_visualizer_and_f_inside_it_leaves_the_player_size_alone(pag
     page.wait_for_function("vm => !vm.easterEggVisible", arg=vm)
     page.keyboard.press('f')                                                       # visualizer closed: f is the player's size cycle again
     page.wait_for_function("vm => vm.player.mode === 'theater'", arg=vm)
+
+
+def test_a_rotate_encoder_keeps_turning_past_a_full_turn(page, golden_path_server):
+    """Ryan: "allow the rotate binding to keep rotating the image instead
+    of stopping after a turn". Rotation is a circle, so a relative
+    encoder's position wraps at the end instead of clamping there, and the
+    wrap doesn't count as a pass through the straight-ahead detent."""
+    page.add_init_script("""
+      const input = { id: 'in1', name: 'MPK mini IV', state: 'connected', onmidimessage: null };
+      window.__midi = { send: (bytes) => input.onmidimessage && input.onmidimessage({ data: Uint8Array.from(bytes) }) };
+      navigator.requestMIDIAccess = () => Promise.resolve({ inputs: new Map([['in1', input]]), outputs: new Map(), onstatechange: null });
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.click('#vizMidiBtn')
+    page.wait_for_function("() => /listening to MPK mini IV/.test(document.getElementById('midiStatus').textContent)")
+    row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^Rotate$')))
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 33, 1])")
+    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 33, 1])")     # settles as relative
+    deg = lambda: int(re.search(r"Rotate ([+-]?\d+)", page.evaluate("() => document.getElementById('vizToast').textContent")).group(1))   # the readout pill
+    # sixty clicks one way, reading the angle after each: it must go round
+    # more than once (unwrapped travel well past 360°) and never stick at
+    # the end -- the old clamp pinned it at +180 after 25 clicks
+    readings, prev, travel = [], deg(), 0
+    for _ in range(60):
+        page.evaluate("() => window.__midi.send([0xB0, 33, 1])")
+        d = deg(); step = ((d - prev + 180) % 360) - 180; travel += step; prev = d; readings.append(d)
+    assert travel > 380, (travel, readings)
+    assert max(readings) >= 170 and min(readings) <= -170, readings
+    assert readings.count(180) + readings.count(-180) <= 2, readings          # passes the seam, doesn't sit on it
