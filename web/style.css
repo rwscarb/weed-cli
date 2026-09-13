@@ -1397,11 +1397,13 @@ td button {
   opacity: 0; transition: opacity 0.18s ease;
 }
 #orbit-egg-dialog .viz-toast.show { opacity: 1; }
-#orbit-egg-dialog .viz-toast .pick-label { color: #aab; margin-right: 0.5rem; }
-#orbit-egg-dialog .viz-toast .pick { color: #8a90a0; margin: 0 0.3rem; }
-#orbit-egg-dialog .viz-toast .pick.dim { color: #555; }
-#orbit-egg-dialog .viz-toast .pick.sel { color: var(--accent); font-weight: 700; padding: 0 0.35rem; border: 1px solid rgba(110, 231, 183, 0.5); border-radius: 999px; }
-#orbit-egg-dialog .viz-toast .pick-count { color: #778; margin-left: 0.5rem; font-size: 0.75rem; }
+#orbit-egg-dialog .viz-toast.picker { border-radius: 8px; padding: 0.35rem 0.5rem; line-height: 19px; }
+#orbit-egg-dialog .viz-toast .pick-head { display: flex; justify-content: space-between; gap: 1rem; padding: 0 0.4rem 0.2rem; border-bottom: 1px solid rgba(110, 231, 183, 0.25); margin-bottom: 0.2rem; }
+#orbit-egg-dialog .viz-toast .pick-label { color: #aab; }
+#orbit-egg-dialog .viz-toast .pick-count { color: #778; font-size: 0.75rem; }
+#orbit-egg-dialog .viz-toast .pick { display: block; color: #8a90a0; padding: 0 0.4rem; border-radius: 4px; }
+#orbit-egg-dialog .viz-toast .pick.dim { color: #555; text-align: center; }
+#orbit-egg-dialog .viz-toast .pick.sel { color: var(--accent); font-weight: 700; background: rgba(110, 231, 183, 0.14); }
 #orbit-egg-dialog:fullscreen .viz-toast { top: 3.2rem !important; left: 1.1rem !important; }
 #orbit-egg-dialog #vizCanvas {
   image-rendering: pixelated; cursor: grab;

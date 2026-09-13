@@ -345,7 +345,7 @@ window.orbitMidi = (function () {
   // orbitViz.current() holds the choice, and the trigger prefix that sets it
   const cap = (id) => String(id).charAt(0).toUpperCase() + String(id).slice(1);
   const SELECTORS = {
-    mode: { list: viz => viz.modes(), current: 'mode', action: 'mode:', label: 'Mode', names: viz => Object.fromEntries((viz.listModes ? viz.listModes() : []).map(m => [m.id, m.label])) },
+    mode: { list: viz => viz.modes(), current: 'mode', action: 'mode:', label: 'Mode', names: viz => Object.fromEntries((viz.listModes ? viz.listModes() : []).map(m => [m.id, m.builtin ? cap(m.id) : m.label])) },
     transition: { list: viz => viz.transitions(), current: 'transition', action: 'transition:set:', label: 'Fade', names: () => ({}) },
     asciiRamp: { list: viz => viz.asciiRamps(), current: 'asciiRamp', action: 'ascii:ramp:', label: 'Chars', names: () => ({}) },
   };

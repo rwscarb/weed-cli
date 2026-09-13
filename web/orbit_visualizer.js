@@ -681,6 +681,7 @@ window.orbitViz = (function () {
       vizToast.style.top = (vizCanvas.offsetTop + 12) + 'px';
       vizToast.style.left = (vizCanvas.offsetLeft + 14) + 'px';
       vizToast.textContent = text;
+      vizToast.classList.remove('picker');
       vizToast.classList.add('show');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => vizToast.classList.remove('show'), 1400);
@@ -707,16 +708,20 @@ window.orbitViz = (function () {
     function showPicker(label, entries, idx) {
       if (!vizToast) return;
       const esc = (t) => String(t).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
-      const span = 3, lo = Math.max(0, Math.min(idx - span, entries.length - 2 * span - 1)), hi = Math.min(entries.length - 1, lo + 2 * span);
-      let html = `<span class="pick-label">${esc(label)}</span>`;
-      if (lo > 0) html += '<span class="pick dim">…</span>';
-      for (let i = lo; i <= hi; i++) html += `<span class="pick${i === idx ? ' sel' : ''}">${esc(entries[i])}</span>`;
-      if (hi < entries.length - 1) html += '<span class="pick dim">…</span>';
-      html += `<span class="pick-count">${idx + 1}/${entries.length}</span>`;
+      // a column: as many rows as the canvas has room for, the whole list
+      // when it fits, otherwise a window that keeps the selection in view
+      const rowPx = 19 * (parseFloat(getComputedStyle(vizToast).fontSize) || 13.6) / 13.6;
+      const room = Math.max(5, Math.floor((vizCanvas.clientHeight - 70) / rowPx));
+      const n = Math.min(entries.length, room);
+      const lo = Math.max(0, Math.min(idx - Math.floor(n / 2), entries.length - n)), hi = lo + n - 1;
+      let html = `<div class="pick-head"><span class="pick-label">${esc(label)}</span><span class="pick-count">${idx + 1}/${entries.length}</span></div>`;
+      if (lo > 0) html += '<div class="pick dim">…</div>';
+      for (let i = lo; i <= hi; i++) html += `<div class="pick${i === idx ? ' sel' : ''}">${esc(entries[i])}</div>`;
+      if (hi < entries.length - 1) html += '<div class="pick dim">…</div>';
       vizToast.style.top = (vizCanvas.offsetTop + 12) + 'px';
       vizToast.style.left = (vizCanvas.offsetLeft + 14) + 'px';
       vizToast.innerHTML = html;
-      vizToast.classList.add('show');
+      vizToast.classList.add('show', 'picker');
       clearTimeout(toastTimer);
       toastTimer = setTimeout(() => vizToast.classList.remove('show'), 1400);
     }
