@@ -683,7 +683,7 @@
     <!-- deck B: the crossfader's cued next track, faded in over the
          picture as the fader moves (vue-app.js xfadeSet); its sound
          goes through the same mix bus as deck A -->
-    <video ref="deckB" class="deck-b" playsinline :style="{ opacity: xfade.armed ? xfade.pos : 0 }"></video>
+    <video ref="deckB" class="deck-b" playsinline :style="{ opacity: xfade.handover ? 1 : (xfade.armed ? xfade.pos : 0) }"></video>
     <!-- party chat over the picture (the visualizer draws its own into
          the canvas; this is for the plain player window) -->
     <div class="chat-overlay" v-if="chat.enabled && chat.overlay && chatRecent.length">

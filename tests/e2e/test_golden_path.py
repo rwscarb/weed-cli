@@ -690,7 +690,7 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
     /api/orbit-view is filled edge to edge, and released when it stops."""
     import base64, http.client
     from urllib.parse import urlparse
-    page.set_viewport_size({'width': 700, 'height': 900})   # a tall window: the canvas would end up nearly square
+    page.set_viewport_size({'width': 600, 'height': 1100})  # a narrow window: the canvas would end up nearly square (the dialog's height is capped, and the mode row wraps this narrow)
     _download_and_play(page, golden_path_server)
     vm = _vm(page)
     page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
@@ -1127,3 +1127,29 @@ def test_a_knob_resting_on_the_end_after_a_crossfade_does_not_cue_the_next(page,
     page.wait_for_function("vm => vm.xfade.armed && vm.xfade.next.title === 'C'", arg=vm)
     assert abs(page.evaluate("vm => vm.xfade.pos", vm) - 0.2) < 0.001
     assert page.evaluate("vm => vm.player.title", vm) == 'B'
+
+
+def test_the_crossfade_handover_opens_the_file_at_deck_bs_time_and_keeps_deck_b_up(page, golden_path_server):
+    """Ryan: "the crossfade knob still triggers an extra track in the
+    background when it hits 100%": the main deck used to restart the file
+    from 0:00, seen and heard until its seek caught up. Now it opens the
+    file at deck B's time, and deck B stays on top, sounding, until the
+    main deck is playing there."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    job = page.evaluate("vm => vm.player.jobId", vm)
+    h = golden_path_server['content_hash']
+    page.evaluate("([vm, h]) => { vm.player.queue = { items: [{content_hash: h, title: 'A'}, {content_hash: h, title: 'B'}], index: 0, playlistId: null }; }", [vm, h])
+    page.evaluate("vm => vm.xfadeCue()", vm)
+    page.wait_for_function("vm => vm.xfade.armed", arg=vm)
+    # the test clip doesn't decode in the headless browser, so stand in for deck B's clock: three seconds in
+    page.evaluate("vm => Object.defineProperty(vm.$refs.deckB, 'currentTime', { get: () => 3, set: () => {}, configurable: true })", vm)
+    page.evaluate("vm => vm.xfadeSetUi(1)", vm)
+    page.wait_for_function("vm => !vm.xfade.armed && vm.player.title === 'B'", arg=vm)
+    assert page.evaluate("vm => vm.xfade.handover", vm) is True
+    assert page.evaluate("vm => vm.$refs.deckB.style.opacity", vm) == '1'         # deck B stays on top through the handover
+    page.wait_for_function("vm => (vm.$refs.playerVideo.getAttribute('src') || '').endsWith('#t=3.00')", arg=vm)
+    assert page.evaluate("vm => vm.$refs.playerVideo.getAttribute('src')", vm) == '/api/stream/' + job + '#t=3.00'
+    page.wait_for_function("vm => !vm.xfade.handover && vm._orbitAnalyser.gainA.gain.value > 0.99", arg=vm, timeout=8_000)
+    page.wait_for_function("vm => vm.$refs.deckB.getAttribute('src') === null", arg=vm, timeout=3_000)
+    assert page.evaluate("vm => vm.$refs.deckB.style.opacity", vm) == '0'

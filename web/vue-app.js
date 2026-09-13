@@ -195,7 +195,7 @@ const app = createApp({
       // is "current": like a real crossfader it alternates, so after a
       // fade to the right the next one runs back to the left, and a knob
       // left at either end never commits by accident
-      xfade: { armed: false, pos: 0, ui: 0, flip: false, next: null, ready: false, committedAt: 0 },
+      xfade: { armed: false, pos: 0, ui: 0, flip: false, next: null, ready: false, committedAt: 0, handover: false },
       // the Downloads toolbar: title search, status, and the sort order
       // (persisted, since a preferred order is a preference)
       jobsQuery: '',
@@ -826,7 +826,7 @@ const app = createApp({
     // queue) still correctly starts a *new* one-item queue rather than
     // appending to the old, since that's exactly the "I'm done following
     // that queue" signal the old comment already described.
-    openPlayer(jobId, title, contentHash, signerPubkey, queue = null) {
+    openPlayer(jobId, title, contentHash, signerPubkey, queue = null, startAt = 0) {
       this.player.jobId = jobId;
       this.player.title = title || jobId;
       this.player.contentHash = contentHash || null;
@@ -853,7 +853,9 @@ const app = createApp({
       this.player.isAudio = false;
       this.$nextTick(() => {
         const video = this.$refs.playerVideo;
-        video.src = '/api/stream/' + jobId;
+        // a media fragment opens the file at that time rather than its start
+        // (the crossfader hands over mid-track)
+        video.src = '/api/stream/' + jobId + (startAt > 0 ? '#t=' + startAt.toFixed(2) : '');
         video.autoplay = true;
         // Pre-warm the Web Audio graph before playback starts so the first
         // Orbit Visualizer open doesn't glitch mid-playback (createMediaElementSource
@@ -2234,20 +2236,41 @@ const app = createApp({
       this.xfade.flip = !this.xfade.flip;
       this.xfade.committedAt = Date.now();
       this.xfade.armed = false; this.xfade.pos = 0; this.xfade.next = null; this.xfade.ready = false;
-      this.openPlayer(next.job_id, next.title || this.shortHash(next.content_hash), next.content_hash, next.signer_pubkey || null, queue);
+      // The handover. Deck B keeps sounding and stays on top of the
+      // picture while the main deck opens B's file at deck B's time and
+      // gets going; only once it's playing within a hair of deck B's
+      // clock do the gains swap and deck B come down. Ryan: "the
+      // crossfade knob still triggers an extra track in the background
+      // when it hits 100%" -- that was the main deck restarting the file
+      // from 0:00, seen and heard for as long as the seek took.
+      this.xfade.handover = true;
+      const startAt = deck.el.currentTime || 0;
+      this.openPlayer(next.job_id, next.title || this.shortHash(next.content_hash), next.content_hash, next.signer_pubkey || null, queue, startAt);
       this.$nextTick(() => {
         const video = this.$refs.playerVideo, g = this._orbitAnalyser;
         g.gainA.gain.value = 0;                                  // A silent while it loads B's file
-        let done = false;
+        let done = false, swapped = false;
+        const swap = () => {
+          if (swapped) return;
+          swapped = true;
+          const t = g.ctx.currentTime;
+          g.gainA.gain.cancelScheduledValues(t); g.gainA.gain.setValueAtTime(0, t); g.gainA.gain.linearRampToValueAtTime(1, t + 0.15);
+          deck.gainB.gain.cancelScheduledValues(t); deck.gainB.gain.setValueAtTime(deck.gainB.gain.value, t); deck.gainB.gain.linearRampToValueAtTime(0, t + 0.15);
+          setTimeout(() => { this.xfade.handover = false; }, 150);
+          setTimeout(() => { deck.el.pause(); deck.el.removeAttribute('src'); deck.el.load(); }, 250);
+        };
         const settle = () => {
           if (done) return;
           done = true;
           video.removeEventListener('playing', settle);
-          try { if (deck.el.currentTime > 0) video.currentTime = deck.el.currentTime; } catch (e) { /* not seekable yet */ }
-          const t = g.ctx.currentTime;
-          g.gainA.gain.cancelScheduledValues(t); g.gainA.gain.setValueAtTime(0, t); g.gainA.gain.linearRampToValueAtTime(1, t + 0.15);
-          deck.gainB.gain.cancelScheduledValues(t); deck.gainB.gain.setValueAtTime(deck.gainB.gain.value, t); deck.gainB.gain.linearRampToValueAtTime(0, t + 0.15);
-          setTimeout(() => { deck.el.pause(); deck.el.removeAttribute('src'); deck.el.load(); }, 250);
+          const target = deck.el.currentTime;
+          // off by more than a hair: seek, and swap only once the seek has landed
+          if (target > 0 && Math.abs(video.currentTime - target) > 0.2) {
+            const onSeeked = () => { video.removeEventListener('seeked', onSeeked); swap(); };
+            video.addEventListener('seeked', onSeeked);
+            try { video.currentTime = target + 0.05; } catch (e) { swap(); }
+            setTimeout(swap, 1500);                              // a seek that never reports still gets its sound back
+          } else swap();
         };
         video.addEventListener('playing', settle);
         setTimeout(settle, 3000);                                // a file that never reports playing still gets its sound back
