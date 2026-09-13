@@ -2085,6 +2085,8 @@ window.orbitViz = (function () {
     });
     on(document, 'keydown', function (e) {
       if (s.backgrounded) return;
+      const a = document.activeElement;
+      if (a && (['INPUT', 'TEXTAREA', 'SELECT'].includes(a.tagName) || a.isContentEditable)) return;   // typing a tag, not a hotkey
       if (e.code === 'KeyF') toggleVizFullscreen();
       if (document.fullscreenElement && (e.code === 'ArrowLeft' || e.code === 'ArrowRight')) {
         e.preventDefault();

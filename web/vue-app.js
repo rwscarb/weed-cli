@@ -287,7 +287,8 @@ const app = createApp({
         { keys: '↑ / ↓', desc: 'Move highlight through Discover results (search box focused)' },
         { keys: 'Enter / Space', desc: 'Play or Download the highlighted row (search box focused)' },
         { keys: 'r', desc: 'Refresh Discover' },
-        { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open)' },
+        { keys: 'f', desc: 'Cycle player size: PIP → Theater → Fullscreen (while a video is open); in the visualizer, its fullscreen' },
+        { keys: 'v', desc: 'Open / close the Orbit Visualizer (while a video is open)' },
         { keys: 'n / p', desc: 'Next / previous track (while playing a playlist)' },
         { keys: 's', desc: 'Shuffle the current queue (while a video is open)' },
         { keys: 'Space', desc: 'Play / pause (while a video is open)' },
@@ -1476,7 +1477,15 @@ const app = createApp({
       }
 
       if (e.key === 'f' && this.player.visible) {
-        this.cyclePlayerMode();
+        // with the visualizer up, f is its fullscreen (orbit_visualizer.js
+        // handles the same keydown); cycling the player's size under it
+        // as well left things in a state that took two more presses to
+        // get to actual fullscreen (Ryan)
+        if (!this.easterEggVisible) this.cyclePlayerMode();
+        return;
+      }
+      if (e.key === 'v' && this.player.visible && !typing) {
+        this.easterEggVisible = !this.easterEggVisible;
         return;
       }
 

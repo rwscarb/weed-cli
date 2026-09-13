@@ -17,7 +17,7 @@ import re
 
 import pytest
 
-from test_golden_path import _download_and_play
+from test_golden_path import _download_and_play, _vm
 
 
 def _open_orbit_viz(page):
@@ -772,3 +772,31 @@ def test_mode_transition_and_autopilot_changes_read_out_in_the_toast(page, golde
     assert toast() == ['Autopilot ↑ popular', True]
     page.click('#autopilotToggle')
     assert toast() == ['Autopilot off', True]
+
+
+def test_v_opens_the_visualizer_and_f_inside_it_leaves_the_player_size_alone(page, golden_path_server):
+    """Ryan: "add a keyboard shortcut to the visualizer", and "the
+    fullscreen shortcut seems to toggle to a strange state when viz is
+    enabled, where I have to press f 2 more times". v toggles the
+    visualizer while a video is open; with it open, f is the visualizer's
+    fullscreen only -- the player no longer cycles its own size under it."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    assert page.evaluate("vm => [vm.easterEggVisible, vm.player.mode]", vm) == [False, 'pip']
+    page.keyboard.press('v')
+    page.wait_for_selector('#vizModes')
+    assert page.evaluate("vm => vm.easterEggVisible", vm) is True
+    fs_calls = page.evaluate("""() => { window.__fs = []; const d = document.getElementById('orbit-egg-dialog'); const o = d.requestFullscreen.bind(d);
+      d.requestFullscreen = () => { window.__fs.push('viz'); return o(); };
+      const g = document.getElementById('global-player'); const og = g.requestFullscreen.bind(g); g.requestFullscreen = () => { window.__fs.push('player'); return og(); }; return true; }""")
+    page.keyboard.press('f')
+    page.wait_for_timeout(300)
+    assert page.evaluate("vm => vm.player.mode", vm) == 'pip'                      # the player did not cycle to theater
+    assert page.evaluate("() => window.__fs", vm) == ['viz']                        # only the visualizer asked for fullscreen
+    page.keyboard.press('Escape')                                                  # back out of fullscreen if it took, else closes the visualizer
+    page.evaluate("vm => { vm.easterEggVisible = true; }", vm)
+    page.wait_for_selector('#vizModes')
+    page.keyboard.press('v')
+    page.wait_for_function("vm => !vm.easterEggVisible", arg=vm)
+    page.keyboard.press('f')                                                       # visualizer closed: f is the player's size cycle again
+    page.wait_for_function("vm => vm.player.mode === 'theater'", arg=vm)
