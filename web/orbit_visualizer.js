@@ -701,6 +701,14 @@ window.orbitViz = (function () {
       pan: () => `Pan ${Math.round(s.vizPanX / devicePixelRatio)}, ${Math.round(s.vizPanY / devicePixelRatio)}`,
     };
     function readout(param) { const f = READOUT[param]; if (f) showToast(f()); }
+    // the discrete switches read out too (Ryan: "the mode/transition/etc
+    // changes also show up in the toast"): a mode by its button label, a
+    // transition by its option label, Autopilot by its state
+    const cap = (id) => id.charAt(0).toUpperCase() + id.slice(1);
+    const modeLabel = (id) => (pluginModes.get(id) || {}).label || cap(id);
+    const transitionLabel = (id) => { const o = transitionSelect && transitionSelect.querySelector(`option[value="${CSS.escape(id)}"]`); return o ? o.textContent : cap(id); };
+    const pickSuffix = () => (s.randomPicked ? ' · ' + transitionLabel(s.randomPicked) + ' (random)' : '');
+    const autopilotLabel = () => { const st = autopilotState(); return st === 'off' ? 'Autopilot off' : st === 'down' ? 'Autopilot ↓ lesser-played' : 'Autopilot ↑ popular'; };
     s.readout = readout;
     s.showToast = showToast;
 
@@ -741,7 +749,7 @@ window.orbitViz = (function () {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       // grab the outgoing picture *before* the switch -- the transition
       // draws it over the new mode until it's gone
-      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) snapshotForTransition(transitionOverride);
+      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: ' + modeLabel(mode) + pickSuffix()); }
       s.vizMode = mode;
       s.vizOff = false;
       persistSettings();
@@ -777,7 +785,7 @@ window.orbitViz = (function () {
     // select, arrow cycling or Shift+digit all go through setVizMode,
     // which switches the effects straight back on.
     function setVizOff(transitionOverride) {
-      if (!s.restoring) snapshotForTransition(transitionOverride);
+      if (!s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: Video' + pickSuffix()); }
       s.vizOff = true;
       persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
@@ -869,6 +877,7 @@ window.orbitViz = (function () {
 
     function setTransition(type) {
       if (!allTransitions().includes(type)) type = 'burn';
+      if (type !== s.transition && !s.restoring) showToast('Transition: ' + transitionLabel(type));
       s.transition = type;
       if (transitionSelect && transitionSelect.value !== type) transitionSelect.value = type;
     }
@@ -1076,6 +1085,7 @@ window.orbitViz = (function () {
         if (pool.length > 1) pool = pool.filter(t => t !== s.lastRandomTransition);
         type = pool[Math.floor(Math.random() * pool.length)];
         s.lastRandomTransition = type;
+        s.randomPicked = type;                                  // named in the mode's readout
       }
       // a plugin transition may stretch the slider's length (see
       // registerTransition's duration); fixed here so a mid-transition
@@ -1341,12 +1351,14 @@ window.orbitViz = (function () {
       if (s.autopilot && s.vizMode && !auto.recent.includes(s.vizMode)) auto.recent = [...auto.recent, s.vizMode].slice(-6);
       renderAutopilotToggle();
       persistSettings();
+      if (!s.restoring) showToast(autopilotLabel());
     }
     function setAutopilotBias(bias) {
       if (bias !== 'up' && bias !== 'down') return;
       s.autopilotBias = bias;
       renderAutopilotToggle();
       persistSettings();
+      if (!s.restoring) showToast(autopilotLabel());
     }
     function cycleAutopilot() {
       const st = autopilotState();

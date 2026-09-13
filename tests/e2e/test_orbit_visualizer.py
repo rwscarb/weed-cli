@@ -744,3 +744,31 @@ def test_knobs_and_drags_show_a_value_readout(page, golden_path_server):
     page.wait_for_function("() => !document.getElementById('vizToast').classList.contains('show')", timeout=4_000)   # fades
     page.evaluate("() => window.orbitViz.trigger('resetRot')")
     assert toast.inner_text() == 'Rotate 0° (straight)'
+
+
+def test_mode_transition_and_autopilot_changes_read_out_in_the_toast(page, golden_path_server):
+    """Ryan: "make it so that the mode/transition/etc changes also show up
+    in the new toast/notifications". A mode by its button label (plugins
+    by theirs), Video when the effects go off, a transition by its option
+    label, Random's pick when it fires, and Autopilot by its state."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    toast = lambda: page.evaluate("() => [document.getElementById('vizToast').textContent, document.getElementById('vizToast').classList.contains('show')]")
+    page.click('[data-viz="bars"]')
+    assert toast() == ['Mode: Bars', True]
+    page.click('[data-viz="halftone"]')                      # a plugin mode, by its label
+    assert toast() == ['Mode: Halftone', True]
+    page.click('[data-viz="halftone"]')                      # the lit one again: effects off
+    assert toast() == ['Mode: Video', True]
+    page.select_option('#transitionSelect', 'wipe')
+    assert toast() == ['Transition: Wipe', True]
+    page.select_option('#transitionSelect', 'random')
+    assert toast() == ['Transition: Random', True]
+    page.click('[data-viz="plasma"]')                        # random resolves on the switch and names its pick
+    assert toast()[0].startswith('Mode: Plasma · ') and toast()[0].endswith(' (random)'), toast()
+    page.click('#autopilotToggle')
+    assert toast() == ['Autopilot ↓ lesser-played', True]
+    page.click('#autopilotToggle')
+    assert toast() == ['Autopilot ↑ popular', True]
+    page.click('#autopilotToggle')
+    assert toast() == ['Autopilot off', True]
