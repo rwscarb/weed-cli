@@ -214,6 +214,29 @@ class LineReader:
         return line.decode().strip()
 
 
+def entry_rel_path(entry):
+    """Where the file sits inside its archive: orig_path (ott records it
+    relative to the archive root, so a file added from a subdirectory
+    keeps that subdirectory) when it's a plain relative path, else the
+    bare name. Anything that could climb out of the archive (absolute,
+    or a '..' segment, which ott's own older entries could carry before
+    orig_path was anchored to the root) falls back to the name -- this
+    is joined onto archive_dir by resolve_file_path."""
+    raw = (entry.get('orig_path') or '').replace('\\', '/')
+    rel = raw.strip('/')
+    if not rel or raw.startswith('/') or os.path.isabs(raw) or '..' in rel.split('/'):
+        return entry['name']
+    return rel
+
+
+def _entry_matches(entry, file_name):
+    """--file / file_name matches the bare name or the archive-relative
+    path, so `--file Live/set.mkv` picks one of two files that share a
+    name in different subdirectories."""
+    wanted = file_name.replace('\\', '/').strip('/')
+    return entry['name'] == wanted or entry_rel_path(entry) == wanted
+
+
 def find_manifest_entry(archive_dir, file_name=None):
     archive_dir = os.path.expanduser(archive_dir)  # os.path.join never expands ~, it stays literal
     manifest_path = os.path.join(archive_dir, '.ott', 'manifest.jsonl')
@@ -222,7 +245,7 @@ def find_manifest_entry(archive_dir, file_name=None):
     with open(manifest_path) as f:
         entries = [json.loads(line) for line in f if line.strip()]
     if file_name:
-        entries = [e for e in entries if e['name'] == file_name]
+        entries = [e for e in entries if _entry_matches(e, file_name)]
     if not entries:
         sys.exit(f"no archived file found in {archive_dir}" + (f" matching {file_name}" if file_name else ""))
     return entries[-1]  # last-write-wins, same convention ott itself uses
@@ -232,7 +255,9 @@ def load_manifest_entries(archive_dir, file_name=None):
     """Every distinct file in the archive, not just one — find_manifest_entry
     collapses to a single entries[-1], which is exactly why `host <dir>` with
     no --file only ever served the single most-recently-added file out of a
-    45-video archive. Dedupes by name (last-write-wins, same convention).
+    45-video archive. Dedupes by archive-relative path (last-write-wins,
+    same convention), so subdirectories are fine and a name can repeat
+    across them.
 
     Only 'video' and 'audio' entries are returned. Hosting depends on
     chunk data (load_leaves) and per-chunk byte math (entry['chunk_size']),
@@ -259,11 +284,14 @@ def load_manifest_entries(archive_dir, file_name=None):
         by_hash[e['sha256']] = e
     deduped = list(by_hash.values())
     if file_name:
-        deduped = [e for e in deduped if e['name'] == file_name]
-    by_name = {}
+        deduped = [e for e in deduped if _entry_matches(e, file_name)]
+    # then by where the file sits in the archive, not its bare name: two
+    # files called the same thing in different subdirectories are two
+    # files (Ryan: "can we support subdirectories?")
+    by_path = {}
     for e in deduped:
-        by_name[e['name']] = e
-    all_entries = list(by_name.values())
+        by_path[entry_rel_path(e)] = e
+    all_entries = list(by_path.values())
     entries = [e for e in all_entries if e.get('type') in ('video', 'audio')]
     if not entries:
         if all_entries:
@@ -300,7 +328,14 @@ def resolve_file_path(entry, archive_dir):
     last_path = entry.get('last_path')
     if last_path and os.path.exists(last_path):
         return last_path
-    return os.path.join(archive_dir, entry['name'])
+    # the file's place inside the archive first -- a file archived from
+    # a subdirectory lives there, not at the archive root -- then the
+    # bare name at the root for entries that predate orig_path
+    rel = entry_rel_path(entry)
+    candidate = os.path.join(archive_dir, *rel.split('/'))
+    if rel != entry['name'] and not os.path.exists(candidate) and os.path.exists(os.path.join(archive_dir, entry['name'])):
+        return os.path.join(archive_dir, entry['name'])
+    return candidate
 
 
 def _graceful_close(sock):

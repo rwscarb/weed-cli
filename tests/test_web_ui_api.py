@@ -734,3 +734,25 @@ def test_tags_are_set_whole_normalised_and_kept_on_the_record(web_server):
     # a garbage payload clears rather than errors
     status, resp = http_post_json(f'{web_server}/api/tags', {'content_hash': h, 'tags': 'nope'})
     assert status == 200 and resp['tags'] == []
+
+
+def test_upload_keeps_a_dropped_folders_subdirectory(web_server, tmp_path):
+    """A folder dropped on the Host tab arrives file by file as
+    'Folder/Sub/clip.mp4' and lands in that subdirectory of archive_dir,
+    archived with orig_path relative to the archive root, so host finds it
+    there; '..' can't escape the archive."""
+    archive_dir = str(tmp_path / 'archive')
+    data = os.urandom(150_000)
+    status, resp = http_post_raw(_upload_url(web_server, 'Live/Paris 1993/set.mp4', archive_dir), data)
+    assert status == 200 and resp['ok'] is True
+    assert resp['name'] == 'set.mp4' and resp['path'] == 'Live/Paris 1993/set.mp4'
+    dest = os.path.join(archive_dir, 'Live', 'Paris 1993', 'set.mp4')
+    assert os.path.isfile(dest) and os.path.getsize(dest) == len(data)
+    entries = node.load_manifest_entries(archive_dir)
+    assert [(e['name'], e['orig_path']) for e in entries] == [('set.mp4', 'Live/Paris 1993/set.mp4')]
+    entries[0]['last_path'] = '/gone'
+    assert node.resolve_file_path(entries[0], archive_dir) == dest
+
+    status, resp = http_post_raw(_upload_url(web_server, 'Live/../../escape.mp4', archive_dir), b'x' * 10)
+    assert status == 200 and resp['path'] == 'Live/escape.mp4'                  # '..' segments dropped
+    assert not os.path.exists(os.path.join(str(tmp_path), 'escape.mp4'))

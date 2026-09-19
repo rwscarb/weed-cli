@@ -109,6 +109,7 @@ def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_
     ott_dir = os.path.join(archive_dir, '.ott')
     os.makedirs(os.path.join(ott_dir, 'chunks'), exist_ok=True)
     file_path = os.path.join(archive_dir, name)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)   # name may carry a subdirectory
     with open(file_path, 'wb') as f:
         f.write(os.urandom(size))
 
@@ -120,7 +121,7 @@ def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_
         chunks = chunk_hashes(file_path, chunk_size)
         digest = merkle_root(chunks)
         entry = {
-            'sha256': digest, 'name': name, 'orig_path': name, 'last_path': file_path,
+            'sha256': digest, 'name': os.path.basename(name), 'orig_path': name, 'last_path': file_path,
             'size': size, 'added': '2026-01-01T00:00:00Z', 'type': content_type,
             'n_chunks': len(chunks), 'chunk_size': chunk_size,
         }
@@ -129,7 +130,7 @@ def make_fake_archive(archive_dir, name='clip.mp4', size=200_000, chunk_size=65_
     else:
         digest = hashlib.sha256(open(file_path, 'rb').read()).hexdigest()
         entry = {
-            'sha256': digest, 'name': name, 'orig_path': name, 'last_path': file_path,
+            'sha256': digest, 'name': os.path.basename(name), 'orig_path': name, 'last_path': file_path,
             'size': size, 'added': '2026-01-01T00:00:00Z', 'type': content_type,
             'n_chunks': 1, 'chunk_size': None,
         }

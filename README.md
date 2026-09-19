@@ -353,9 +353,16 @@ docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # 
   Python changes (`web_ui.py`, `node.py`) still need `make node`.
 - An entry's `last_path` (recorded at `ott add` time, on whatever
   machine ran it) is only trusted if it exists on disk; otherwise the
-  node falls back to the given archive directory. This matters the
-  moment the same content is mounted somewhere else than where it was
-  archived — e.g. `/share` here vs. wherever it originally lived.
+  node looks in the given archive directory at the entry's own
+  archive-relative path. This matters the moment the same content is
+  mounted somewhere else than where it was archived — e.g. `/share`
+  here vs. wherever it originally lived.
+- Subdirectories are fine: `ott add` walks a folder, records where
+  each file sits relative to the archive root, and `host` serves the
+  whole tree from one `.ott/`. Two files with the same name in
+  different subdirectories are two files; `--file Live/set.mkv` picks
+  one by its relative path. A folder dropped on the web UI's Host tab
+  is uploaded file by file into the same subdirectories.
 
 ## Core mechanisms
 

@@ -2732,14 +2732,30 @@ const app = createApp({
     },
     onHostFilesDropped(e) {
       this.hostDropzoneActive = false;
-      for (const file of e.dataTransfer.files) this.uploadFile(file);
+      // a dropped folder is walked and each file keeps its path inside
+      // it, so the archive gets the same subdirectories; plain files
+      // still go to the archive root
+      const items = [...(e.dataTransfer.items || [])];
+      const entries = items.map(it => it.webkitGetAsEntry && it.webkitGetAsEntry()).filter(Boolean);
+      if (!entries.length) { for (const file of e.dataTransfer.files) this.uploadFile(file); return; }
+      const walk = (entry, prefix) => new Promise((resolve) => {
+        if (entry.isFile) { entry.file(f => { this.uploadFile(f, prefix + f.name); resolve(); }, () => resolve()); return; }
+        if (!entry.isDirectory) { resolve(); return; }
+        const reader = entry.createReader(), all = [];
+        const more = () => reader.readEntries(batch => {
+          if (!batch.length) { Promise.all(all.map(x => walk(x, prefix + entry.name + '/'))).then(resolve); return; }
+          all.push(...batch); more();
+        }, () => resolve());
+        more();
+      });
+      for (const entry of entries) walk(entry, '');
     },
     // XMLHttpRequest, not fetch, specifically for upload.onprogress --
     // fetch still has no broadly-supported way to observe upload (not
     // download) progress, and a multi-hundred-MB video with zero
     // feedback until it's entirely done is exactly the kind of "is this
     // actually working" moment a progress bar exists to answer.
-    uploadFile(file) {
+    uploadFile(file, relPath) {
       // Deliberately NOT defaulting an empty archiveDir here (used to
       // fill in './share' client-side) -- that silently diverged from
       // what /api/upload itself defaults to (which, inside the Docker
@@ -2753,11 +2769,12 @@ const app = createApp({
       // so the upload archived successfully but never showed up, and
       // no restart could fix it since the file was never in /share.
       const archiveDir = this.hostForm.archiveDir;
-      const entry = { name: file.name, pct: 0, status: 'uploading', error: null, contentHash: null, archiveDir: null };
+      const name = relPath || file.webkitRelativePath || file.name;   // a folder's file keeps its subdirectory
+      const entry = { name, pct: 0, status: 'uploading', error: null, contentHash: null, archiveDir: null };
       this.uploads.push(entry);
 
       const xhr = new XMLHttpRequest();
-      const qs = 'name=' + encodeURIComponent(file.name) + '&archive_dir=' + encodeURIComponent(archiveDir);
+      const qs = 'name=' + encodeURIComponent(name) + '&archive_dir=' + encodeURIComponent(archiveDir);
       xhr.open('POST', '/api/upload?' + qs);
       xhr.upload.onprogress = (ev) => {
         if (ev.lengthComputable) entry.pct = Math.round((ev.loaded / ev.total) * 100);

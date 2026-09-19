@@ -1461,11 +1461,16 @@ class Handler(BaseHTTPRequestHandler):
         if not raw_name:
             return self._json({'error': 'name query param required'}, status=400)
 
-        # basename only -- '..' or an absolute path in the filename
-        # can't escape archive_dir this way
-        safe_name = os.path.basename(raw_name)
-        if not safe_name or safe_name in ('.', '..'):
+        # a dropped folder arrives as 'Folder/Sub/clip.mp4' and lands in
+        # that subdirectory of archive_dir. '..' and empty segments are
+        # dropped (an absolute path loses its leading slash the same
+        # way), so nothing can climb out of archive_dir -- same effect as
+        # the basename-only rule this replaces, for any file's own name
+        parts = [seg for seg in raw_name.replace('\\', '/').split('/') if seg not in ('', '.', '..')]
+        if not parts:
             return self._json({'error': f'invalid file name: {raw_name!r}'}, status=400)
+        safe_name = parts[-1]
+        rel_path = '/'.join(parts)
 
         if is_video(safe_name):
             content_type = 'video'
@@ -1478,8 +1483,8 @@ class Handler(BaseHTTPRequestHandler):
                 status=400)
 
         archive_dir = os.path.expanduser(archive_dir)
-        os.makedirs(archive_dir, exist_ok=True)
-        dest_path = os.path.join(archive_dir, safe_name)
+        dest_path = os.path.join(archive_dir, *parts)
+        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
 
         length = int(self.headers.get('Content-Length', 0))
         if length <= 0:
@@ -1519,7 +1524,7 @@ class Handler(BaseHTTPRequestHandler):
         chunks = chunk_hashes(dest_path, chunk_size)
         digest = merkle_root(chunks) if chunks else hashlib.sha256(b'').hexdigest()
         entry = {
-            'sha256': digest, 'name': safe_name, 'orig_path': safe_name, 'last_path': dest_path,
+            'sha256': digest, 'name': safe_name, 'orig_path': rel_path, 'last_path': dest_path,
             'size': written, 'added': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
             'type': content_type, 'n_chunks': len(chunks), 'chunk_size': chunk_size,
         }
@@ -1564,7 +1569,7 @@ class Handler(BaseHTTPRequestHandler):
                 f.write(existing + json.dumps(entry) + '\n')
             os.replace(manifest_tmp, manifest_path)
 
-        self._json({'ok': True, 'name': safe_name, 'content_hash': digest, 'type': content_type,
+        self._json({'ok': True, 'name': safe_name, 'path': rel_path, 'content_hash': digest, 'type': content_type,
                      'size': written, 'n_chunks': len(chunks), 'archive_dir': archive_dir})
 
     def _handle_host(self, body):

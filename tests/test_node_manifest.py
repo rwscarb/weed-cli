@@ -112,3 +112,34 @@ def test_resolve_file_path_falls_back_when_last_path_is_stale(tmp_path):
     entry['last_path'] = '/nonexistent/path/on/a/different/machine/good.mp4'
     resolved = node.resolve_file_path(entry, str(tmp_path))
     assert resolved == os.path.join(str(tmp_path), 'good.mp4')
+
+
+def test_a_file_in_a_subdirectory_resolves_there_when_last_path_is_stale(tmp_path):
+    """Ryan: "can we support subdirectories?" ott records orig_path relative
+    to the archive root, so a file added from a subdirectory is found
+    there when its absolute last_path is from another machine (the Docker
+    bind mount case) -- not looked for by bare name at the root."""
+    entry = make_fake_archive(tmp_path, name='Live/Paris 1993/set.mkv')
+    entry['last_path'] = '/somewhere/else/set.mkv'
+    assert node.resolve_file_path(entry, str(tmp_path)) == os.path.join(str(tmp_path), 'Live', 'Paris 1993', 'set.mkv')
+    kept, by_hash = node._load_hostable_entries(str(tmp_path), None)
+    assert [e['sha256'] for e in kept] == [entry['sha256']]
+
+
+def test_the_same_name_in_two_subdirectories_is_two_files(tmp_path):
+    a = make_fake_archive(tmp_path, name='Studio/take.mp4')
+    b = make_fake_archive(tmp_path, name='Live/take.mp4')
+    entries = node.load_manifest_entries(str(tmp_path))
+    assert sorted(e['sha256'] for e in entries) == sorted([a['sha256'], b['sha256']])
+    assert all(e['name'] == 'take.mp4' for e in entries)              # the bare name is what gets announced
+    # --file by the archive-relative path picks one; by bare name, both
+    assert [e['sha256'] for e in node.load_manifest_entries(str(tmp_path), 'Live/take.mp4')] == [b['sha256']]
+    assert len(node.load_manifest_entries(str(tmp_path), 'take.mp4')) == 2
+    assert node.find_manifest_entry(str(tmp_path), 'Studio/take.mp4')['sha256'] == a['sha256']
+
+
+def test_entry_rel_path_never_climbs_out_of_the_archive():
+    assert node.entry_rel_path({'name': 'x.mp4', 'orig_path': '../../etc/x.mp4'}) == 'x.mp4'
+    assert node.entry_rel_path({'name': 'x.mp4', 'orig_path': '/abs/x.mp4'}) == 'x.mp4'
+    assert node.entry_rel_path({'name': 'x.mp4', 'orig_path': 'Sub\\x.mp4'}) == 'Sub/x.mp4'
+    assert node.entry_rel_path({'name': 'x.mp4'}) == 'x.mp4'
