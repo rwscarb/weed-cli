@@ -333,9 +333,40 @@ def resolve_file_path(entry, archive_dir):
     # bare name at the root for entries that predate orig_path
     rel = entry_rel_path(entry)
     candidate = os.path.join(archive_dir, *rel.split('/'))
-    if rel != entry['name'] and not os.path.exists(candidate) and os.path.exists(os.path.join(archive_dir, entry['name'])):
+    if os.path.exists(candidate):
+        return candidate
+    # A file moved into a subfolder and fixed up with `ott fix-renames`
+    # has a fresh last_path but its old orig_path (only `ott reindex`
+    # re-anchors that), and from inside a container that last_path is
+    # the host machine's. Its tail is still where the file sits under
+    # the archive, so try the trailing segments, longest first (Ryan:
+    # "I ran `ott fix-renames` but it still shows them all as skipped").
+    if last_path:
+        parts = last_path.replace('\\', '/').strip('/').split('/')
+        for k in range(len(parts) - 1, 0, -1):
+            tail = os.path.join(archive_dir, *parts[-k:])
+            if os.path.exists(tail):
+                return tail
+    if rel != entry['name'] and os.path.exists(os.path.join(archive_dir, entry['name'])):
         return os.path.join(archive_dir, entry['name'])
     return candidate
+
+
+def entry_archive_rel(entry, archive_dir):
+    """Where the file actually sits under archive_dir, as a '/'-joined
+    relative path ('Live/Paris 1993/set.mkv') -- what gets announced as
+    the folder and listed on a host. From the resolved file when it's
+    inside archive_dir (so a moved file reports its new folder even while
+    its manifest entry still says the old one), else the entry's own."""
+    archive_dir = os.path.expanduser(archive_dir)
+    path = resolve_file_path(entry, archive_dir)
+    try:
+        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(archive_dir))
+    except ValueError:            # a different drive on Windows
+        return entry_rel_path(entry)
+    if rel.startswith('..'):
+        return entry_rel_path(entry)
+    return rel.replace(os.sep, '/')
 
 
 def _graceful_close(sock):

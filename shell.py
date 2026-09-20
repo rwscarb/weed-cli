@@ -204,7 +204,7 @@ class WeedShell(cmd.Cmd):
             for entry in entries:
                 result = node.publish(self.identity, relay, entry['sha256'], entry['name'],
                                        f'{advertise_host}:{port}', tunnel=tunnel, ott_status=ott_status,
-                    folder=os.path.dirname(node.entry_rel_path(entry)) or None)
+                    folder=os.path.dirname(node.entry_archive_rel(entry, archive_dir)) or None)
                 print(f'  announced {entry["name"]} on {relay}: {result}')
         elif not relay:
             print('  no relay set (run `relay` first, or pass --relay) — hosting without announcing')

@@ -1056,7 +1056,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                     host_addr = f'{advertise_host}:{port}'
                     result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
                                            tunnel=tunnel, ott_status=ott_status,
-                                           folder=os.path.dirname(node.entry_rel_path(entry)) or None)
+                                           folder=os.path.dirname(node.entry_archive_rel(entry, archive_dir)) or None)
                     # publish()/post_event() report a failed announce as a
                     # normal {'ok': False, ...} return, not an exception (an
                     # unreachable or malformed relay is routine, not
@@ -1071,7 +1071,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                     if isinstance(result, dict) and not result.get('ok', True):
                         print(f'  ✗ announce to {relay_url} failed: {result.get("error")}')
                 announced = relay_urls
-            files = [{'name': e['name'], 'content_hash': e['sha256'], 'path': node.entry_rel_path(e)} for e in entries]
+            files = [{'name': e['name'], 'content_hash': e['sha256'], 'path': node.entry_archive_rel(e, archive_dir)} for e in entries]
             with _lock:
                 _hosts[host_id].update(files=files, name=files[0]['name'],
                                         content_hash=files[0]['content_hash'],

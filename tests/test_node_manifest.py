@@ -143,3 +143,24 @@ def test_entry_rel_path_never_climbs_out_of_the_archive():
     assert node.entry_rel_path({'name': 'x.mp4', 'orig_path': '/abs/x.mp4'}) == 'x.mp4'
     assert node.entry_rel_path({'name': 'x.mp4', 'orig_path': 'Sub\\x.mp4'}) == 'Sub/x.mp4'
     assert node.entry_rel_path({'name': 'x.mp4'}) == 'x.mp4'
+
+
+def test_a_file_moved_into_a_folder_and_fixed_with_ott_fix_renames_is_found_by_its_paths_tail(tmp_path):
+    """Ryan: "my old files which I moved into a folder ... I ran `ott
+    fix-renames` but it still shows them all as getting skipped".
+    fix-renames rewrites last_path (absolute, on the host machine) and
+    leaves orig_path as the old bare name; inside the container that
+    last_path doesn't exist. The node now tries the trailing segments of
+    last_path under the archive, so the file is found in its new folder,
+    hosted, and announced with that folder."""
+    entry = make_fake_archive(tmp_path, name='set.mkv')
+    os.makedirs(tmp_path / 'Live' / 'Paris 1993')
+    os.rename(tmp_path / 'set.mkv', tmp_path / 'Live' / 'Paris 1993' / 'set.mkv')
+    entry['last_path'] = '/home/ryan/share/Live/Paris 1993/set.mkv'     # what fix-renames wrote, on the host
+    assert entry['orig_path'] == 'set.mkv'                                # and what it left alone
+    assert node.resolve_file_path(entry, str(tmp_path)) == os.path.join(str(tmp_path), 'Live', 'Paris 1993', 'set.mkv')
+    assert node.entry_archive_rel(entry, str(tmp_path)) == 'Live/Paris 1993/set.mkv'
+    with open(os.path.join(str(tmp_path), '.ott', 'manifest.jsonl'), 'w') as f:
+        f.write(__import__('json').dumps(entry) + '\n')
+    kept, by_hash = node._load_hostable_entries(str(tmp_path), None)
+    assert [e['sha256'] for e in kept] == [entry['sha256']]

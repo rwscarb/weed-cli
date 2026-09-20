@@ -363,6 +363,11 @@ docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # 
   different subdirectories are two files; `--file Live/set.mkv` picks
   one by its relative path. A folder dropped on the web UI's Host tab
   is uploaded file by file into the same subdirectories.
+  Files moved into a folder after archiving are found too: `ott
+  fix-renames` (or `ott reindex`) records the new place, and the node
+  looks for a file under the archive by the tail of that path, so the
+  host machine's absolute path not existing inside a container doesn't
+  matter.
   The folder travels with the listing (a `folder` field on the publish
   event), so Discover shows it as a crumb ahead of the title with a
   folder filter, a download keeps it for the Downloads tab's folder
