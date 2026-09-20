@@ -138,6 +138,12 @@
                     @click="clearDiscoverSearch">✕</button>
           </div>
         </label>
+        <label v-if="discoverFolders().length">Folder
+          <select v-model="discoverFolder" class="folder-select" id="discover-folder">
+            <option value="">all</option>
+            <option v-for="f in discoverFolders()" :key="f.folder" :value="f.folder">{{ '\u00a0\u00a0'.repeat(f.depth) }}{{ f.folder.split('/').pop() }} ({{ f.count }})</option>
+          </select>
+        </label>
         <filter-toggle v-model="filterDownloaded" label="Downloaded"></filter-toggle>
         <filter-toggle v-model="filterLiked" label="Liked"></filter-toggle>
         <filter-toggle v-model="filterSubscribed" label="Subscribed"></filter-toggle>
@@ -199,6 +205,8 @@
               </div>
               <div class="swipe-front">
                 <div class="title-row">
+                  <button type="button" class="folder-crumb" v-if="r.folder" :title="'only this folder: ' + r.folder"
+                          @click.stop="discoverFolder = r.folder; discoverFiltersOpen = true">📁 {{ r.folder }}</button>
                   <span class="title-text" v-marquee><span>{{ r.title }}</span></span>
                   <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
                   <div class="mobile-controls-line">
@@ -310,7 +318,7 @@
       <thead><tr><th>Name</th><th>Port</th><th>Price</th><th>Tunnel</th><th>BTC</th><th>Status</th></tr></thead>
       <tbody>
         <tr v-for="h in hosts" :key="h.id">
-          <td>{{ !h.name ? '(starting…)' : (h.files && h.files.length > 1 ? h.files.length + ' files' : h.name) }}</td>
+          <td :title="hostFilesTitle(h)">{{ hostFilesText(h) }}</td>
           <td>{{ h.port }}</td>
           <td>{{ h.price ? h.price + ' sat' : 'free' }}</td>
           <td>{{ (Array.isArray(h.tunnel) ? h.tunnel.join(', ') : h.tunnel) || '—' }}</td>
@@ -362,6 +370,14 @@
       <button type="button" class="tag-chip" v-for="t in tagBar()" :key="t.tag" :class="{active: t.active, empty: !t.count}"
               @click="toggleTagFilter(t.tag)">{{ t.tag }} <span class="tag-count">{{ t.count }}</span></button>
     </div>
+    <!-- folder filter: the hosts' folders the downloads came from
+         (vue-app.js downloadFolders); a folder includes its subfolders -->
+    <div class="tag-filter folder-filter" id="folder-filter" v-if="downloadFolders().length">
+      <span class="tag-filter-label">folders</span>
+      <button type="button" class="tag-chip" :class="{active: !folderFilter}" @click="folderFilter = ''">all</button>
+      <button type="button" class="tag-chip" v-for="f in downloadFolders()" :key="f.folder" :class="{active: folderFilter === f.folder}"
+              :style="{marginLeft: (f.depth * 0.8) + 'rem'}" @click="folderFilter = folderFilter === f.folder ? '' : f.folder">📁 {{ f.folder.split('/').pop() }} <span class="tag-count">{{ f.count }}</span></button>
+    </div>
     <!-- filter and sort (vue-app.js jobsShown): title search, status, order -->
     <div class="jobs-toolbar" id="jobs-toolbar">
       <input type="search" class="jobs-search" v-model="jobsQuery" placeholder="filter by title or hash…" autocomplete="off">
@@ -377,6 +393,7 @@
           <option value="plays">most played</option>
           <option value="recent">recently played</option>
           <option value="largest">largest</option>
+          <option value="folder">folder</option>
         </select>
       </label>
       <span class="jobs-count muted">{{ jobsShown().length }} / {{ jobs.length }}</span>
@@ -389,6 +406,8 @@
             <div class="swipe-row">
               <div class="swipe-front">
                 <div class="title-row">
+                  <button type="button" class="folder-crumb" v-if="folderOf(j)" :title="'only this folder: ' + folderOf(j)"
+                          @click.stop="folderFilter = folderOf(j)">📁 {{ folderOf(j) }}</button>
                   <span class="title-text" v-marquee :title="j.path || j.job_id"><span>{{ j.title || shortHash(j.content_hash) }}</span></span>
                   <code class="mobile-hash">{{ shortHash(j.content_hash) }}</code>
                   <div class="mobile-controls-line">

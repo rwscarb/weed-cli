@@ -23,6 +23,7 @@ from . import weedapi
 
 ROOT = [
     ('Downloads', 'downloads', {}),
+    ('Folders', 'folders', {}),
     ('Playlists', 'playlists', {}),
     ('Tags', 'tags', {}),
     ('Party', 'party', {}),
@@ -89,6 +90,18 @@ class Plugin:
         elif sort == 'plays':
             items.sort(key=lambda d: -(d.get('play_count') or 0))
         for d in items:
+            self._media(d)
+        self.ui.end(content='musicvideos')
+
+    def do_folders(self, path=''):
+        """The hosts' folder tree: subfolders first, then the files in
+        this folder. Downloads with no folder sit at the top."""
+        subs, files = self.api.folder_listing(path)
+        if not path and not subs and not files:
+            self.ui.notify('no downloads yet')
+        for name, n in subs.items():
+            self.ui.folder('%s/ (%d)' % (name, n), 'folders', path=(path + '/' + name).strip('/'))
+        for d in files:
             self._media(d)
         self.ui.end(content='musicvideos')
 

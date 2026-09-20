@@ -363,6 +363,11 @@ docker compose -f docker-compose.node.yml exec node python3 weed.py discover  # 
   different subdirectories are two files; `--file Live/set.mkv` picks
   one by its relative path. A folder dropped on the web UI's Host tab
   is uploaded file by file into the same subdirectories.
+  The folder travels with the listing (a `folder` field on the publish
+  event), so Discover shows it as a crumb ahead of the title with a
+  folder filter, a download keeps it for the Downloads tab's folder
+  chips and sort, the Active hosts table counts files and folders, and
+  the Kodi add-on has a **Folders** screen that walks the tree.
 
 ## Core mechanisms
 

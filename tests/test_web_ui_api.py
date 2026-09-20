@@ -756,3 +756,14 @@ def test_upload_keeps_a_dropped_folders_subdirectory(web_server, tmp_path):
     status, resp = http_post_raw(_upload_url(web_server, 'Live/../../escape.mp4', archive_dir), b'x' * 10)
     assert status == 200 and resp['path'] == 'Live/escape.mp4'                  # '..' segments dropped
     assert not os.path.exists(os.path.join(str(tmp_path), 'escape.mp4'))
+
+
+def test_a_download_keeps_the_folder_its_listing_came_with(web_server):
+    """The Discover row's folder rides along on the download request and
+    is kept on the job (and, once it finishes, the library record), which
+    is what the Downloads tab's folder filter and Kodi's Folders read."""
+    status, resp = http_post_json(f'{web_server}/api/download',
+                                  {'content_hash': 'a' * 64, 'relay': ['http://127.0.0.1:1'], 'title': 'x', 'folder': '/Live/Paris 1993/'})
+    assert status == 200
+    job = http_get_json(f'{web_server}/api/download/' + resp['job_id'])
+    assert job['folder'] == 'Live/Paris 1993'

@@ -59,7 +59,7 @@ def test_root_and_downloads_list_finished_tracks_newest_first(web_server):
     _seed()
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run()
-    assert [f[1] for f in ui.folders] == ['downloads', 'playlists', 'tags', 'party', 'live', 'live', 'live', 'autopilot']
+    assert [f[1] for f in ui.folders] == ['downloads', 'folders', 'playlists', 'tags', 'party', 'live', 'live', 'live', 'autopilot']
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='downloads')
     assert [m[0] for m in ui.items] == ['Track 2', 'Track 1', 'Track 0']          # newest first, extension dropped, no unfinished
@@ -187,7 +187,7 @@ def test_kodi_own_url_parameters_are_ignored(web_server):
     _seed()
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(content_type='video')
-    assert [f[1] for f in ui.folders][:2] == ['downloads', 'playlists'] and not ui.notices
+    assert [f[1] for f in ui.folders][:2] == ['downloads', 'folders'] and not ui.notices
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='downloads', content_type='audio', tag='chill')
     assert [m[0] for m in ui.items] == ['Track 1', 'Track 0'] and not ui.notices
@@ -265,3 +265,26 @@ def test_muxed_live_feed_needs_audio_and_ffmpeg(web_server, monkeypatch):
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='live', what='mux')
     assert ui.played == [(web_server + '/api/orbit-mux', 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})]
+
+
+def test_folders_screen_walks_the_hosts_folder_tree(web_server):
+    """Ryan: "can the folder structure be visible in the web_ui and kodi
+    app?" A download remembers the folder its host announced; the Folders
+    screen lists subfolders (with counts, subfolders included) then the
+    files in the folder, and a track with no folder sits at the top."""
+    _seed()
+    with web_ui._lock:
+        web_ui._library['downloads']['a' * 64]['folder'] = 'Live/Paris 1993'
+        web_ui._library['downloads']['b' * 64]['folder'] = 'Live'
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='folders')
+    assert ui.folders == [('Live/ (2)', 'folders', {'path': 'Live'})]
+    assert [m[0] for m in ui.items] == ['Track 2']                               # the one with no folder
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='folders', path='Live')
+    assert ui.folders == [('Paris 1993/ (1)', 'folders', {'path': 'Live/Paris 1993'})]
+    assert [m[0] for m in ui.items] == ['Track 1']
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='folders', path='Live/Paris 1993')
+    assert ui.folders == [] and [m[0] for m in ui.items] == ['Track 0']
+    assert ui.ended == ['musicvideos']

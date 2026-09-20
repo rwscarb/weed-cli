@@ -1006,7 +1006,8 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                 for relay_url in relay_urls:
                     host_addr = f'{advertise_host}:{port}'
                     result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                                           tunnel=tunnel, ott_status=ott_status)
+                                           tunnel=tunnel, ott_status=ott_status,
+                                           folder=os.path.dirname(node.entry_rel_path(entry)) or None)
                     # publish()/post_event() report a failed announce as a
                     # normal {'ok': False, ...} return, not an exception (an
                     # unreachable or malformed relay is routine, not
@@ -1021,7 +1022,7 @@ def _run_host_job(host_id, archive_dir, file_name, port, price, relay_urls, adve
                     if isinstance(result, dict) and not result.get('ok', True):
                         print(f'  ✗ announce to {relay_url} failed: {result.get("error")}')
                 announced = relay_urls
-            files = [{'name': e['name'], 'content_hash': e['sha256']} for e in entries]
+            files = [{'name': e['name'], 'content_hash': e['sha256'], 'path': node.entry_rel_path(e)} for e in entries]
             with _lock:
                 _hosts[host_id].update(files=files, name=files[0]['name'],
                                         content_hash=files[0]['content_hash'],
@@ -1088,7 +1089,7 @@ def _run_download_job(job_id, content_hash, relay_urls, out_path, k, use_lightni
             _library['downloads'][content_hash] = {
                 'content_hash': content_hash, 'job_id': job_id, 'path': path,
                 'title': title, 'downloaded_at': time.time(), 'size': size, 'bps': bps,
-                'signer_pubkey': signer_pubkey,
+                'signer_pubkey': signer_pubkey, 'folder': _jobs[job_id].get('folder'),
                 **{k: prev[k] for k in ('tags', 'play_count', 'last_played') if k in prev},
             }
             _save_library()
@@ -1657,12 +1658,13 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({'error': "lightning requires lightning_node (who's paying)"}, status=400)
         title = body.get('title')
         signer_pubkey = body.get('signer_pubkey')
+        folder = (body.get('folder') or '').strip('/') or None   # the host's folder, from the listing
 
         job_id = uuid.uuid4().hex[:12]
         with _lock:
             _jobs[job_id] = {'status': 'running', 'idx': 0, 'n_chunks': None,
                               'content_hash': content_hash, 'path': None, 'title': title,
-                              'signer_pubkey': signer_pubkey, 'error': None}
+                              'signer_pubkey': signer_pubkey, 'folder': folder, 'error': None}
         threading.Thread(target=_run_download_job,
                           args=(job_id, content_hash, relay_urls, out_path, k, use_lightning, title,
                                 signer_pubkey),

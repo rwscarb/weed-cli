@@ -127,6 +127,8 @@ const app = createApp({
       // need to detect viewport width here just to pick the right
       // default.
       discoverFiltersOpen: false,
+      discoverFolder: '',      // a host's folder to narrow Discover to ('' = all)
+      folderFilter: '',        // same for Downloads
 
       // server-persisted memory of what's been downloaded/liked/subscribed/
       // playlisted, so a page reload (or a server restart) doesn't forget
@@ -322,9 +324,11 @@ const app = createApp({
       const matchesTriState = (state, isTrue) =>
         state === 'any' || (state === 'yes') === isTrue;
       return this.discoverResults.filter(r => {
-        if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)) {
+        if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)
+            && !(r.folder || '').toLowerCase().includes(q)) {
           return false;
         }
+        if (this.discoverFolder && !this.inFolder(r.folder, this.discoverFolder)) return false;
         // recentlyDownloaded exempts a row from the Downloaded filter
         // specifically -- see its own comment in data() for the real
         // report this closes (a just-finished download disappearing out
@@ -1583,13 +1587,14 @@ const app = createApp({
       const resp = await this.startDownload(
         r.content_hash, this.discoverRelaysList, null, false, null, r.title, r.signer_pubkey,
         {
+          folder: r.folder || null,
           onProgress: pct => { r._dl.pct = pct; },
           onLog: log => { r._dl.log = log; },
           onDone: job => {
             r._dl.downloading = false;
             this.library.downloads[r.content_hash] = {
               content_hash: r.content_hash, job_id: job.job_id, path: job.path,
-              title: r.title, size: job.size, bps: job.bps, signer_pubkey: r.signer_pubkey,
+              title: r.title, size: job.size, bps: job.bps, signer_pubkey: r.signer_pubkey, folder: r.folder || null,
             };
             this.recentlyDownloaded.add(r.content_hash);
           },
@@ -2329,6 +2334,15 @@ const app = createApp({
     // Free-form labels on a download record (server: /api/tags), shown
     // as chips on the Downloads rows, filterable from the bar above the
     // table, and one of them can be what Autopilot draws from.
+    // the Active hosts table: "12 files in 3 folders", every path in the tooltip
+    hostFilesText(h) {
+      if (!h.name) return '(starting…)';
+      const files = h.files || [];
+      if (files.length <= 1) return h.name;
+      const folders = new Set(files.map(f => (f.path || '').split('/').slice(0, -1).join('/')).filter(Boolean));
+      return files.length + ' files' + (folders.size ? ' in ' + folders.size + ' folder' + (folders.size === 1 ? '' : 's') : '');
+    },
+    hostFilesTitle(h) { return (h.files || []).map(f => f.path || f.name).join('\n'); },
     tagsOf(contentHash) {
       const rec = this.library.downloads[contentHash];
       return (rec && Array.isArray(rec.tags)) ? rec.tags : [];
@@ -2344,12 +2358,30 @@ const app = createApp({
       const have = this.tagsOf(contentHash);
       return tags.every(t => have.includes(t));
     },
+    // ── folders: where a file sat in the host's archive ('Live/Paris
+    // 1993'), announced with the listing and kept on the download. A
+    // filter set to a folder includes its subfolders.
+    inFolder(folder, filter) { const f = (folder || ''); return !filter || f === filter || f.startsWith(filter + '/'); },
+    folderOf(j) { const rec = this.library.downloads[j.content_hash]; return j.folder || (rec && rec.folder) || ''; },
+    folderCounts(folders) {
+      const counts = {};
+      for (const f of folders) {
+        if (!f) continue;
+        const parts = f.split('/');
+        for (let i = 1; i <= parts.length; i++) { const p = parts.slice(0, i).join('/'); counts[p] = (counts[p] || 0) + 1; }
+      }
+      return Object.keys(counts).sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map(folder => ({ folder, count: counts[folder], depth: folder.split('/').length - 1 }));
+    },
+    downloadFolders() { return this.folderCounts(this.jobs.map(j => this.folderOf(j))); },
+    // the folders the hosts have, with how many listings sit in each (subfolders included)
+    discoverFolders() { return this.folderCounts(this.discoverResults.map(r => r.folder)); },
     jobsShown() {
       let list = this.jobs;
       if (this.tagFilters.length) list = list.filter(j => this.hasAllTags(j.content_hash, this.tagFilters));
+      if (this.folderFilter) list = list.filter(j => this.inFolder(this.folderOf(j), this.folderFilter));
       if (this.jobsStatus !== 'all') list = list.filter(j => j.status === this.jobsStatus);
       const q = this.jobsQuery.trim().toLowerCase();
-      if (q) list = list.filter(j => ((j.title || '') + ' ' + (j.content_hash || '')).toLowerCase().includes(q));
+      if (q) list = list.filter(j => ((j.title || '') + ' ' + (j.content_hash || '') + ' ' + this.folderOf(j)).toLowerCase().includes(q));
       const rec = j => this.library.downloads[j.content_hash] || {};
       const title = j => (this.displayTitle(j.title) || j.title || j.content_hash || '').toLowerCase();
       const by = {
@@ -2360,6 +2392,7 @@ const app = createApp({
         plays: (a, b) => (rec(b).play_count || 0) - (rec(a).play_count || 0),
         recent: (a, b) => (rec(b).last_played || 0) - (rec(a).last_played || 0),
         largest: (a, b) => (rec(b).size || 0) - (rec(a).size || 0),
+        folder: (a, b) => this.folderOf(a).localeCompare(this.folderOf(b), undefined, { numeric: true }) || title(a).localeCompare(title(b), undefined, { numeric: true }),
       }[this.jobsSort];
       if (!by) return list;
       // stable: the original order breaks ties, so a running job with no
@@ -2854,7 +2887,7 @@ const app = createApp({
       const resp = await this.apiPost('/api/download', {
         content_hash: contentHash, relay: relays, out_path: outPath,
         lightning: lightning, lightning_node: lightning ? lightningNode : null,
-        title: title || null, signer_pubkey: signerPubkey || null,
+        title: title || null, signer_pubkey: signerPubkey || null, folder: (extra && extra.folder) || null,
       });
       if (resp.error) return resp;
 

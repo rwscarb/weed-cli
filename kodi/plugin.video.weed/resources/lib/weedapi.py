@@ -149,6 +149,22 @@ class WeedApi:
         out.sort(key=lambda d: d.get('downloaded_at') or 0, reverse=True)
         return out
 
+    def folder_listing(self, path='', lib=None):
+        """What sits directly under one of the hosts' folders: a dict of
+        subfolder -> how many downloads are under it (subfolders included),
+        and the downloads in the folder itself. path '' is the top."""
+        path = (path or '').strip('/')
+        prefix = path + '/' if path else ''
+        subs, files = {}, []
+        for d in self.downloads(lib):
+            f = (d.get('folder') or '').strip('/')
+            if f == path:
+                files.append(d)
+            elif f.startswith(prefix):
+                head = f[len(prefix):].split('/')[0]
+                subs[head] = subs.get(head, 0) + 1
+        return dict(sorted(subs.items(), key=lambda kv: kv[0].lower())), files
+
     def by_hash(self, lib=None):
         return {d['content_hash']: d for d in self.downloads(lib)}
 

@@ -256,7 +256,8 @@ def cmd_host(args):
         host_addr = f'{args.advertise_host}:{args.port}'
         for entry in entries:
             result = node.publish(identity, relay_url, entry['sha256'], entry['name'], host_addr,
-                                   tunnel=args.tunnel, ott_status=ott_status)
+                                   tunnel=args.tunnel, ott_status=ott_status,
+                folder=os.path.dirname(node.entry_rel_path(entry)) or None)
             print(f"announced {entry['name']} on {relay_url}: {result}")
     # REGISTER's token is the file's own content hash (see
     # run_host_tunnel/connect_via_tunnel), so a whole tree just means one

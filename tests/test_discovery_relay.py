@@ -226,3 +226,16 @@ def test_publish_records_every_tunnel_in_failover_order(relay):
                  tunnel='127.0.0.1:9199')
     single = next(e for e in node.discover([relay]) if e['content_hash'] == 'd' * 64)
     assert single['tunnel'] == '127.0.0.1:9199' and 'tunnels' not in single   # unchanged shape
+
+
+def test_publish_carries_the_hosts_folder_only_when_there_is_one(relay):
+    """A file hosted from a subdirectory of its archive announces that
+    folder, so a listing can show the host's tree; a file at the root
+    sends the same event it always did."""
+    identity = node.load_or_create_identity()
+    assert node.publish(identity, relay, content_hash='e' * 64, title='set.mkv', host_addr='127.0.0.1:9201',
+                        folder='Live/Paris 1993').get('ok') is True
+    assert node.publish(identity, relay, content_hash='f' * 64, title='root.mkv', host_addr='127.0.0.1:9201').get('ok') is True
+    by_hash = {r['content_hash']: r for r in node.discover([relay])}
+    assert by_hash['e' * 64]['folder'] == 'Live/Paris 1993'
+    assert 'folder' not in by_hash['f' * 64]

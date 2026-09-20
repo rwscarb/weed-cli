@@ -1153,3 +1153,35 @@ def test_the_crossfade_handover_opens_the_file_at_deck_bs_time_and_keeps_deck_b_
     page.wait_for_function("vm => !vm.xfade.handover && vm._orbitAnalyser.gainA.gain.value > 0.99", arg=vm, timeout=8_000)
     page.wait_for_function("vm => vm.$refs.deckB.getAttribute('src') === null", arg=vm, timeout=3_000)
     assert page.evaluate("vm => vm.$refs.deckB.style.opacity", vm) == '0'
+
+
+def test_folders_show_as_crumbs_and_filters_in_discover_and_downloads(page, golden_path_server):
+    """Ryan: "can the folder structure be visible in the web_ui?" A listing
+    announced from a subdirectory shows its folder as a crumb ahead of the
+    title, the Discover filters get a folder select, and a download keeps
+    the folder for the Downloads tab's folder chips."""
+    import node
+    node.publish(node.load_or_create_identity(), golden_path_server['relay_url'], 'e' * 64, 'Paris set',
+                 '127.0.0.1:1', folder='Live/Paris 1993')
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.evaluate("vm => { vm.discoverFiltersOpen = true; vm.refreshDiscover(); }", vm)   # the filters fold away on a narrow window
+    row = page.locator('#discover-table tbody tr', has_text='Paris set').first
+    row.wait_for()
+    assert row.locator('.folder-crumb').inner_text() == '📁 Live/Paris 1993'
+    assert page.locator('#discover-table tbody tr', has_text='Test Clip').locator('.folder-crumb').count() == 0
+    assert [o.strip() for o in page.locator('#discover-folder option').all_inner_texts()] == ['all', 'Live (1)', 'Paris 1993 (1)']
+    page.select_option('#discover-folder', 'Live')
+    assert page.locator('#discover-table tbody tr[data-hash]').count() == 1
+    page.select_option('#discover-folder', '')
+    page.fill('input[placeholder="title or content hash"]', 'paris 1993')            # the search matches folders too
+    assert page.locator('#discover-table tbody tr[data-hash]').count() == 1
+    # the Downloads tab: the one real download, given a folder on its record
+    page.evaluate("([vm, h]) => { vm.library.downloads[h].folder = 'Live/Paris 1993'; }", [vm, golden_path_server['content_hash']])
+    page.click('.tab-btn:has-text("Downloads")')
+    assert [' '.join(c.split()) for c in page.locator('#folder-filter .tag-chip').all_inner_texts()] == ['all', '📁 Live 1', '📁 Paris 1993 1']
+    assert page.locator('#jobs-table .folder-crumb').first.inner_text() == '📁 Live/Paris 1993'
+    page.locator('#folder-filter .tag-chip', has_text='Paris 1993').click()
+    assert page.evaluate("vm => [vm.folderFilter, vm.jobsShown().length]", vm) == ['Live/Paris 1993', 1]
+    page.evaluate("vm => { vm.folderFilter = 'Studio'; }", vm)
+    assert page.evaluate("vm => vm.jobsShown().length", vm) == 0

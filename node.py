@@ -1624,7 +1624,7 @@ def sync_relays(relay_urls, identity=None, all_signers=False, per_signer_cap=Non
     return {'relays': report, 'unreachable': unreachable, 'events': len(keep)}
 
 
-def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ott_status=None):
+def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ott_status=None, folder=None):
     """tunnel, if given, is 'relay_host:relay_port' for a tunnel_relay.py
     instance this host registered with — additive and backward compatible,
     same as the optional PRICE wire verb: an event without it just means
@@ -1644,6 +1644,11 @@ def publish(identity, relay_url, content_hash, title, host_addr, tunnel=None, ot
                   tunnel=tunnels[0] if tunnels else None, ott_status=ott_status)
     if len(tunnels) > 1:
         fields['tunnels'] = tunnels
+    # folder: where the file sits inside its archive ('Live/Paris 1993'),
+    # so a listing can show the tree the host has; same additive rule --
+    # a file at the archive root sends nothing new
+    if folder:
+        fields['folder'] = folder
     event = identity.sign_event('publish', **fields)
     return _post_to(relay_url, event)
 
