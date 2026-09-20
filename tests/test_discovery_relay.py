@@ -239,3 +239,21 @@ def test_publish_carries_the_hosts_folder_only_when_there_is_one(relay):
     by_hash = {r['content_hash']: r for r in node.discover([relay])}
     assert by_hash['e' * 64]['folder'] == 'Live/Paris 1993'
     assert 'folder' not in by_hash['f' * 64]
+
+
+def test_a_re_announce_replaces_the_signers_older_event_for_that_file(relay):
+    """Ryan: "Host shows 515 files in 18 folders, but I only see a subset
+    of those in Discover" -- the relay's per-signer cap counted every
+    announcement, and a host re-announces every file on every start, so
+    a big library churned its own oldest listings out. A newer
+    publish/unpublish for the same content by the same signer now
+    replaces the older one, so the relay holds one event per file."""
+    import time
+    identity = node.load_or_create_identity()
+    for i in range(3):
+        node.publish(identity, relay, content_hash='1' * 64, title='same file', host_addr='127.0.0.1:%d' % (9201 + i))
+        time.sleep(0.01)
+    node.publish(identity, relay, content_hash='2' * 64, title='another', host_addr='127.0.0.1:9201')
+    mine = [e for e in node.fetch_events(relay, 'publish') if e['payload']['signer_pubkey'] == identity.pubkey_hex()]
+    assert sorted(e['payload']['content_hash'][0] for e in mine) == ['1', '2']          # one event per file, not three
+    assert next(e for e in mine if e['payload']['content_hash'][0] == '1')['payload']['host'] == '127.0.0.1:9203'   # the newest

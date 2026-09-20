@@ -55,7 +55,15 @@ MAX_BODY_SIZE = 256 * 1024
 # free -- but that's a fundamentally bigger attack (unlimited identities)
 # than "spam with one key," and defending against it needs proof-of-
 # work/stake, a bigger design decision than this PoC calls for.
-MAX_EVENTS_PER_SIGNER = 200
+# The cap counts *distinct* things a signer has said: a re-announce of a
+# file (every host start posts one per file) replaces that signer's
+# older publish/unpublish for the same content_hash rather than adding
+# to the pile, so a host with N files holds N events here however often
+# it restarts. Sized for a real library, not a demo -- 200 with the old
+# additive counting meant a 515-file host only ever had its last 200
+# announcements listed (Ryan: "Host shows 515 files in 18 folders, but I
+# only see a subset of those in Discover").
+MAX_EVENTS_PER_SIGNER = 5000
 
 
 def _load_events():
@@ -88,6 +96,26 @@ def _rewrite_events_file():
         for event in _events:
             f.write(json.dumps(event) + '\n')
     os.replace(tmp, DATA_PATH)
+
+
+def _supersede(event):
+    """Caller must hold _lock. A signer's newer publish/unpublish for a
+    content_hash replaces their older one(s) for it; a stale post (older
+    ts than what's held) is the one dropped instead. Returns False when
+    the incoming event is the stale one and should not be stored."""
+    p = event['payload']
+    if p.get('type') not in ('publish', 'unpublish') or not p.get('content_hash') or not p.get('signer_pubkey'):
+        return True
+    same = [e for e in _events if e['payload'].get('type') in ('publish', 'unpublish')
+            and e['payload'].get('content_hash') == p['content_hash']
+            and e['payload'].get('signer_pubkey') == p['signer_pubkey']]
+    if any(e['payload'].get('ts', 0) > p.get('ts', 0) for e in same):
+        return False
+    if same:
+        for e in same:
+            _events.remove(e)
+        _rewrite_events_file()
+    return True
 
 
 def _evict_oldest_for_signer(signer_pubkey):
@@ -133,7 +161,7 @@ class RelayHandler(BaseHTTPRequestHandler):
             return
         eid = attestation_id(event)
         with _lock:
-            if not any(attestation_id(e) == eid for e in _events):
+            if not any(attestation_id(e) == eid for e in _events) and _supersede(event):
                 _evict_oldest_for_signer(event['payload'].get('signer_pubkey'))
                 _events.append(event)
                 _append_event(event)
