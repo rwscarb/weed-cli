@@ -889,6 +889,55 @@ def _load_library():
         pass
 
 
+_folder_fetch = {'at': 0.0}
+
+
+def _backfill_folders(mapping):
+    """Give downloads that have no folder yet the one their content is
+    known to sit in -- from this node's own hosts (a file hosted and
+    downloaded on the same node) or a relay listing. Downloads made before
+    folders were announced have none on their record (Ryan: "when I open
+    Folders in kodi, I just see files, no folders"), and so would every
+    download of a listing announced by an older node."""
+    changed = False
+    with _lock:
+        for h, rec in _library['downloads'].items():
+            if not rec.get('folder') and mapping.get(h):
+                rec['folder'] = mapping[h]
+                changed = True
+        if changed:
+            _save_library()
+    return changed
+
+
+def _hosted_folders():
+    out = {}
+    with _lock:
+        for h in _hosts.values():
+            for f in h.get('files') or []:
+                folder = os.path.dirname(f.get('path') or '')
+                if folder:
+                    out[f['content_hash']] = folder
+    return out
+
+
+def _fill_folders_for_library():
+    """Before /api/library answers: the cheap local backfill every time,
+    and -- when something still has no folder -- a relay lookup in the
+    background at most every few minutes, so the next request has it."""
+    _backfill_folders(_hosted_folders())
+    with _lock:
+        missing = any(not rec.get('folder') and rec.get('job_id') for rec in _library['downloads'].values())
+    if missing and time.time() - _folder_fetch['at'] > 300:
+        _folder_fetch['at'] = time.time()
+        def fetch():
+            try:
+                _backfill_folders({r['content_hash']: r.get('folder') for r in node.discover([DEFAULT_RELAY])})
+            except Exception:
+                pass
+        threading.Thread(target=fetch, daemon=True).start()
+
+
 def _save_library():
     """Caller must hold _lock. Written to a tmp file + os.replace so a
     crash mid-write can't leave a half-written, unparseable JSON file
@@ -1280,6 +1329,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_chat_get(qs)
         if path == '/api/discover':
             results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
+            _backfill_folders({r['content_hash']: r.get('folder') for r in results})
             return self._json({'results': results})
         if path == '/api/hosts':
             with _lock:
@@ -1297,6 +1347,7 @@ class Handler(BaseHTTPRequestHandler):
                     h['ott_status'] = _ott_status(h['archive_dir'])
             return self._json({'hosts': hosts})
         if path == '/api/library':
+            _fill_folders_for_library()
             with _lock:
                 return self._json({
                     'downloads': list(_library['downloads'].values()),

@@ -288,3 +288,21 @@ def test_folders_screen_walks_the_hosts_folder_tree(web_server):
     plugin.Plugin(ui).run(action='folders', path='Live/Paris 1993')
     assert ui.folders == [] and [m[0] for m in ui.items] == ['Track 0']
     assert ui.ended == ['musicvideos']
+
+
+def test_folders_are_filled_in_for_downloads_made_before_folders_were_announced(web_server):
+    """Ryan: "when I open Folders in kodi, I just see files, no folders" --
+    the library's existing downloads carry no folder. The node fills one
+    in from what it's hosting itself (a file hosted and downloaded on the
+    same node), so the tree appears without re-downloading anything."""
+    _seed()
+    with web_ui._lock:
+        web_ui._hosts['h1'] = {'id': 'h1', 'status': 'running', 'name': 'x', 'files': [
+            {'name': 'Track 0.mp4', 'content_hash': 'a' * 64, 'path': 'Live/Paris 1993/Track 0.mp4'},
+            {'name': 'Track 1.mp4', 'content_hash': 'b' * 64, 'path': 'Track 1.mp4'}]}
+    ui = FakeUI(web_server)
+    plugin.Plugin(ui).run(action='folders')
+    assert ui.folders == [('Live/ (1)', 'folders', {'path': 'Live'})]
+    assert [m[0] for m in ui.items] == ['Track 2', 'Track 1']
+    with web_ui._lock:
+        assert web_ui._library['downloads']['a' * 64]['folder'] == 'Live/Paris 1993'   # kept on the record
