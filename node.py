@@ -349,7 +349,47 @@ def resolve_file_path(entry, archive_dir):
                 return tail
     if rel != entry['name'] and os.path.exists(os.path.join(archive_dir, entry['name'])):
         return os.path.join(archive_dir, entry['name'])
+    # Last resort: the file was moved inside the archive and nothing in
+    # its manifest entry says where (fix-renames wasn't run, or ran
+    # against another copy). Find it by name anywhere under archive_dir,
+    # the same size when there's a choice (Ryan: "I have files in
+    # ./share/folder, but they're not showing up anymore").
+    found = _archive_file_index(archive_dir).get(entry['name']) or []
+    if found:
+        same_size = [p for p in found if entry.get('size') is None or _size_of(p) == entry.get('size')]
+        pick = same_size or found
+        if len(pick) == 1 or same_size:
+            return pick[0]
     return candidate
+
+
+def _size_of(path):
+    try:
+        return os.path.getsize(path)
+    except OSError:
+        return None
+
+
+_archive_index_cache = {}     # abspath(archive_dir) -> (built_at, {name: [paths]})
+ARCHIVE_INDEX_TTL = 30
+
+
+def _archive_file_index(archive_dir):
+    """Every file under archive_dir by bare name (the archive's own .ott/
+    and hidden directories skipped), rebuilt at most every
+    ARCHIVE_INDEX_TTL seconds, so resolving a whole archive of moved files
+    costs one walk rather than one per file."""
+    key = os.path.abspath(archive_dir)
+    hit = _archive_index_cache.get(key)
+    if hit and time.time() - hit[0] < ARCHIVE_INDEX_TTL:
+        return hit[1]
+    index = {}
+    for dirpath, dirs, files in os.walk(key):
+        dirs[:] = sorted(d for d in dirs if not d.startswith('.'))
+        for name in files:
+            index.setdefault(name, []).append(os.path.join(dirpath, name))
+    _archive_index_cache[key] = (time.time(), index)
+    return index
 
 
 def entry_archive_rel(entry, archive_dir):
@@ -511,7 +551,8 @@ def _load_hostable_entries(archive_dir, file_name):
         if not os.path.exists(file_path):
             if file_name is not None or len(entries) == 1:
                 sys.exit(f"archived file not found on disk at {file_path}")
-            print(f"[host] skipping {entry.get('name')!r}: archived file not found on disk at {file_path}", file=sys.stderr)
+            print(f"[host] skipping {entry.get('name')!r}: archived file not found on disk at {file_path} "
+                  f"(nor anywhere under {archive_dir} by that name)", file=sys.stderr)
             continue
         leaves = load_leaves(archive_dir, entry['sha256'])
         entries_by_hash[entry['sha256']] = (entry, leaves, file_path)

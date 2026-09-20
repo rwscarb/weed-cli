@@ -164,3 +164,23 @@ def test_a_file_moved_into_a_folder_and_fixed_with_ott_fix_renames_is_found_by_i
         f.write(__import__('json').dumps(entry) + '\n')
     kept, by_hash = node._load_hostable_entries(str(tmp_path), None)
     assert [e['sha256'] for e in kept] == [entry['sha256']]
+
+
+def test_a_file_moved_into_a_folder_with_an_untouched_manifest_is_found_by_name_and_size(tmp_path):
+    """Ryan: "I have files in ./share/folder, but they're not showing up
+    anymore". Nothing on the entry says where the file went (last_path
+    still the old root location, orig_path the bare name), so the node
+    looks for it by name anywhere under the archive, taking the one of
+    the right size when the name repeats."""
+    entry = make_fake_archive(tmp_path, name='set.mkv', size=120_000)
+    os.makedirs(tmp_path / 'Mid-Air Thief' / 'Crumbling')
+    os.rename(tmp_path / 'set.mkv', tmp_path / 'Mid-Air Thief' / 'Crumbling' / 'set.mkv')
+    os.makedirs(tmp_path / 'Other')
+    with open(tmp_path / 'Other' / 'set.mkv', 'wb') as f:                          # a different file with the same name
+        f.write(b'x' * 10)
+    assert not os.path.exists(entry['last_path'])
+    node._archive_index_cache.clear()
+    assert node.resolve_file_path(entry, str(tmp_path)) == os.path.join(str(tmp_path), 'Mid-Air Thief', 'Crumbling', 'set.mkv')
+    assert node.entry_archive_rel(entry, str(tmp_path)) == 'Mid-Air Thief/Crumbling/set.mkv'
+    kept, by_hash = node._load_hostable_entries(str(tmp_path), None)
+    assert [e['sha256'] for e in kept] == [entry['sha256']]
