@@ -1799,5 +1799,12 @@ def group_discover_by_content(results):
         rep = dict(group[0])
         rep['host_count'] = len(group)
         rep['hosts'] = [g['host'] for g in group]
+        # the folder from whichever publisher names one (newest first):
+        # a second host of the same file on an older build, or a mirror,
+        # announces without it, and its newer event must not blank it
+        for g in group:
+            if g.get('folder'):
+                rep['folder'] = g['folder']
+                break
         merged.append(rep)
     return merged

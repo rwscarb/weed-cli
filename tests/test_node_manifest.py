@@ -184,3 +184,18 @@ def test_a_file_moved_into_a_folder_with_an_untouched_manifest_is_found_by_name_
     assert node.entry_archive_rel(entry, str(tmp_path)) == 'Mid-Air Thief/Crumbling/set.mkv'
     kept, by_hash = node._load_hostable_entries(str(tmp_path), None)
     assert [e['sha256'] for e in kept] == [entry['sha256']]
+
+
+def test_discover_grouping_keeps_a_folder_any_publisher_named():
+    """Ryan: "the folder still doesn't show up in Discover. It does show
+    up in Downloads though". One row per content hash keeps the newest
+    publisher's fields; if that publisher (an older build, a mirror)
+    announced without a folder, the folder comes from one that did."""
+    rows = [
+        {'content_hash': 'a' * 64, 'signer_pubkey': 'old', 'host': '1.2.3.4:9201', 'title': 'set.mkv', 'ts': 200},
+        {'content_hash': 'a' * 64, 'signer_pubkey': 'new', 'host': '5.6.7.8:9201', 'title': 'set.mkv', 'ts': 100, 'folder': 'Live'},
+        {'content_hash': 'b' * 64, 'signer_pubkey': 'old', 'host': '1.2.3.4:9201', 'title': 'root.mkv', 'ts': 300},
+    ]
+    merged = {r['content_hash']: r for r in node.group_discover_by_content(rows)}
+    assert merged['a' * 64]['host'] == '1.2.3.4:9201' and merged['a' * 64]['folder'] == 'Live'
+    assert 'folder' not in merged['b' * 64]

@@ -205,8 +205,8 @@
               </div>
               <div class="swipe-front">
                 <div class="title-row">
-                  <button type="button" class="folder-crumb" v-if="r.folder" :title="'only this folder: ' + r.folder"
-                          @click.stop="discoverFolder = r.folder; discoverFiltersOpen = true">📁 {{ r.folder }}</button>
+                  <button type="button" class="folder-crumb" v-if="listingFolder(r)" :title="'only this folder: ' + listingFolder(r)"
+                          @click.stop="discoverFolder = listingFolder(r); discoverFiltersOpen = true">📁 {{ listingFolder(r) }}</button>
                   <span class="title-text" v-marquee><span>{{ r.title }}</span></span>
                   <code class="mobile-hash">{{ shortHash(r.content_hash, 8) }}</code>
                   <div class="mobile-controls-line">

@@ -325,10 +325,10 @@ const app = createApp({
         state === 'any' || (state === 'yes') === isTrue;
       return this.discoverResults.filter(r => {
         if (q && !(r.title || '').toLowerCase().includes(q) && !r.content_hash.toLowerCase().includes(q)
-            && !(r.folder || '').toLowerCase().includes(q)) {
+            && !this.listingFolder(r).toLowerCase().includes(q)) {
           return false;
         }
-        if (this.discoverFolder && !this.inFolder(r.folder, this.discoverFolder)) return false;
+        if (this.discoverFolder && !this.inFolder(this.listingFolder(r), this.discoverFolder)) return false;
         // recentlyDownloaded exempts a row from the Downloaded filter
         // specifically -- see its own comment in data() for the real
         // report this closes (a just-finished download disappearing out
@@ -1587,7 +1587,7 @@ const app = createApp({
       const resp = await this.startDownload(
         r.content_hash, this.discoverRelaysList, null, false, null, r.title, r.signer_pubkey,
         {
-          folder: r.folder || null,
+          folder: this.listingFolder(r) || null,
           onProgress: pct => { r._dl.pct = pct; },
           onLog: log => { r._dl.log = log; },
           onDone: job => {
@@ -2374,7 +2374,10 @@ const app = createApp({
     },
     downloadFolders() { return this.folderCounts(this.jobs.map(j => this.folderOf(j))); },
     // the folders the hosts have, with how many listings sit in each (subfolders included)
-    discoverFolders() { return this.folderCounts(this.discoverResults.map(r => r.folder)); },
+    // a listing's folder: what it was announced with, else what this node's
+    // own download of it knows (backfilled from its hosts)
+    listingFolder(r) { const rec = this.library.downloads[r.content_hash]; return r.folder || (rec && rec.folder) || ''; },
+    discoverFolders() { return this.folderCounts(this.discoverResults.map(r => this.listingFolder(r))); },
     jobsShown() {
       let list = this.jobs;
       if (this.tagFilters.length) list = list.filter(j => this.hasAllTags(j.content_hash, this.tagFilters));
