@@ -871,3 +871,25 @@ def test_a_mode_knob_shows_a_picker_and_switches_once_it_rests(page, golden_path
     page.wait_for_function("() => window.orbitViz.current().mode !== 'tunnel'", timeout=2_000)   # the knob rested
     assert page.evaluate("() => window.orbitViz.current().mode") == modes[4]
     assert page.evaluate("() => document.getElementById('vizToast').textContent") == 'Mode: ' + (modes[4][0].upper() + modes[4][1:])
+
+
+def test_a_change_by_hand_holds_autopilot_off_for_a_while(page, golden_path_server):
+    """Ryan: "if I change the mode, autopilot shouldn't immediately change
+    the mode again, it should cancel whatever it was going to do until a
+    throttled/debounced time". With Autopilot on, picking a mode by hand
+    drops its pending switch and restarts its phase clock after a hold;
+    a fade-style change holds it the same way. The readout says so."""
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.select_option('#transitionSelect', 'none')
+    page.evaluate("() => window.orbitViz.setAutopilotTiming({ modeMin: 0.2, modeMax: 0.4, videoMin: 0.2, videoMax: 0.4, holdSec: 1.5 })")
+    page.click('#autopilotToggle')
+    page.wait_for_function("() => window.orbitViz.current().mode !== 'tunnel' || window.orbitViz.debugState().vizOff", timeout=3_000)   # it's running
+    page.click('[data-viz="plasma"]')                                          # a change by hand
+    assert page.evaluate("() => document.getElementById('vizToast').textContent") == 'Mode: Plasma · Autopilot holds 2s'
+    assert 1.2 < page.evaluate("() => window.orbitViz.autopilotHoldRemaining()") <= 1.5
+    page.wait_for_timeout(1000)                                                # well past several 0.4 s phases
+    assert page.evaluate("() => [window.orbitViz.current().mode, window.orbitViz.debugState().vizOff]") == ['plasma', False]
+    page.wait_for_function("() => window.orbitViz.current().mode !== 'plasma' || window.orbitViz.debugState().vizOff", timeout=3_000)   # then it resumes
+    page.select_option('#transitionSelect', 'wipe')                            # a fade-style change holds it too
+    assert page.evaluate("() => window.orbitViz.autopilotHoldRemaining()") > 1.2

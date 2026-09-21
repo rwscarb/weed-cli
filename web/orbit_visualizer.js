@@ -733,6 +733,7 @@ window.orbitViz = (function () {
     const cap = (id) => id.charAt(0).toUpperCase() + id.slice(1);
     const modeLabel = (id) => (pluginModes.get(id) || {}).label || cap(id);
     const transitionLabel = (id) => { const o = transitionSelect && transitionSelect.querySelector(`option[value="${CSS.escape(id)}"]`); return o ? o.textContent : cap(id); };
+    const holdSuffix = () => (s.autopilot && !auto.acting && auto.seeded ? ' · Autopilot holds ' + Math.round(AUTO.holdSec) + 's' : '');
     const pickSuffix = () => (s.randomPicked ? ' · ' + transitionLabel(s.randomPicked) + ' (random)' : '');
     const autopilotLabel = () => { const st = autopilotState(); return st === 'off' ? 'Autopilot off' : st === 'down' ? 'Autopilot ↓ lesser-played' : 'Autopilot ↑ popular'; };
     s.readout = readout;
@@ -775,9 +776,10 @@ window.orbitViz = (function () {
       if (!VIZ_MODES.includes(mode) && !pluginModes.has(mode)) return;
       // grab the outgoing picture *before* the switch -- the transition
       // draws it over the new mode until it's gone
-      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: ' + modeLabel(mode) + pickSuffix()); }
+      if ((mode !== s.vizMode || s.vizOff) && !s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: ' + modeLabel(mode) + pickSuffix() + holdSuffix()); }
       s.vizMode = mode;
       s.vizOff = false;
+      autopilotHold();
       persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.toggle('active', b.dataset.viz === mode));
       if (vizModeSelect && vizModeSelect.value !== mode) vizModeSelect.value = mode;
@@ -811,8 +813,9 @@ window.orbitViz = (function () {
     // select, arrow cycling or Shift+digit all go through setVizMode,
     // which switches the effects straight back on.
     function setVizOff(transitionOverride) {
-      if (!s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: Video' + pickSuffix()); }
+      if (!s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: Video' + pickSuffix() + holdSuffix()); }
       s.vizOff = true;
+      autopilotHold();
       persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
       if (vizModeSelect) vizModeSelect.value = '__video';
@@ -903,8 +906,9 @@ window.orbitViz = (function () {
 
     function setTransition(type) {
       if (!allTransitions().includes(type)) type = 'burn';
-      if (type !== s.transition && !s.restoring) showToast('Transition: ' + transitionLabel(type));
+      if (type !== s.transition && !s.restoring) showToast('Transition: ' + transitionLabel(type) + holdSuffix());
       s.transition = type;
+      autopilotHold();
       if (transitionSelect && transitionSelect.value !== type) transitionSelect.value = type;
     }
     function setTransitionMs(ms) {
@@ -1302,11 +1306,26 @@ window.orbitViz = (function () {
     // video for VIDEO_MIN..VIDEO_MAX, then a fresh mode -- always
     // different from the last few. A strong onset ends a phase early
     // once its minimum has passed; the maximum ends it regardless.
-    const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12 };
+    // holdSec: how long a change made by hand (mode, video off, fade
+    // style) keeps Autopilot's hands off before its phase clock restarts
+    // (Ryan: "if I change the mode, autopilot shouldn't immediately
+    // change the mode again")
+    const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12, holdSec: 60 };
     const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'starfield'];
     const PUNCHY = ['flash', 'glitch', 'shatter', 'rgbsplit', 'crtoff', 'slide', 'fliptiles', 'burn', 'pixelate'];
     const GENTLE = ['crossfade', 'blur', 'dissolve', 'iris', 'wipe', 'melt', 'droplet', 'zoomblur', 'warp', 'blinds', 'wave', 'spin'];
-    const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false };
+    const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false, acting: false };
+    // a change by hand while Autopilot is on: whatever it was about to do
+    // is dropped, and its phase starts over once the hold has passed --
+    // counted from the end of the hold, so the hand-picked mode then gets
+    // a full phase of its own on top
+    function autopilotHold() {
+      if (!s.autopilot || auto.acting || s.restoring || !auto.seeded) return;
+      auto.phaseStart = performance.now() + AUTO.holdSec * 1000;
+      auto.phase = s.vizOff ? 'video' : 'mode';
+      if (!s.vizOff && s.vizMode && !auto.recent.includes(s.vizMode)) auto.recent = [...auto.recent, s.vizMode].slice(-6);
+    }
+    s.autopilotHoldRemaining = () => (s.autopilot && auto.seeded) ? Math.max(0, (auto.phaseStart - performance.now()) / 1000) : 0;
     function autopilotTick() {
       const now = performance.now();
       const f = s.freqData, maxBin = Math.floor(f.length * 0.7);
@@ -1320,6 +1339,7 @@ window.orbitViz = (function () {
       const onset = strength > 1.8 && energy > 0.05;
       if (!auto.seeded) { auto.seeded = true; auto.phaseStart = now; auto.phase = s.vizOff ? 'video' : 'mode'; }
       const elapsed = (now - auto.phaseStart) / 1000;
+      if (elapsed < 0) return;                                  // a hand-made change is holding it (autopilotHold)
       const [lo, hi] = auto.phase === 'mode' ? [AUTO.modeMin, AUTO.modeMax] : [AUTO.videoMin, AUTO.videoMax];
       if (!(elapsed >= hi || (onset && elapsed >= lo))) return;
       // the transition for this switch: a hard hit gets a punchy one,
@@ -1329,6 +1349,8 @@ window.orbitViz = (function () {
       let choices = pool.filter(t => (wantPunchy ? PUNCHY : GENTLE).includes(t));
       if (!choices.length) choices = pool;
       const transition = choices[Math.floor(Math.random() * choices.length)];
+      auto.acting = true;
+      try {
       if (auto.phase === 'mode') {
         // back to the plain video between modes
         setVizOff(transition);
@@ -1348,6 +1370,7 @@ window.orbitViz = (function () {
         setVizMode(mode, transition);
         auto.phase = 'mode';
       }
+      } finally { auto.acting = false; }
       auto.phaseStart = now;
     }
     // The 🤖 control has three states, cycled by a click (or the MIDI
@@ -2252,6 +2275,7 @@ window.orbitViz = (function () {
     // run the configured transition from whatever's on the canvas now
     transition: () => { if (state) state.snapshotForTransition(); },
     debugState: () => (state ? state.transitionDebug() : null),
+    autopilotHoldRemaining: () => (state ? state.autopilotHoldRemaining() : 0),
     // the party chat overlay -- vue-app.js keeps the list polled and
     // pushes it here with the overlay's on/off
     setChat: (messages, on) => { if (state) state.setChat(messages, on); },
