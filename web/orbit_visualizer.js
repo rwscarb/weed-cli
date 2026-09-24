@@ -1311,7 +1311,7 @@ window.orbitViz = (function () {
     // (Ryan: "if I change the mode, autopilot shouldn't immediately
     // change the mode again")
     const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12, holdSec: 60 };
-    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'starfield'];
+    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'starfield', 'flow'];
     const PUNCHY = ['flash', 'glitch', 'shatter', 'rgbsplit', 'crtoff', 'slide', 'fliptiles', 'burn', 'pixelate'];
     const GENTLE = ['crossfade', 'blur', 'dissolve', 'iris', 'wipe', 'melt', 'droplet', 'zoomblur', 'warp', 'blinds', 'wave', 'spin'];
     const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false, acting: false };

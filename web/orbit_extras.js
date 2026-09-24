@@ -8,7 +8,8 @@
 // tag in index.html to get the built-ins only.
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
-//              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe
+//              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
+//              Aurora, Flow, Life, Tree
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -2455,6 +2456,285 @@
         vctx.drawImage(sc, 0, 0, PW, PH, jog, 0, VW, VH);
         vctx.fillStyle = scanlines(vctx); vctx.fillRect(0, 0, VW, VH);
         vctx.imageSmoothingEnabled = true;
+      },
+    });
+  })();
+
+  // ── Aurora (mode): northern lights over a ridge line. Five curtains,
+  // each listening to its own slice of the spectrum -- the lowest
+  // curtain to the bass, the highest to the treble -- so how tall each
+  // one reaches is how loud its band is. The folds ripple sideways with
+  // Speed, stars twinkle behind, and a bass hit lifts the whole sky.
+  (function () {
+    const CURTAINS = 5, strips = [];
+    for (let c = 0; c < CURTAINS; c++) strips.push(offscreen());
+    let stars = null, ridge = null, glow = 0;
+    viz.registerMode({
+      id: 'aurora', label: 'Aurora',
+      init() { glow = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, vizRot, vizUserScale } = ctx;
+        if (!stars) {
+          stars = Array.from({ length: 170 }, (_, i) => ({ x: hash(i * 3.1), y: hash(i * 7.7) * 0.8, s: 0.6 + hash(i * 1.3) * 1.4, p: hash(i * 5.9) * 6.28 }));
+          ridge = Array.from({ length: 81 }, (_, i) => 0.8 + 0.06 * Math.sin(i * 0.23) + 0.04 * Math.sin(i * 0.61 + 1) + 0.025 * hash(i * 2.7));
+        }
+        const bass = bassOf(freqData);
+        glow = Math.max(glow * 0.93, bass);
+        const sky = vctx.createLinearGradient(0, 0, 0, VH);
+        sky.addColorStop(0, '#01020a');
+        sky.addColorStop(1, `hsl(${(hueBase + 220) % 360 | 0},50%,${(5 + glow * 9) | 0}%)`);
+        vctx.fillStyle = sky; vctx.fillRect(0, 0, VW, VH);
+        for (const st of stars) {
+          const tw = 0.5 + 0.5 * Math.sin(vizRot * 5 + st.p);
+          vctx.fillStyle = `rgba(255,255,255,${(0.15 + tw * 0.6).toFixed(2)})`;
+          vctx.fillRect(st.x * VW, st.y * VH, st.s, st.s);
+        }
+        // each curtain is one vertical gradient strip, stretched column by
+        // column -- far cheaper than a gradient per column
+        const maxBin = Math.floor(freqData.length * 0.7), STEP = Math.max(3, (VW / 180) | 0);
+        vctx.globalCompositeOperation = 'lighter';
+        for (let c = CURTAINS - 1; c >= 0; c--) {
+          const lo = Math.floor(Math.pow(c / CURTAINS, 1.6) * maxBin);
+          const hi = Math.max(lo + 1, Math.floor(Math.pow((c + 1) / CURTAINS, 1.6) * maxBin));
+          let lvl = 0; for (let i = lo; i < hi; i++) lvl += freqData[i]; lvl /= (hi - lo) * 255;
+          const hue = (hueBase + 110 + c * 32) % 360;
+          const { c: sc, ctx: sx } = strips[c](1, 64);
+          const g = sx.createLinearGradient(0, 0, 0, 64);
+          g.addColorStop(0, `hsla(${(hue + 60) % 360 | 0},100%,60%,0)`);
+          g.addColorStop(0.55, `hsla(${(hue + 30) % 360 | 0},100%,55%,0.35)`);
+          g.addColorStop(0.9, `hsla(${hue | 0},100%,70%,0.9)`);
+          g.addColorStop(1, `hsla(${hue | 0},100%,85%,0)`);
+          sx.clearRect(0, 0, 1, 64); sx.fillStyle = g; sx.fillRect(0, 0, 1, 64);
+          const base = VH * (0.62 - c * 0.075), ph = c * 1.9;
+          const height = VH * (0.1 + lvl * 0.55) * vizUserScale;
+          for (let x = 0; x < VW; x += STEP) {
+            const u = x / VW;
+            const fold = Math.sin(u * 6 + vizRot * 1.1 + ph) * 0.55 + Math.sin(u * 15 - vizRot * 1.9 + ph * 2) * 0.3 + Math.sin(u * 2.3 + vizRot * 0.4) * 0.15;
+            const hem = base + fold * VH * 0.07;
+            const rays = 0.5 + 0.5 * Math.sin(u * 41 + vizRot * 2.6 + ph) * Math.sin(u * 13 - vizRot * 0.9);
+            vctx.globalAlpha = clamp01((0.2 + 0.8 * rays) * (0.3 + lvl * 1.1) * (0.8 + glow * 0.4));
+            const h = height * (0.7 + 0.3 * rays);
+            vctx.drawImage(sc, x, hem - h, STEP + 1, h * 1.08);
+          }
+        }
+        vctx.globalAlpha = 1; vctx.globalCompositeOperation = 'source-over';
+        vctx.fillStyle = '#010104';
+        vctx.beginPath(); vctx.moveTo(0, VH);
+        for (let i = 0; i < ridge.length; i++) vctx.lineTo((i / (ridge.length - 1)) * VW, ridge[i] * VH);
+        vctx.lineTo(VW, VH); vctx.closePath(); vctx.fill();
+      },
+    });
+  })();
+
+  // ── Flow (mode): a couple of thousand particles riding an invisible
+  // current and leaving silk trails. The current is a few slow sine
+  // fields added together; the bass twists it harder, the overall
+  // energy sweeps the particles along faster. Colour follows heading.
+  (function () {
+    const N = 1800, BUCKETS = 12;
+    let pts = [], lastW = 0, lastH = 0;
+    viz.registerMode({
+      id: 'flow', label: 'Flow',
+      init() { pts = []; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
+        const spawn = (p) => { p.x = Math.random() * VW; p.y = Math.random() * VH; p.life = 60 + Math.random() * 180; };
+        if (pts.length !== N || VW !== lastW || VH !== lastH) {
+          pts = Array.from({ length: N }, () => { const p = {}; spawn(p); return p; });
+          lastW = VW; lastH = VH;
+          vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        }
+        const bass = bassOf(freqData), energy = energyOf(freqData);
+        fadeFrame(vctx, VW, VH, 0.05);
+        const S = Math.min(VW, VH), k = 3.2 / (S * vizUserScale), t = vizRot * 0.35;
+        const twist = 1.3 + bass * 3, step = S * 0.0022 * speed * (0.6 + energy * 3.5);
+        const paths = Array.from({ length: BUCKETS }, () => new Path2D());
+        for (const p of pts) {
+          const u = p.x * k, v = p.y * k;
+          const a = (Math.sin(u * 1.1 + t) + Math.cos(v * 1.3 - t * 0.8) + Math.sin((u - v) * 0.7 + t * 0.5)) * twist;
+          const nx = p.x + Math.cos(a) * step, ny = p.y + Math.sin(a) * step;
+          const b = ((((a / (Math.PI * 2)) % 1) + 1) % 1) * BUCKETS | 0;
+          paths[b].moveTo(p.x, p.y); paths[b].lineTo(nx, ny);
+          p.x = nx; p.y = ny; p.life -= 1;
+          if (p.life <= 0 || nx < 0 || nx > VW || ny < 0 || ny > VH) spawn(p);
+        }
+        vctx.lineWidth = Math.max(1, S / 500); vctx.lineCap = 'round';
+        for (let b = 0; b < BUCKETS; b++) {
+          vctx.strokeStyle = `hsla(${(hueBase + b * (140 / BUCKETS)) % 360 | 0},95%,${(55 + energy * 25) | 0}%,0.55)`;
+          vctx.stroke(paths[b]);
+        }
+      },
+    });
+  })();
+
+  // ── Life (mode): Conway's Game of Life, played to the music. The
+  // board steps faster when it's loud, and every onset drops gliders
+  // across it -- one per loud band, low bands on the left, high on the
+  // right. Newborn cells flash white-hot and cool as they age; dead
+  // ones leave an ember. With video playing, the bright parts of the
+  // picture keep seeding the board, so it slowly takes on the scene.
+  (function () {
+    const GLIDER = [[1, 0], [2, 1], [0, 2], [1, 2], [2, 2]];
+    const grid = offscreen();
+    let GW = 0, GH = 0, cur = null, nxt = null, age = null, ember = null;
+    let acc = 0, steps = 0, bassAvg = 0, cooldown = 0;
+    function reset(w, h) {
+      GW = w; GH = h; cur = new Uint8Array(w * h); nxt = new Uint8Array(w * h);
+      age = new Uint16Array(w * h); ember = new Float32Array(w * h);
+      for (let i = 0; i < cur.length; i++) cur[i] = Math.random() < 0.18 ? 1 : 0;
+    }
+    function glider(x0, y0) {
+      const fx = Math.random() < 0.5, fy = Math.random() < 0.5;
+      for (const [gx, gy] of GLIDER) {
+        const x = (x0 + (fx ? 2 - gx : gx) + GW) % GW, y = (y0 + (fy ? 2 - gy : gy) + GH) % GH;
+        cur[y * GW + x] = 1;
+      }
+    }
+    function step() {
+      for (let y = 0; y < GH; y++) {
+        const ym = ((y - 1 + GH) % GH) * GW, y0 = y * GW, yp = ((y + 1) % GH) * GW;
+        for (let x = 0; x < GW; x++) {
+          const xm = (x - 1 + GW) % GW, xp = (x + 1) % GW;
+          const n = cur[ym + xm] + cur[ym + x] + cur[ym + xp] + cur[y0 + xm] + cur[y0 + xp] + cur[yp + xm] + cur[yp + x] + cur[yp + xp];
+          const i = y0 + x, alive = cur[i] ? (n === 2 || n === 3) : n === 3;
+          nxt[i] = alive ? 1 : 0;
+          if (alive) age[i] = cur[i] ? Math.min(65535, age[i] + 1) : 0;
+          else if (cur[i]) ember[i] = 1;
+        }
+      }
+      const t = cur; cur = nxt; nxt = t; steps++;
+    }
+    viz.registerMode({
+      id: 'life', label: 'Life',
+      init() { GW = 0; acc = 0; steps = 0; bassAvg = 0; cooldown = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const w = Math.max(40, Math.round(160 / vizUserScale)), h = Math.max(20, Math.round(w * VH / VW));
+        if (w !== GW || h !== GH) reset(w, h);
+        const bass = bassOf(freqData), energy = energyOf(freqData);
+        bassAvg = bassAvg * 0.92 + bass * 0.08; cooldown = Math.max(0, cooldown - 1);
+        if (cooldown === 0 && bass > bassAvg * 1.2 + 0.05) {
+          cooldown = 10;
+          const BANDS = 8, maxBin = Math.floor(freqData.length * 0.7);
+          for (let b = 0; b < BANDS; b++) {
+            const lvl = freqData[Math.floor(Math.pow((b + 0.5) / BANDS, 1.5) * maxBin)] / 255;
+            if (lvl > 0.45) glider(Math.floor(((b + Math.random()) / BANDS) * GW), Math.floor(Math.random() * GH));
+          }
+        }
+        acc += speed * (0.2 + energy * 0.9);
+        let n = 0;
+        while (acc >= 1 && n < 4) { acc -= 1; n++; step(); }
+        let pop = 0; for (let i = 0; i < cur.length; i++) pop += cur[i];
+        if (pop < cur.length * 0.015) {
+          // the board died out: a fresh patch of soup somewhere
+          const px = (Math.random() * GW) | 0, py = (Math.random() * GH) | 0, r = Math.max(4, GW / 12 | 0);
+          for (let y = -r; y <= r; y++) for (let x = -r; x <= r; x++) if (Math.random() < 0.35) cur[((py + y + GH) % GH) * GW + ((px + x + GW) % GW)] = 1;
+        }
+        if (videoFrame && n && steps % 6 === 0) {
+          for (let k = 0; k < GW * GH * 0.02; k++) {
+            const x = (Math.random() * GW) | 0, y = (Math.random() * GH) | 0;
+            if (lumAt(videoFrame, (x + 0.5) * VW / GW, (y + 0.5) * VH / GH, VW, VH) > 0.7) cur[y * GW + x] = 1;
+          }
+        }
+        // age -> colour, white-hot at birth cooling to the drifting hue
+        const hsl = (hh, ss, ll) => {
+          const a = ss * Math.min(ll, 1 - ll), f = (m) => { const kk = (m + hh / 30) % 12; return ll - a * Math.max(-1, Math.min(kk - 3, 9 - kk, 1)); };
+          return [f(0) * 255, f(8) * 255, f(4) * 255];
+        };
+        const LUT = []; for (let a = 0; a < 32; a++) LUT.push(hsl((hueBase + a * 4) % 360, 0.9, 0.9 - Math.min(a, 24) * 0.014));
+        const EMB = hsl((hueBase + 200) % 360, 0.8, 0.35);
+        const { c, ctx: gc } = grid(GW, GH);
+        const img = gc.createImageData(GW, GH), d = img.data;
+        for (let i = 0; i < cur.length; i++) {
+          const o = i * 4;
+          if (cur[i]) { const col = LUT[Math.min(31, age[i])]; d[o] = col[0]; d[o + 1] = col[1]; d[o + 2] = col[2]; }
+          else { const e = ember[i]; if (e > 0.02) { d[o] = EMB[0] * e; d[o + 1] = EMB[1] * e; d[o + 2] = EMB[2] * e; ember[i] = e * 0.9; } else ember[i] = 0; }
+          d[o + 3] = 255;
+        }
+        gc.putImageData(img, 0, 0);
+        vctx.imageSmoothingEnabled = false;
+        vctx.drawImage(c, 0, 0, VW, VH);
+        vctx.imageSmoothingEnabled = true;
+        // a fine grid over the cells, so they read as cells
+        const cw = VW / GW, ch = VH / GH;
+        if (cw >= 5) {
+          vctx.strokeStyle = 'rgba(0,0,0,0.45)'; vctx.lineWidth = 1; vctx.beginPath();
+          for (let x = 1; x < GW; x++) { vctx.moveTo(x * cw, 0); vctx.lineTo(x * cw, VH); }
+          for (let y = 1; y < GH; y++) { vctx.moveTo(0, y * ch); vctx.lineTo(VW, y * ch); }
+          vctx.stroke();
+        }
+      },
+    });
+  })();
+
+  // ── Tree (mode): a fractal tree that grows to the music. Each level
+  // of branching listens to its own band -- the trunk to the bass, the
+  // twigs to the treble -- which sets how wide that level spreads; the
+  // crown sways in a wind that follows the energy. Beats shake glowing
+  // blossoms loose from the tips, and they drift down to the ground.
+  (function () {
+    const DEPTH = 10;
+    let petals = [], bassAvg = 0, cooldown = 0;
+    viz.registerMode({
+      id: 'tree', label: 'Tree',
+      init() { petals = []; bassAvg = 0; cooldown = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        const band = [];
+        for (let d = 0; d < DEPTH; d++) band.push(freqData[Math.floor(Math.pow((d + 0.5) / DEPTH, 1.4) * maxBin)] / 255);
+        const bg = vctx.createLinearGradient(0, 0, 0, VH);
+        bg.addColorStop(0, '#03020a'); bg.addColorStop(1, `hsl(${(hueBase + 260) % 360 | 0},40%,8%)`);
+        vctx.fillStyle = bg; vctx.fillRect(0, 0, VW, VH);
+        const groundY = cy + VH * 0.44;
+        const gg = vctx.createRadialGradient(cx, groundY, 0, cx, groundY, VW * 0.4);
+        gg.addColorStop(0, `hsla(${(hueBase + 300) % 360 | 0},80%,50%,${(0.15 + bass * 0.25).toFixed(2)})`); gg.addColorStop(1, 'rgba(0,0,0,0)');
+        vctx.fillStyle = gg; vctx.fillRect(0, groundY - VH * 0.2, VW, VH * 0.4);
+        // collect every branch into one path per depth, tips separately
+        const paths = Array.from({ length: DEPTH }, () => new Path2D()), tips = [];
+        const wind = Math.sin(vizRot * 1.3) * (0.04 + energy * 0.12) + Math.sin(vizRot * 3.1) * 0.02;
+        const grow = (x, y, ang, len, d, id) => {
+          const x2 = x + Math.cos(ang) * len, y2 = y + Math.sin(ang) * len;
+          paths[d].moveTo(x, y); paths[d].lineTo(x2, y2);
+          if (d === DEPTH - 1) { tips.push([x2, y2]); return; }
+          const spread = 0.22 + band[d] * 0.55, j = hash(id * 1.37);
+          const sway = wind * (d + 1) * 0.35;
+          grow(x2, y2, ang - spread * (0.8 + 0.4 * j) + sway, len * (0.7 + 0.08 * hash(id * 2.9)), d + 1, id * 2);
+          grow(x2, y2, ang + spread * (0.8 + 0.4 * (1 - j)) + sway, len * (0.7 + 0.08 * hash(id * 4.3)), d + 1, id * 2 + 1);
+        };
+        grow(cx, groundY, -Math.PI / 2 + wind * 0.3, VH * 0.2 * vizUserScale * (0.9 + bass * 0.2), 0, 1);
+        vctx.lineCap = 'round';
+        for (let d = 0; d < DEPTH; d++) {
+          const k = d / (DEPTH - 1);
+          vctx.lineWidth = Math.max(1, (VH / 60) * vizUserScale * Math.pow(0.68, d));
+          vctx.strokeStyle = `hsl(${(hueBase + 20 + k * 120) % 360 | 0},${(30 + k * 60) | 0}%,${(20 + k * 45 + band[d] * 20) | 0}%)`;
+          vctx.stroke(paths[d]);
+        }
+        // blossoms at the tips, glowing with the treble
+        const treble = band[DEPTH - 1], r = Math.max(1.5, VH / 260) * (1 + treble * 1.5);
+        vctx.globalCompositeOperation = 'lighter';
+        vctx.fillStyle = `hsla(${(hueBase + 320) % 360 | 0},100%,70%,${(0.25 + treble * 0.6).toFixed(2)})`;
+        vctx.beginPath();
+        for (const [x, y] of tips) { vctx.moveTo(x + r, y); vctx.arc(x, y, r, 0, Math.PI * 2); }
+        vctx.fill();
+        bassAvg = bassAvg * 0.92 + bass * 0.08; cooldown = Math.max(0, cooldown - 1);
+        if (cooldown === 0 && bass > bassAvg * 1.2 + 0.05) {
+          cooldown = 8;
+          for (let n = 0; n < 12 + bass * 30; n++) {
+            const [x, y] = tips[(Math.random() * tips.length) | 0];
+            petals.push({ x, y, vx: (Math.random() - 0.5) * 1.5, vy: -Math.random(), life: 1, hue: (hueBase + 300 + Math.random() * 60) % 360, ph: Math.random() * 6.28 });
+          }
+        }
+        for (let i = petals.length - 1; i >= 0; i--) {
+          const p = petals[i];
+          p.vy = Math.min(p.vy + 0.04 * speed, 1.6); p.x += (p.vx + Math.sin(vizRot * 4 + p.ph) * 0.8 + wind * 20) * speed; p.y += p.vy * speed;
+          if (p.y >= groundY) { p.y = groundY; p.vx = 0; p.vy = 0; p.life -= 0.02 * speed; } else p.life -= 0.003 * speed;
+          if (p.life <= 0) { petals.splice(i, 1); continue; }
+          vctx.fillStyle = `hsla(${p.hue | 0},100%,70%,${p.life.toFixed(2)})`;
+          vctx.beginPath(); vctx.arc(p.x, p.y, r * 1.2, 0, Math.PI * 2); vctx.fill();
+        }
+        if (petals.length > 800) petals.splice(0, petals.length - 800);
+        vctx.globalCompositeOperation = 'source-over';
       },
     });
   })();
