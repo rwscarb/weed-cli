@@ -337,7 +337,13 @@
 
   <section class="tab-panel" v-show="activeTab === 'downloads'">
     <h2>Download</h2>
-    <form @submit.prevent="submitDownload">
+    <!-- mobile only (see .filters-toggle in style.css): the by-hash form
+         folds away so the library itself is what a phone opens onto -->
+    <button type="button" class="filters-toggle" @click="downloadFormOpen = !downloadFormOpen"
+            :aria-expanded="downloadFormOpen">
+      {{ downloadFormOpen ? '▾' : '▸' }} Download by content hash
+    </button>
+    <form class="download-form" :class="{'filters-open': downloadFormOpen}" @submit.prevent="submitDownload">
       <label>Content hash
         <input type="text" v-model="downloadForm.hash" required>
       </label>

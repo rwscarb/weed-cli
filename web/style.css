@@ -2317,3 +2317,77 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
 .midi-rel input { width: auto; margin: 0; }
 .midi-clicks, .midi-detent { display: inline-flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 0.2rem; font-size: 0.7rem; color: var(--muted); margin: 0; white-space: nowrap; }
 .midi-clicks input, .midi-detent input { width: 3em; margin: 0; padding: 0 0.2rem; font-size: 0.7rem; }
+
+/* ── phones, second pass: layout cleanup for Discover/Downloads ──────
+   Comes last so it wins over the first narrow-screen block above
+   without having to untangle it rule by rule. */
+@media (max-width: 460px) {
+  /* header: the tagline is desktop decoration; identity and the two
+     header buttons share one wrapped line instead of three */
+  header { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem 0.5rem; padding: 1rem 0 0.75rem; }
+  header h1 { flex: 1 0 100%; }
+  .tagline { display: none; }
+  .identity { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; }
+  header .qr-toggle { margin: 0; padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+  /* keyboard shortcuts on a phone: nothing to press them with */
+  header .qr-toggle[title^="Keyboard"] { display: none; }
+
+  /* six tabs in two rows of three, not three rows of two */
+  nav#tabs { grid-template-columns: repeat(3, 1fr); margin: 0.5rem 0 0.75rem; gap: 0 0.25rem; }
+  .tab-btn { padding: 0.5rem 0.2rem; font-size: 0.82rem; }
+
+  /* the first block's `button { width: 100% }` is for form submit
+     buttons; chips and inline controls keep their natural width, or
+     each one claims a whole row */
+  .tag-chip, .tag-plus, .tag-x, .folder-crumb, .icon-btn, .jobs-status button { width: auto; }
+  .tag-plus { width: 1.4rem; }
+  /* the folder tree's per-depth indent (an inline margin) only reads as
+     a tree when each chip has its own line -- wrapped, it's just gaps */
+  .folder-filter .tag-chip { margin-left: 0 !important; }
+  .tag-filter { gap: 0.3rem 0.25rem; }
+
+  /* Downloads' by-hash form folds behind its toggle, like Discover's filters */
+  .download-form:not(.filters-open) { display: none; }
+
+  /* toolbar: search on its own line, then status + sort + count */
+  .jobs-search { flex: 1 0 100%; max-width: none; }
+  .jobs-status { flex: 1 1 auto; }
+  .jobs-status button { flex: 1 1 0; }
+
+  /* one card shape for every Discover/Downloads row, however long the
+     title or whether it has a folder: the title alone on the first
+     line, then folder + hash (muted, the folder ellipsizing first) with
+     +1/★/♫+ and the swipe hint pinned right on the second. A grid
+     rather than flex-wrap: wrapping decides line breaks by each item's
+     full text width, which is what made rows break differently from
+     one another. An absent folder leaves its auto track at zero. */
+  .title-row {
+    display: grid;
+    grid-template-columns: minmax(0, max-content) auto minmax(0, 1fr) auto;
+    grid-template-areas: "title title title title" "folder hash . controls";
+    align-items: center;
+    column-gap: 0.5rem;
+    row-gap: 0.3rem;
+  }
+  .title-text { grid-area: title; font-size: 0.92rem; }
+  .folder-crumb { grid-area: folder; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding: 0; text-align: left; }
+  .mobile-hash { grid-area: hash; }
+  .mobile-controls-line { grid-area: controls; margin-top: 0; gap: 0.5rem; }
+  .title-icons .icon-btn { min-width: 1.9rem; font-size: 0.9rem; padding: 0.05rem 0.3rem; }
+
+  /* Downloads as cards too: the job cell spans the card; the progress
+     bar and status share a line under it only while there's something
+     to say (a finished job's "done" is implied by its Play action) */
+  #jobs-table thead { display: none; }
+  #jobs-table tbody tr {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 0 0.5rem;
+    border-bottom: 1px solid var(--border); padding: 0.5rem 0;
+  }
+  #jobs-table tbody td { border-bottom: none; padding: 0; }
+  #jobs-table tbody td:nth-child(1) { flex: 1 0 100%; min-width: 0; }
+  #jobs-table tbody td:nth-child(3) { flex: 1 1 auto; }
+  #jobs-table tbody td:nth-child(3):empty { display: none; }
+  #jobs-table tbody td:nth-child(4) { flex: none; margin-left: auto; font-size: 0.72rem; padding-top: 0.2rem; }
+  #jobs-table tbody td.status-done { display: none; }
+  #jobs-table .tag-row { margin-top: 0.4rem; }
+}

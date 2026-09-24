@@ -127,6 +127,8 @@ const app = createApp({
       // need to detect viewport width here just to pick the right
       // default.
       discoverFiltersOpen: false,
+      // same idea for Downloads' by-hash form (collapsed on phones only)
+      downloadFormOpen: false,
       discoverFolder: '',      // a host's folder to narrow Discover to ('' = all)
       folderFilter: '',        // same for Downloads
 
