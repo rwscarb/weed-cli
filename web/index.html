@@ -887,6 +887,7 @@
           <input type="range" min="0" max="10000" step="100" v-model.number="orbitDelay" @click.stop @pointerdown.stop>
           <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
         </label>
+        <button id="vizLayoutBtn" class="icon-btn" title="Customize — add, remove and reorder modes and transitions">☰</button>
         <button id="vizMidiBtn" class="icon-btn" title="MIDI controller — pads pick modes, knobs turn the sliders (Web MIDI)">🎹</button>
         <button id="vizChatBtn" class="icon-btn" :class="{active: chat.overlay}" v-if="chat.enabled"
                 :title="chat.overlay ? 'Chat overlay on — messages are drawn over the picture (and into the stream)' : 'Chat overlay off'"
@@ -982,6 +983,21 @@
             </select>
           </label>
           <div id="autoPoolList"></div>
+        </div>
+        <!-- ☰ Customize: which modes/transitions are on offer and in what
+             order; the lists are rendered by orbit_visualizer.js
+             renderLayoutPanel, the arrangement lives in setLayout -->
+        <div class="preset-row layout-panel mode-controls-hidden" id="layoutPanel">
+          <div class="layout-col">
+            <div class="layout-head"><span class="ascii-controls-label">Modes</span>
+              <button type="button" class="icon-btn" data-layout-reset="modes" title="All modes back, in the default order">reset</button></div>
+            <ol class="layout-list" id="layoutModes"></ol>
+          </div>
+          <div class="layout-col">
+            <div class="layout-head"><span class="ascii-controls-label">Transitions</span>
+              <button type="button" class="icon-btn" data-layout-reset="transitions" title="All transitions back, in the default order">reset</button></div>
+            <ol class="layout-list" id="layoutTransitions"></ol>
+          </div>
         </div>
         <!-- MIDI controller panel (orbit_midi.js) -- toggled by the 🎹
              header button; the bindings table is rendered by JS -->

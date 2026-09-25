@@ -129,11 +129,21 @@ window.orbitViz = (function () {
       ...Array.from(pluginModes.values()).map(m => ({ id: m.id, label: m.label, builtin: false })),
     ];
   }
-  // every mode id in button order: built-ins first, then plugins in
-  // registration order -- what arrow/pad cycling and the MIDI mode
+  // every mode id that exists, in default order: built-ins first, then
+  // plugins in registration order. What "is this a real mode?" checks
+  // use -- a mode hidden from the layout (below) is still a real one
+  // that a MIDI pad or setVizMode can pick.
+  function knownModes() { return [...VIZ_MODES, ...pluginModes.keys()]; }
+  // every mode in the user's order (see Layout below), hidden ones included
+  function orderedModes() { return arrange(knownModes(), layout.modeOrder); }
+  // the modes actually on offer, in button order -- what the buttons,
+  // arrow/pad cycling, Shift+digits, Autopilot and the MIDI mode
   // selector walk, so a plugin mode is reachable the same ways a
-  // built-in one is
-  function allModes() { return [...VIZ_MODES, ...pluginModes.keys()]; }
+  // built-in one is and a hidden one isn't reachable by any of them
+  function allModes() {
+    const shown = orderedModes().filter(id => !layout.modeHidden.includes(id));
+    return shown.length ? shown : orderedModes();
+  }
 
   // ── Transition registry -- the same idea for the Fade dropdown ────
   // A transition plugin is { id, label?, draw(ctx) }. draw runs once
@@ -195,10 +205,65 @@ window.orbitViz = (function () {
       ...Array.from(pluginTransitions.values()).map(t => ({ id: t.id, label: t.label, builtin: false })),
     ];
   }
-  // dropdown order: the real built-ins, plugins, then Random and None
-  // at the end where a "meta" choice reads naturally
-  function allTransitions() {
+  // default dropdown order: the real built-ins, plugins, then Random
+  // and None at the end where a "meta" choice reads naturally
+  function knownTransitions() {
     return [...BUILTIN_TRANSITIONS.filter(t => t !== 'random' && t !== 'none'), ...pluginTransitions.keys(), 'random', 'none'];
+  }
+  function orderedTransitions() { return arrange(knownTransitions(), layout.transOrder); }
+  // what the Fade dropdown offers, in its order -- same split as allModes
+  function allTransitions() {
+    const shown = orderedTransitions().filter(id => !layout.transHidden.includes(id));
+    return shown.length ? shown : orderedTransitions();
+  }
+
+  // ── Layout: which modes/transitions are on offer, and in what order ─
+  // The ☰ Customize panel's arrangement. Module-level and in its own
+  // localStorage key (not the per-open settings object inside init())
+  // so allModes/allTransitions above can honour it everywhere, dialog
+  // open or not. Stored as ids: a plugin whose script is gone keeps
+  // its slot and hidden flag for when it comes back, and a plugin
+  // that's new since the order was saved lands at the end, shown.
+  const LAYOUT_KEY = 'weed.orbit.layout';
+  const layout = { modeOrder: [], modeHidden: [], transOrder: [], transHidden: [] };
+  (function loadLayout() {
+    let saved;
+    try { saved = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null'); } catch (e) { saved = null; }
+    if (!saved || typeof saved !== 'object') return;
+    for (const k of Object.keys(layout)) if (Array.isArray(saved[k])) layout[k] = saved[k].filter(x => typeof x === 'string');
+  })();
+  function saveLayout() {
+    try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout)); } catch (e) { /* private mode / quota */ }
+  }
+  // ids in the saved order first, then whatever's new, in default order
+  function arrange(ids, order) {
+    const known = new Set(ids), head = order.filter(id => known.has(id)), seen = new Set(head);
+    return [...head, ...ids.filter(id => !seen.has(id))];
+  }
+  // kind: 'modes' | 'transitions'. Refuses (returns false) to hide
+  // everything -- the visualizer always needs something to show.
+  function setLayout(kind, order, hidden) {
+    const [oKey, hKey, known] = kind === 'modes' ? ['modeOrder', 'modeHidden', knownModes()] : ['transOrder', 'transHidden', knownTransitions()];
+    const strs = (a) => (Array.isArray(a) ? a.filter(x => typeof x === 'string') : []);
+    const nextHidden = [...new Set(strs(hidden).filter(id => known.includes(id)))];
+    if (nextHidden.length >= known.length) return false;
+    const absent = (a) => a.filter(id => !known.includes(id));   // plugins not loaded right now
+    layout[oKey] = [...arrange(known, strs(order)), ...absent(layout[oKey])];
+    layout[hKey] = [...nextHidden, ...absent(layout[hKey])];
+    saveLayout();
+    if (state) state.applyLayout(true);
+    return true;
+  }
+  function resetLayout(kind) {
+    for (const k of (kind === 'transitions' ? ['transOrder', 'transHidden'] : kind === 'modes' ? ['modeOrder', 'modeHidden'] : Object.keys(layout))) layout[k] = [];
+    saveLayout();
+    if (state) state.applyLayout(true);
+  }
+  function getLayout() {
+    return {
+      modes: orderedModes().map(id => ({ id, hidden: layout.modeHidden.includes(id) })),
+      transitions: orderedTransitions().map(id => ({ id, hidden: layout.transHidden.includes(id) })),
+    };
   }
 
   let state = null;
@@ -421,14 +486,18 @@ window.orbitViz = (function () {
         // plugin scripts register at page load, before any open, so a
         // saved plugin mode/transition is known here; one whose script
         // is gone falls back to the default
-        if (k === 'vizMode') { if (!allModes().includes(saved[k])) continue; }
-        else if (k === 'transition') { if (!allTransitions().includes(saved[k])) continue; }
+        if (k === 'vizMode') { if (!knownModes().includes(saved[k])) continue; }
+        else if (k === 'transition') { if (!knownTransitions().includes(saved[k])) continue; }
         else if (k === 'autopilotBias') { if (saved[k] === 'up' || saved[k] === 'down') s[k] = saved[k]; continue; }
         else if (k === 'randomExclude' || k === 'autoExclude') { if (!Array.isArray(saved[k])) continue; s[k] = saved[k].filter(x => typeof x === 'string'); continue; }
         else if (k === 'vizOff') { restoredVizOff = !!saved[k]; continue; }
         s[k] = saved[k];
       }
     })();
+    // a restored mode/transition that's been removed from the layout
+    // since gives way to the first one still on offer
+    if (!allModes().includes(s.vizMode)) s.vizMode = allModes()[0];
+    if (!allTransitions().includes(s.transition)) s.transition = allTransitions().find(t => t !== 'random' && t !== 'none') || allTransitions()[0];
     let persistTimer = null;
     function persistSettings() {
       if (persistTimer) return;
@@ -498,6 +567,7 @@ window.orbitViz = (function () {
         if (s.vizMode === mode.id && !s.vizOff) vizModeSelect.value = mode.id;
       }
       callPlugin(mode, 'init', { container: vizSection, canvas: vizCanvas, vctx });
+      applyLayout();
       midiRefresh();
     }
     function unmountPlugin(mode) {
@@ -505,7 +575,9 @@ window.orbitViz = (function () {
       const btn = s.pluginButtons.get(mode.id);
       if (btn) { btn.remove(); s.pluginButtons.delete(mode.id); }
       if (vizModeSelect) { const opt = vizModeSelect.querySelector(`option[value="${CSS.escape(mode.id)}"]`); if (opt) opt.remove(); }
-      if (s.vizMode === mode.id) setVizMode('tunnel');
+      modeOpts.delete(mode.id);
+      if (s.vizMode === mode.id) setVizMode(allModes().find(m => m !== mode.id) || 'tunnel');
+      renderLayoutPanel();
       midiRefresh();
     }
     // the MIDI panel builds a row per plugin mode/transition from the
@@ -518,16 +590,17 @@ window.orbitViz = (function () {
       // before Random/None, which stay at the end (see allTransitions)
       transitionSelect.insertBefore(opt, transitionSelect.querySelector('option[value="random"]'));
       if (s.transition === tr.id) transitionSelect.value = tr.id;
-      renderRandomPool();
-      renderAutoPool();
+      applyLayout();
       midiRefresh();
     }
     function unmountTransition(tr) {
       if (transitionSelect) { const opt = transitionSelect.querySelector(`option[value="${CSS.escape(tr.id)}"]`); if (opt) opt.remove(); }
+      transOpts.delete(tr.id);
       if (s.transition === tr.id) { setTransition('burn'); persistSettings(); }
       if (s.trans && s.trans.type === tr.id) s.trans = null;
       renderRandomPool();
       renderAutoPool();
+      renderLayoutPanel();
       midiRefresh();
     }
     // ── the Random pool: which transitions Random may pick ──────────
@@ -601,6 +674,128 @@ window.orbitViz = (function () {
       autoPoolBtn.classList.toggle('active', !autoPoolPanel.classList.contains('mode-controls-hidden'));
     });
     renderAutoPool();
+    // ── the layout: ☰ Customize (see setLayout at the top of this file) ─
+    // Buttons stay in the DOM and are just hidden and re-ordered;
+    // <option>s are detached instead (Safari ignores hidden/display on
+    // options), so they're kept here to be put back.
+    const modeOpts = new Map(), transOpts = new Map(), modeLabels = new Map();
+    for (const b of vizModesEl.querySelectorAll('[data-viz]')) modeLabels.set(b.dataset.viz, b.textContent.trim());
+    const layoutPanel = document.getElementById('layoutPanel');
+    const layoutBtn = document.getElementById('vizLayoutBtn');
+    function applyLayout(fixCurrent) {
+      const shown = allModes(), shownSet = new Set(shown);
+      const anchor = vizModeSelect && vizModeSelect.parentNode === vizModesEl ? vizModeSelect : null;
+      for (const id of orderedModes()) {
+        const btn = vizModesEl.querySelector(`button[data-viz="${CSS.escape(id)}"]`);
+        if (!btn) continue;
+        btn.classList.toggle('viz-layout-hidden', !shownSet.has(id));
+        vizModesEl.insertBefore(btn, anchor);
+      }
+      if (vizModeSelect) {
+        for (const o of [...vizModeSelect.options]) { modeOpts.set(o.value, o); o.remove(); }
+        for (const id of shown) { const o = modeOpts.get(id); if (o) vizModeSelect.appendChild(o); }
+        const video = modeOpts.get('__video'); if (video) vizModeSelect.appendChild(video);
+        vizModeSelect.value = s.vizOff ? '__video' : s.vizMode;
+      }
+      if (transitionSelect) {
+        for (const o of [...transitionSelect.options]) { transOpts.set(o.value, o); o.remove(); }
+        for (const id of allTransitions()) { const o = transOpts.get(id); if (o) transitionSelect.appendChild(o); }
+        transitionSelect.value = s.transition;
+      }
+      // removing what's on screen right now moves it along to the first
+      // one still on offer (only on a user's change -- during init the
+      // restore above already did this before anything was drawn)
+      if (fixCurrent) {
+        if (!shownSet.has(s.vizMode)) {
+          if (s.vizOff) { s.vizMode = shown[0]; persistSettings(); } else setVizMode(shown[0]);
+        }
+        if (!allTransitions().includes(s.transition)) { setTransition(allTransitions().find(t => t !== 'random' && t !== 'none') || allTransitions()[0]); persistSettings(); }
+      }
+      renderRandomPool();
+      renderAutoPool();
+      renderLayoutPanel();
+      if (fixCurrent) midiRefresh();
+    }
+    s.applyLayout = applyLayout;
+    const layoutModeLabel = (id) => modeLabels.get(id) || modeLabel(id);
+    const layoutTransLabel = (id) => (transOpts.get(id) || {}).textContent || transitionLabel(id);
+    function renderLayoutList(listEl, kind) {
+      if (!listEl) return;
+      const ids = kind === 'modes' ? orderedModes() : orderedTransitions();
+      const hidden = new Set(kind === 'modes' ? getLayout().modes.filter(m => m.hidden).map(m => m.id) : getLayout().transitions.filter(t => t.hidden).map(t => t.id));
+      const label = kind === 'modes' ? layoutModeLabel : layoutTransLabel;
+      const commit = (order, hid) => setLayout(kind, order, [...hid]);
+      listEl.innerHTML = '';
+      ids.forEach((id, i) => {
+        const li = document.createElement('li');
+        li.className = 'layout-item' + (hidden.has(id) ? ' off' : '');
+        li.dataset.id = id;
+        const grip = document.createElement('span');
+        grip.className = 'layout-grip'; grip.textContent = '⠿'; grip.title = 'Drag to reorder';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = !hidden.has(id);
+        cb.title = cb.checked ? 'Shown — untick to remove' : 'Removed — tick to add back';
+        const name = document.createElement('label');
+        name.className = 'layout-name'; name.textContent = label(id);
+        name.addEventListener('click', () => cb.click());
+        cb.addEventListener('change', () => {
+          const next = new Set(hidden);
+          if (cb.checked) next.delete(id); else next.add(id);
+          if (!commit(ids, next)) { cb.checked = true; showToast('Keep at least one'); }
+        });
+        const move = (d) => { const o = ids.slice(); [o[i], o[i + d]] = [o[i + d], o[i]]; commit(o, hidden); };
+        const up = document.createElement('button');
+        up.type = 'button'; up.className = 'icon-btn'; up.textContent = '↑'; up.title = 'Move up'; up.disabled = i === 0;
+        up.addEventListener('click', () => move(-1));
+        const down = document.createElement('button');
+        down.type = 'button'; down.className = 'icon-btn'; down.textContent = '↓'; down.title = 'Move down'; down.disabled = i === ids.length - 1;
+        down.addEventListener('click', () => move(1));
+        // drag by the grip: pointer events rather than HTML5 drag and
+        // drop, which never fires for touch -- the row moves live under
+        // the finger/cursor and the new order is saved on release. The
+        // move/up listeners go on the document, not the grip: moving the
+        // row in the DOM drops any pointer capture on it, so a quick drag
+        // that outran the row would otherwise just stop mid-way.
+        grip.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          li.classList.add('dragging');
+          const onMove = (ev) => {
+            const hit = document.elementFromPoint(ev.clientX, ev.clientY);
+            const over = hit && hit.closest('.layout-item');
+            if (!over || over === li || over.parentNode !== listEl) return;
+            const r = over.getBoundingClientRect();
+            listEl.insertBefore(li, ev.clientY < r.top + r.height / 2 ? over : over.nextSibling);
+          };
+          const onUp = () => {
+            document.removeEventListener('pointermove', onMove);
+            document.removeEventListener('pointerup', onUp);
+            document.removeEventListener('pointercancel', onUp);
+            li.classList.remove('dragging');
+            const order = [...listEl.children].map(x => x.dataset.id);
+            if (order.join() !== ids.join()) commit(order, hidden);
+          };
+          document.addEventListener('pointermove', onMove);
+          document.addEventListener('pointerup', onUp);
+          document.addEventListener('pointercancel', onUp);
+        });
+        li.append(grip, cb, name, up, down);
+        listEl.appendChild(li);
+      });
+    }
+    function renderLayoutPanel() {
+      if (!layoutPanel || layoutPanel.classList.contains('mode-controls-hidden')) return;
+      renderLayoutList(document.getElementById('layoutModes'), 'modes');
+      renderLayoutList(document.getElementById('layoutTransitions'), 'transitions');
+    }
+    if (layoutBtn && layoutPanel) on(layoutBtn, 'click', () => {
+      layoutPanel.classList.toggle('mode-controls-hidden');
+      layoutBtn.classList.toggle('active', !layoutPanel.classList.contains('mode-controls-hidden'));
+      renderLayoutPanel();
+    });
+    if (layoutPanel) on(layoutPanel, 'click', (e) => {
+      const b = e.target.closest('[data-layout-reset]');
+      if (b) resetLayout(b.dataset.layoutReset);
+    });
     s.mountPlugin = mountPlugin;
     s.unmountPlugin = unmountPlugin;
     s.mountTransition = mountTransition;
@@ -613,6 +808,7 @@ window.orbitViz = (function () {
     // module-level state that outlives any single open/close cycle
     for (const mode of pluginModes.values()) mountPlugin(mode);
     for (const tr of pluginTransitions.values()) mountTransition(tr);
+    applyLayout();
 
     // shared by the Zoom slider's own 'input' event, scroll-to-zoom, and
     // the double-click reset below, so all three ways of changing it
@@ -732,7 +928,7 @@ window.orbitViz = (function () {
     // transition by its option label, Autopilot by its state
     const cap = (id) => id.charAt(0).toUpperCase() + id.slice(1);
     const modeLabel = (id) => (pluginModes.get(id) || {}).label || cap(id);
-    const transitionLabel = (id) => { const o = transitionSelect && transitionSelect.querySelector(`option[value="${CSS.escape(id)}"]`); return o ? o.textContent : cap(id); };
+    const transitionLabel = (id) => { const o = transOpts.get(id) || (transitionSelect && transitionSelect.querySelector(`option[value="${CSS.escape(id)}"]`)); return o ? o.textContent : cap(id); };
     const holdSuffix = () => (s.autopilot && !auto.acting && auto.seeded ? ' · Autopilot holds ' + Math.round(AUTO.holdSec) + 's' : '');
     const pickSuffix = () => (s.randomPicked ? ' · ' + transitionLabel(s.randomPicked) + ' (random)' : '');
     const autopilotLabel = () => { const st = autopilotState(); return st === 'off' ? 'Autopilot off' : st === 'down' ? 'Autopilot ↓ lesser-played' : 'Autopilot ↑ popular'; };
@@ -905,7 +1101,7 @@ window.orbitViz = (function () {
     setSpeed(s.speed);
 
     function setTransition(type) {
-      if (!allTransitions().includes(type)) type = 'burn';
+      if (!knownTransitions().includes(type)) type = 'burn';
       if (type !== s.transition && !s.restoring) showToast('Transition: ' + transitionLabel(type) + holdSuffix());
       s.transition = type;
       autopilotHold();
@@ -1311,7 +1507,7 @@ window.orbitViz = (function () {
     // (Ryan: "if I change the mode, autopilot shouldn't immediately
     // change the mode again")
     const AUTO = { modeMin: 12, modeMax: 32, videoMin: 5, videoMax: 12, holdSec: 60 };
-    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'starfield', 'flow'];
+    const UP_MODES = ['tunnel', 'bars', 'kaleido', 'particles', 'scope', 'cube', 'fireworks', 'skyline', 'lava', 'spiral', 'mirror', 'ripples', 'starfield', 'flow', 'warp'];
     const PUNCHY = ['flash', 'glitch', 'shatter', 'rgbsplit', 'crtoff', 'slide', 'fliptiles', 'burn', 'pixelate'];
     const GENTLE = ['crossfade', 'blur', 'dissolve', 'iris', 'wipe', 'melt', 'droplet', 'zoomblur', 'warp', 'blinds', 'wave', 'spin'];
     const auto = { phaseStart: 0, phase: 'mode', prevFreq: null, fluxAvg: 0, bassAvg: 0, energyAvg: 0, recent: [], seeded: false, acting: false };
@@ -2034,7 +2230,7 @@ window.orbitViz = (function () {
         persistSettings();
       } else if (action.startsWith('transition:set:')) {
         const name = action.slice('transition:set:'.length);
-        if (allTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
+        if (knownTransitions().includes(name) && name !== s.transition) { setTransition(name); persistSettings(); }
       } else if (action === 'resetNav') {
         resetVizNav(); showToast('Zoom 1.00× · straight · centred');
       } else if (action === 'resetRot') {
@@ -2172,7 +2368,9 @@ window.orbitViz = (function () {
         // more than the top row's 1-9 alone can reach.
         const raw = parseInt(e.code.slice(5), 10);
         const n = raw === 0 ? 10 : raw;
-        if (n >= 1 && n <= VIZ_MODES.length) { e.preventDefault(); setVizMode(VIZ_MODES[n - 1]); }
+        // the first ten modes in the Customize order, hidden ones skipped
+        const shown = allModes();
+        if (n >= 1 && n <= shown.length) { e.preventDefault(); setVizMode(shown[n - 1]); }
       }
       if (e.code === 'ArrowUp' || e.code === 'ArrowDown') {
         e.preventDefault();
@@ -2306,6 +2504,11 @@ window.orbitViz = (function () {
     trigger: (action) => { if (state) state.trigger(action); },
     modes: allModes,
     transitions: allTransitions,
+    // the ☰ Customize arrangement -- see setLayout near the top
+    layout: getLayout,
+    setModeLayout: (order, hidden) => setLayout('modes', order, hidden),
+    setTransitionLayout: (order, hidden) => setLayout('transitions', order, hidden),
+    resetLayout,
     asciiRamps: () => (state ? state.asciiRamps() : []),
     current: () => (state ? state.current() : null),
     // the plugin API -- see the pluginModes/registerMode and

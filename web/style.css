@@ -2279,6 +2279,24 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
 .random-pool-item input { margin: 0; }
 #randomPoolBtn { font-size: 0.85rem; padding: 0 0.35rem; }
 
+/* ── ☰ Customize: add/remove/reorder modes and transitions ─────── */
+#orbit-egg-dialog .viz-mode-btn.viz-layout-hidden { display: none !important; }
+#orbit-egg-dialog .layout-panel { align-items: flex-start; gap: 0.5rem 1.5rem; border-top: 1px solid var(--border); padding-top: 0.3rem; width: 100%; }
+.layout-col { flex: 1 1 14rem; min-width: 0; }
+.layout-head { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; }
+.layout-head .icon-btn { font-size: 0.7rem; padding: 0 0.4rem; min-width: 0; width: auto; }
+.layout-list { list-style: none; margin: 0.25rem 0 0; padding: 0; max-height: 15rem; overflow-y: auto; }
+.layout-item { display: flex; align-items: center; gap: 0.35rem; padding: 0.1rem 0.2rem; border-radius: 4px; font-size: 0.78rem; }
+.layout-item:hover { background: var(--panel); }
+.layout-item.dragging { background: var(--border); }
+.layout-item.off .layout-name { color: var(--muted); text-decoration: line-through; }
+.layout-item input { margin: 0; width: auto; }
+.layout-grip { cursor: grab; touch-action: none; user-select: none; color: var(--muted); padding: 0.1rem 0.25rem; font-size: 0.9rem; line-height: 1; }
+.layout-item.dragging .layout-grip { cursor: grabbing; }
+.layout-name { flex: 1; min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; color: var(--text); }
+.layout-item .icon-btn { min-width: 1.5rem; width: auto; padding: 0 0.25rem; font-size: 0.72rem; line-height: 1.4; }
+.layout-item .icon-btn:disabled { opacity: 0.25; cursor: default; }
+
 /* ── party chat ──────────────────────────────────────────────────── */
 /* over the picture: bottom-left stack, newest last, clicks pass through */
 .chat-overlay { position: absolute; left: 0.6rem; bottom: 0.6rem; right: 30%; display: flex; flex-direction: column; gap: 0.25rem; pointer-events: none; z-index: 3; }
@@ -2390,4 +2408,13 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
   #jobs-table tbody td:nth-child(4) { flex: none; margin-left: auto; font-size: 0.72rem; padding-top: 0.2rem; }
   #jobs-table tbody td.status-done { display: none; }
   #jobs-table .tag-row { margin-top: 0.4rem; }
+}
+
+/* the visualizer header's buttons (Back, Autopilot, resolution, stream,
+   ☰ Customize, 🎹, fullscreen, ...) ran off the right edge of a phone
+   in one unwrappable line -- wrap them onto a second row instead */
+@media (max-width: 460px) {
+  #orbit-egg-dialog header { flex-wrap: wrap; }
+  #orbit-egg-dialog .transport { flex-wrap: wrap; flex-shrink: 1; min-width: 0; row-gap: 0.3rem; }
+  #orbit-egg-dialog .transport button { width: auto; }
 }

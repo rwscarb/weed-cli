@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree
+//              Aurora, Flow, Life, Tree, Warp
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -2734,6 +2734,120 @@
           vctx.beginPath(); vctx.arc(p.x, p.y, r * 1.2, 0, Math.PI * 2); vctx.fill();
         }
         if (petals.length > 800) petals.splice(0, petals.length - 800);
+        vctx.globalCompositeOperation = 'source-over';
+      },
+    });
+  })();
+
+  // ── Warp (mode): two warp drives at once. The stars are TNG-style
+  // warp streaks, blue-white and stretched by how fast you're going.
+  // As the music gets louder the 2001 Star Gate opens around them: two
+  // walls of light above and below a thin horizontal slot, rushing past
+  // toward the camera, each lane of the walls lit by its own band of
+  // the spectrum. A big bass hit "engages" -- the streaks snap long and
+  // a warp flash bursts from the vanishing point.
+  (function () {
+    const N = 360, BANDS = 16, stars = [], gate = offscreen();
+    let last = 0, travel = 0, open = 0.2, flash = 0, stretch = 0, bassAvg = 0, cooldown = 0;
+    const spawn = (st, far) => {
+      const a = Math.random() * Math.PI * 2, r = 0.04 + Math.random() * 1.2;
+      st.x = Math.cos(a) * r; st.y = Math.sin(a) * r; st.z = far ? 1 : 0.05 + Math.random() * 0.95;
+      st.tint = Math.random() < 0.85 ? 215 : (Math.random() < 0.5 ? 0 : 30);   // mostly blue-white, the odd warm one
+    };
+    for (let i = 0; i < N; i++) { const st = {}; spawn(st, false); stars.push(st); }
+    viz.registerMode({
+      id: 'warp', label: 'Warp',
+      init() { last = 0; open = 0.2; flash = 0; stretch = 0; bassAvg = 0; cooldown = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        const bands = new Float32Array(BANDS);
+        for (let b = 0; b < BANDS; b++) bands[b] = freqData[Math.floor(Math.pow((b + 0.5) / BANDS, 1.6) * maxBin)] / 255;
+        // engage: a strong bass onset, and not too often, so it stays an event
+        bassAvg = bassAvg * 0.95 + bass * 0.05; cooldown = Math.max(0, cooldown - dt);
+        if (cooldown === 0 && bass > bassAvg * 1.3 + 0.08) { flash = 1; stretch = 1; cooldown = 2.5; }
+        flash = Math.max(0, flash - dt * 1.6); stretch = Math.max(0, stretch - dt * 0.8);
+        open += (Math.max(0.2, clamp01((energy - 0.1) * 3)) - open) * Math.min(1, dt * 1.5);
+        travel += dt * speed * (0.8 + energy * 6 + stretch * 4);
+
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+
+        // the Star Gate, per pixel on a small buffer then blown up soft.
+        // Each row above/below the slot is a slice of a floor/ceiling
+        // plane: depth from its distance to the slot, lanes across it.
+        const GW = 200, GH = Math.max(60, Math.round(GW * VH / VW));
+        const { c, ctx: gc } = gate(GW, GH);
+        const img = gc.createImageData(GW, GH), d = img.data;
+        const mid = GH / 2, slot = GH * 0.035, K = GH * 0.5;
+        for (let j = 0; j < GH; j++) {
+          const dy = j + 0.5 - mid, ady = Math.abs(dy);
+          if (ady < slot) continue;
+          const z = K / ady;                                   // 1 at the screen edge, growing toward the slot
+          const fog = 1 / (1 + (z / 4.5) * (z / 4.5));         // far lanes melt into the slot's glow (and stay clear of moire)
+          const top = dy < 0, uo = top ? 17.3 : 0, v = z * 1.4 + travel * 3 + (top ? 5.1 : 0);
+          for (let i = 0; i < GW; i++) {
+            const u = ((i + 0.5) / GW - 0.5) * z * 5 + uo;
+            const lane = Math.floor(u * 1.5);
+            const lvl = bands[((lane % BANDS) + BANDS) % BANDS];
+            const s1 = 0.5 + 0.5 * Math.sin(u * 9 + Math.sin(v * 0.6 + lane) * 1.6);
+            const streak = s1 * s1 * s1 * s1 * s1 * s1;
+            const cells = 0.5 + 0.5 * Math.sin(v * 2.2 + lane * 1.7);
+            const val = Math.min(1, streak * (0.35 + 0.65 * cells) * (0.25 + lvl * 1.3) * fog * open * 2.1);
+            if (val < 0.01) continue;
+            const h6 = (((hueBase + lane * 47 + v * 5) % 360 + 360) % 360) / 60, sat = 0.9 - streak * 0.45;
+            const f = (n) => { const k = (n + h6) % 6; return val * (1 - sat * Math.max(0, Math.min(k, 4 - k, 1))); };
+            const o = (j * GW + i) * 4;
+            d[o] = f(5) * 255; d[o + 1] = f(3) * 255; d[o + 2] = f(1) * 255; d[o + 3] = 255;
+          }
+        }
+        gc.putImageData(img, 0, 0);
+        const gw = VW * vizUserScale, gh = VH * vizUserScale;
+        vctx.globalCompositeOperation = 'lighter';
+        vctx.imageSmoothingEnabled = true;
+        vctx.drawImage(c, cx - gw / 2, cy - gh / 2, gw, gh);
+        // the slot itself: a thin line of white light where both walls meet
+        const sg = vctx.createLinearGradient(0, cy - VH * 0.06, 0, cy + VH * 0.06);
+        sg.addColorStop(0, 'rgba(0,0,0,0)');
+        sg.addColorStop(0.5, `hsla(${(hueBase + 200) % 360 | 0},60%,88%,${(0.25 + open * 0.55).toFixed(2)})`);
+        sg.addColorStop(1, 'rgba(0,0,0,0)');
+        vctx.fillStyle = sg; vctx.fillRect(0, cy - VH * 0.06, VW, VH * 0.12);
+
+        // the warp streaks: each star drawn from where it was a moment
+        // ago to where it is now, so speed is literally streak length
+        const f0 = Math.min(VW, VH) * 0.5 * vizUserScale;
+        const v = dt * (0.25 * speed + energy * 1.1 + stretch * 2.2);
+        const tail = 5 + stretch * 12;
+        vctx.lineCap = 'round';
+        for (const st of stars) {
+          st.z -= v;
+          if (st.z <= 0.03) { spawn(st, true); continue; }
+          const z0 = Math.min(1.2, st.z + v * tail);
+          const x1 = cx + st.x / st.z * f0, y1 = cy + st.y / st.z * f0;
+          const x0 = cx + st.x / z0 * f0, y0 = cy + st.y / z0 * f0;
+          if (x1 < -50 || x1 > VW + 50 || y1 < -50 || y1 > VH + 50) { spawn(st, true); continue; }
+          const near = 1 - st.z;
+          vctx.strokeStyle = `hsla(${st.tint},${st.tint === 215 ? 70 : 90}%,${(70 + near * 28) | 0}%,${(0.2 + near * 0.8).toFixed(2)})`;
+          vctx.lineWidth = 0.5 + near * 2.5;
+          vctx.beginPath(); vctx.moveTo(x0, y0); vctx.lineTo(x1, y1); vctx.stroke();
+        }
+
+        // the warp flash: a burst from the vanishing point with a long
+        // horizontal flare through it
+        if (flash > 0) {
+          const R = Math.hypot(VW, VH) * (0.15 + (1 - flash) * 0.6);
+          const g = vctx.createRadialGradient(cx, cy, 0, cx, cy, R);
+          g.addColorStop(0, `rgba(255,255,255,${(flash * 0.95).toFixed(2)})`);
+          g.addColorStop(0.25, `hsla(210,100%,75%,${(flash * 0.5).toFixed(2)})`);
+          g.addColorStop(1, 'rgba(0,0,0,0)');
+          vctx.fillStyle = g; vctx.fillRect(0, 0, VW, VH);
+          vctx.save();
+          vctx.translate(cx, cy); vctx.scale(1, 0.03);
+          const fl = vctx.createRadialGradient(0, 0, 0, 0, 0, VW * 0.6);
+          fl.addColorStop(0, `rgba(255,255,255,${flash.toFixed(2)})`); fl.addColorStop(1, 'rgba(120,170,255,0)');
+          vctx.fillStyle = fl; vctx.beginPath(); vctx.arc(0, 0, VW * 0.6, 0, Math.PI * 2); vctx.fill();
+          vctx.restore();
+        }
         vctx.globalCompositeOperation = 'source-over';
       },
     });
