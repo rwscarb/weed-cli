@@ -2292,6 +2292,14 @@ window.orbitViz = (function () {
     // change so the canvas never resizes on show/hide -- a resize would
     // wipe the feedback modes' trails.
     const fsTarget = vizSection.closest('#orbit-egg-dialog') || vizSection;
+    // fullscreen floats the controls panel just under the header; the
+    // header wraps to two or three rows on a phone, so its real height
+    // (not an assumed one-liner) is what the panel is placed against
+    const vizHeader = fsTarget.querySelector('header');
+    if (vizHeader && window.ResizeObserver) {
+      s.headerObserver = new ResizeObserver(() => fsTarget.style.setProperty('--viz-header-h', vizHeader.offsetHeight + 'px'));
+      s.headerObserver.observe(vizHeader);
+    }
     function toggleVizFullscreen() {
       if (!document.fullscreenElement) {
         (fsTarget.requestFullscreen || fsTarget.webkitRequestFullscreen).call(fsTarget);
@@ -2434,6 +2442,7 @@ window.orbitViz = (function () {
     if (!state) return;
     state.running = false;
     if (state.resizeObserver) state.resizeObserver.disconnect();
+    if (state.headerObserver) state.headerObserver.disconnect();
     for (const [target, type, fn, opts] of state.listeners) target.removeEventListener(type, fn, opts);
     // every registered plugin's own teardown() runs here too -- the DOM
     // (their buttons included) is about to be destroyed wholesale by

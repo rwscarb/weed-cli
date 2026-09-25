@@ -697,7 +697,7 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
     page.wait_for_selector('#vizModes')
     page.click('[data-viz="plasma"]')                         # fills the whole canvas with colour
     before = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
-    assert before[0] / before[1] < 1.4, before                 # genuinely not 16:9 on its own
+    assert abs(before[0] / before[1] - 16 / 9) > 0.2, before   # genuinely not 16:9 on its own
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
     page.wait_for_function("vm => vm.orbitStreaming", arg=vm, timeout=10_000)
     page.wait_for_timeout(1500)

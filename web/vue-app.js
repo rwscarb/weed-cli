@@ -229,6 +229,9 @@ const app = createApp({
         visible: false, mode: 'pip', jobId: null, title: '',
         contentHash: null, signerPubkey: null, isPlaying: false, isAudio: false,
         audioCurrentTime: 0, audioDuration: 0, audioMuted: false, audioVolume: 1,
+        // a tap on the picture showed the transport (touch screens have no
+        // hover to reveal it); hides again a few seconds after the last touch
+        controlsShown: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -1081,8 +1084,31 @@ const app = createApp({
       this.togglePlayerMode();
     },
     toggleFullscreen() {
-      if (document.fullscreenElement) document.exitFullscreen();
-      else this.$refs.globalPlayer.requestFullscreen();
+      if (document.fullscreenElement || document.webkitFullscreenElement) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      else this.enterPlayerFullscreen();
+    },
+    // the player box itself goes fullscreen (header, transport and all);
+    // an iPhone can't do that for anything but a <video>, so there it's
+    // the video's own native fullscreen player instead, which brings its
+    // own seek bar
+    enterPlayerFullscreen() {
+      const el = this.$refs.globalPlayer, req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const p = req.call(el); if (p && p.catch) p.catch(() => {}); return; }
+      const v = this.$refs.playerVideo;
+      if (v && v.webkitEnterFullscreen) v.webkitEnterFullscreen();
+    },
+    // a tap on the picture: show the transport, or hide it if it's up
+    onPlayerPictureTap(e) {
+      if (e.target.closest('.transport-bar, .player-transport-overlay, .chat-overlay')) return;
+      if (this.player.controlsShown) { this.player.controlsShown = false; clearTimeout(this._controlsTimer); return; }
+      this.showPlayerControls();
+    },
+    // (re)arms the auto-hide -- also called on any touch inside the bar,
+    // so a long scrub doesn't lose its controls halfway through
+    showPlayerControls() {
+      this.player.controlsShown = true;
+      clearTimeout(this._controlsTimer);
+      this._controlsTimer = setTimeout(() => { this.player.controlsShown = false; }, 3500);
     },
     // PIP → Theater → Fullscreen → PIP → ... -- the `f` hotkey's one job,
     // so pressing it repeatedly walks every size the player actually has
@@ -1100,7 +1126,7 @@ const app = createApp({
       } else if (this.player.mode === 'pip') {
         this.setPlayerMode('theater');
       } else {
-        this.$refs.globalPlayer.requestFullscreen();
+        this.enterPlayerFullscreen();
       }
     },
 
@@ -3031,7 +3057,7 @@ app.component('transport-bar', {
   },
   methods: Object.fromEntries(['playQueueOffset', 'autopilotOn', 'audioSeek', 'audioToggleMute', 'audioSetVolume',
     'xfadeCue', 'xfadeCancel', 'xfadeSetUi', 'displayTitle', 'formatAudioTime'].map(n => [n, function (...a) { return this.$root[n](...a); }])),
-  template: `<div :id="barId" class="transport-bar" @click.stop>
+  template: `<div :id="barId" class="transport-bar" @click.stop @pointerdown="$root.showPlayerControls()" @input="$root.showPlayerControls()">
       <button class="audio-btn" @click.stop="playQueueOffset(-1)" :disabled="!player.queue || player.queue.index <= 0" title="Previous track (p)">⏮</button>
       <button class="audio-btn" @click.stop="player.isPlaying ? $root.$refs.playerVideo.pause() : $root.$refs.playerVideo.play()"
               :title="player.isPlaying ? 'Pause (Space)' : 'Play (Space)'">{{ player.isPlaying ? '⏸' : '▶' }}</button>

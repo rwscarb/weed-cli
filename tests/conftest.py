@@ -27,6 +27,22 @@ import web_ui
 from testutil import free_port, wait_for_port
 
 
+@pytest.fixture(autouse=True)
+def no_real_relay(monkeypatch):
+    """The paths above aren't the only real thing a test can reach: an
+    empty relay list means "the default relay", http://127.0.0.1:9101 --
+    exactly where a developer's own node (make node) runs one. Tests that
+    host with 'relay': [] were publishing their fake first.mp4/clip.mp4
+    to it, and there they sat in the real Discover tab. Every test gets
+    a dead address instead (a free port nothing listens on: refused at
+    once), in-process and for any subprocess it spawns; a test that
+    wants a relay starts its own and points at it (see tests/e2e's
+    golden_path_server, whose monkeypatch runs after this one)."""
+    dead = f'http://127.0.0.1:{free_port()}'
+    monkeypatch.setattr(web_ui, 'DEFAULT_RELAY', dead)
+    monkeypatch.setenv('WEED_RELAY', dead)
+
+
 @pytest.fixture()
 def isolated_paths(tmp_path, monkeypatch):
     """Repoints every real-home-directory path node.py/web_ui.py touch at

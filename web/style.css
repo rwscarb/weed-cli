@@ -870,12 +870,21 @@ td button {
   background: #000;
 }
 
+/* a phone held sideways is ~375px tall: pinned 4rem off the bottom at
+   its usual size, the PIP's header (title, close, fullscreen) ended up
+   above the top of the screen */
+#global-player.mode-pip { max-height: min(90vh, calc(100vh - 5rem)); right: min(3rem, 5vw); }
+@supports (height: 100dvh) {
+  #global-player.mode-pip { max-height: min(90dvh, calc(100dvh - 5rem)); }
+}
+
 #global-player:fullscreen,
 #global-player:-webkit-full-screen {
   width: 100%;
   height: 100%;
   border-radius: 0;
   transform: none;
+  resize: none;       /* PIP/theater's drag-resize corner means nothing here */
 }
 
 /* Prev/Next as an overlay on the video itself, not the header -- works
@@ -936,10 +945,20 @@ td button {
   position: absolute; left: 0; right: 0; bottom: 0; height: 40px; z-index: 3;
   background: rgba(20, 20, 20, 0.85); border-top: 0;
   opacity: 0; transition: opacity 0.2s;
+  /* hidden means hidden: an invisible bar still catching taps meant a
+     tap near the bottom of the picture could seek or skip blind */
+  pointer-events: none;
 }
-#global-player:not(.audio-mode) .player-video-wrap:hover #audio-transport,
+/* hover only where there's real hover -- a touch screen fakes a sticky
+   :hover on tap, which left the bar stuck on (Android) or never showed
+   it at all (iOS); there a tap on the picture shows it instead
+   (vue-app.js onPlayerPictureTap -> .controls-shown) */
+@media (hover: hover) {
+  #global-player:not(.audio-mode) .player-video-wrap:hover #audio-transport { opacity: 1; pointer-events: auto; }
+}
 #global-player:not(.audio-mode) #audio-transport:focus-within,
-#global-player.paused:not(.audio-mode) #audio-transport { opacity: 1; }
+#global-player.controls-shown:not(.audio-mode) #audio-transport,
+#global-player.paused:not(.audio-mode) #audio-transport { opacity: 1; pointer-events: auto; }
 .audio-vol { width: 64px; flex-shrink: 0; accent-color: var(--accent); margin: 0; }
 .audio-btn:disabled { opacity: 0.35; cursor: default; }
 .swap-picker { min-width: 240px; max-width: 340px; }
@@ -1431,7 +1450,7 @@ td button {
   transition: opacity 0.35s ease;
 }
 #orbit-egg-dialog:fullscreen header { top: 0; border-bottom: 1px solid var(--border); }
-#orbit-egg-dialog:fullscreen .viz-controls { top: 2.4rem; max-height: 45vh; overflow: auto; padding: 0.3rem 0.85rem; }
+#orbit-egg-dialog:fullscreen .viz-controls { top: var(--viz-header-h, 2.4rem); max-height: 45vh; overflow: auto; padding: 0.3rem 0.85rem; }
 #orbit-egg-dialog:fullscreen .hint { bottom: 0; padding: 0.3rem 0.85rem; margin: 0; }
 #orbit-egg-dialog:fullscreen #vizSection { padding: 0; position: static; }
 #orbit-egg-dialog:fullscreen #vizCanvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; z-index: 1; }
@@ -2417,4 +2436,47 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
   #orbit-egg-dialog header { flex-wrap: wrap; }
   #orbit-egg-dialog .transport { flex-wrap: wrap; flex-shrink: 1; min-width: 0; row-gap: 0.3rem; }
   #orbit-egg-dialog .transport button { width: auto; }
+}
+
+/* ── the transport bar at phone sizes ─────────────────────────────────
+   One row of ⏮ ▶ ⏭, time, seek, time, mute, volume, ⇆ and the
+   crossfader needs ~480px; narrower than that the seek bar -- the one
+   control that most needs width -- was squeezed off the end. Below
+   560px of player (a container query on #global-player, so a small PIP
+   on a desktop gets it too) or visualizer, the bar splits in two: the
+   seek bar with its times across the full width on top, the buttons
+   and small sliders underneath. */
+.transport-bar .audio-btn { width: auto; }   /* the phone block's button { width: 100% } */
+#vizSection { container-type: inline-size; }
+@container (max-width: 560px) {
+  #audio-transport, .viz-transport,
+  #global-player:not(.audio-mode) #audio-transport,
+  #global-player.swap-audio #audio-transport {
+    flex-wrap: wrap; height: auto; column-gap: 0.35rem; row-gap: 0; padding: 0.3rem 0.6rem 0.35rem;
+  }
+  .transport-bar > * { order: 1; }
+  .transport-bar > .audio-time, .transport-bar > .audio-seek { order: 0; margin-bottom: 0.15rem; }
+  /* a zero-height full-width item right after the seek row: the line
+     break, however much room the times happen to leave beside it */
+  .transport-bar::after { content: ''; order: 0; flex-basis: 100%; height: 0; }
+  .transport-bar > .audio-seek { flex: 1 1 calc(100% - 7rem); min-width: 0; width: auto; margin: 0; }
+  .transport-bar > .audio-vol { width: 3.5rem; }
+  .transport-bar > .xfade-slider { flex: 1 1 3rem; width: auto; min-width: 2.5rem; }
+  #global-player.audio-mode .player-video-wrap { height: auto; }
+}
+/* fingers: taller hit areas for the sliders (the drawn track stays thin)
+   and roomier buttons */
+@media (pointer: coarse) {
+  .transport-bar .audio-seek { height: 1.75rem; }
+  .transport-bar .audio-vol, .transport-bar .xfade-slider { height: 1.5rem; }
+  .transport-bar .audio-btn { padding: 0.35rem 0.5rem; font-size: 1.1rem; }
+}
+
+/* touch screens: the visualizer's hint line is all keyboard and mouse
+   (scroll, middle-drag, shift+digits...) -- nothing a finger can do --
+   and on a phone it wrapped to four lines that, in fullscreen, sat on
+   top of the transport's button row */
+@media (pointer: coarse) {
+  #orbit-egg-dialog .hint { display: none; }
+  #orbit-egg-dialog:fullscreen .viz-transport { bottom: 0; }
 }
