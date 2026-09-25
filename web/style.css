@@ -2337,17 +2337,45 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
 .admin-chat { max-width: 40rem; margin: 0.75rem 0 1.25rem; }
 
 /* ── MIDI controller panel (orbit_midi.js) ───────────────────────── */
-#orbit-egg-dialog .midi-panel { flex-direction: column; align-items: stretch; gap: 0.4rem; }
+/* full width: without it the panel shrank to its content, so the list's
+   width -- and how its rows fit -- changed with whatever it held. (.viz-
+   controls > here to outrank the generic .preset-row rule, whose
+   align-items: center otherwise shrink-wrapped and centred the list) */
+#orbit-egg-dialog .viz-controls > .midi-panel { flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0.4rem; width: 100%; }
+.midi-head .icon-btn { width: auto; font-size: 0.72rem; padding: 0.1rem 0.5rem; line-height: 1.4; }
+.midi-filter { width: 12rem; max-width: 100%; margin: 0; padding: 0.15rem 0.45rem; font-size: 0.75rem; }
 .midi-head { display: flex; align-items: center; gap: 0.5rem; font-size: 0.78rem; color: var(--muted); flex-wrap: wrap; }
 .midi-last { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--accent); margin-left: auto; }
-#midiBindings { display: grid; grid-template-columns: repeat(auto-fill, minmax(19rem, 1fr)); gap: 0.25rem 0.75rem; max-height: 11rem; overflow-y: auto; }
-.midi-row { display: grid; grid-template-columns: 5.5rem 1fr 4.5rem auto; align-items: center; gap: 0.4rem; font-size: 0.75rem; padding: 0.1rem 0; }
+/* one column, top to bottom: an auto-fill grid wrapped the rows into
+   two or three columns depending on the panel's width, so Pad 2 sat
+   beside Pad 1 one day and under it the next, and each column was too
+   narrow for what the row does ("m…") */
+#midiBindings {
+  display: flex; flex-direction: column; max-height: min(22rem, 45vh); overflow-y: auto; overflow-x: hidden;
+  border: 1px solid var(--border); border-radius: 4px; color-scheme: dark;
+}
+.midi-row { display: grid; align-items: center; gap: 0.5rem; font-size: 0.75rem; padding: 0.15rem 0.5rem; }
+.midi-row:nth-child(even) { background: rgba(255, 255, 255, 0.025); }
+.midi-row:hover { background: rgba(255, 255, 255, 0.06); }
+.midi-none { font-size: 0.75rem; color: var(--muted); padding: 0.4rem 0.5rem; }
 .midi-row.learning { color: var(--accent); }
 .midi-label { color: var(--muted); }
 .midi-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .midi-key { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
 .midi-row .icon-btn { padding: 0.05rem 0.4rem; font-size: 0.7rem; }
-.midi-row { grid-template-columns: 6rem 1fr 7rem auto; }
+.midi-row { grid-template-columns: 8rem minmax(0, 1fr) 7.5rem auto; }
+.midi-ctl { justify-content: flex-end; }
+.midi-ctl .icon-btn { width: auto; }
+/* narrow (a phone, a small window): name and key on one line, what it
+   does and the buttons on the next, instead of four squeezed columns */
+@container (max-width: 560px) {
+  .midi-row { grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "label key" "what ctl"; row-gap: 0.1rem; padding: 0.3rem 0.5rem; }
+  .midi-label { grid-area: label; color: var(--text); }
+  .midi-key { grid-area: key; }
+  .midi-what { grid-area: what; color: var(--muted); }
+  .midi-ctl { grid-area: ctl; }
+  .midi-filter { width: 100%; }
+}
 .midi-row.unbound .midi-key { color: var(--muted); }
 .midi-ctl { display: flex; align-items: center; gap: 0.3rem; }
 .midi-rel { display: inline-flex; flex-direction: row; align-items: center; gap: 0.2rem; font-size: 0.7rem; color: var(--muted); margin: 0; }

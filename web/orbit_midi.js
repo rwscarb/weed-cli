@@ -426,6 +426,7 @@ window.orbitMidi = (function () {
     else if (type === 0xB0) kind = 'cc';
     else return;   // note-off, aftertouch, pitch bend, clock: ignored
     const ccKey = `${ch}:${n}`;
+    const relBefore = detectedRel[ccKey];
     if (kind === 'cc') noteCC(ccKey, v);
     last = `${kind === 'note' ? 'note' : 'CC'} ${n} ch${ch + 1} = ${v}`
          + (kind === 'cc' && detectedRel[ccKey] ? ` (relative: ${stepOf(v) > 0 ? '+' : ''}${stepOf(v)})` : '');
@@ -454,7 +455,12 @@ window.orbitMidi = (function () {
       fire(b, kind, v, ccKey, isAction && kind === 'cc' && isStep(v) && detectedRel[ccKey] === undefined);
     }
     if (kind === 'cc') lastCC[ccKey] = v;
-    render();
+    // just the "last:" readout -- rebuilding the whole list on every knob
+    // tick snapped it back to the top, so a row scrolled to was lost the
+    // moment the controller was touched. Only a knob newly detected as
+    // relative changes anything in the list itself (its "rel (auto)").
+    if (detectedRel[ccKey] !== relBefore) render();
+    else if (els && els.last) els.last.textContent = last ? 'last: ' + last : '';
   }
 
   function wireInputs() {
@@ -507,7 +513,9 @@ window.orbitMidi = (function () {
       importFile: document.getElementById('midiImportFile'),
       detent: document.getElementById('midiDetent'),
       last: document.getElementById('midiLast'),
+      filter: document.getElementById('midiFilter'),
     };
+    if (els.filter) els.filter.oninput = () => render();
     if (els.detent) { els.detent.value = detentZone; els.detent.onchange = () => { setDetent(els.detent.value); els.detent.value = detentZone; }; }
     if (els.btn) els.btn.onclick = () => {
       panel.classList.toggle('mode-controls-hidden');
@@ -554,8 +562,14 @@ window.orbitMidi = (function () {
       : 'not connected';
     els.connect.style.display = status === 'connected' ? 'none' : '';
     els.last.textContent = last ? 'last: ' + last : '';
+    // rebuilt from scratch, but where you'd scrolled to stays put
+    const scrollTop = els.list.scrollTop;
+    const q = els.filter ? els.filter.value.trim().toLowerCase() : '';
     els.list.innerHTML = '';
     for (const b of bindings) {
+      // the filter matches the row's name, what it does, or its key; the
+      // row being learned always shows, so "hit a pad…" can't vanish
+      if (q && learning !== b.id && !`${b.label} ${describe(b)} ${keyLabel(b.key)}`.toLowerCase().includes(q)) continue;
       const row = document.createElement('div');
       row.className = 'midi-row' + (learning === b.id ? ' learning' : '') + (b.key ? '' : ' unbound');
       const lbl = document.createElement('span'); lbl.className = 'midi-label'; lbl.textContent = b.label;
@@ -598,6 +612,11 @@ window.orbitMidi = (function () {
       row.append(lbl, what, key, ctl);
       els.list.appendChild(row);
     }
+    if (!els.list.children.length && q) {
+      const none = document.createElement('div'); none.className = 'midi-none'; none.textContent = 'no rows match "' + q + '"';
+      els.list.appendChild(none);
+    }
+    els.list.scrollTop = scrollTop;
   }
 
   return {
