@@ -447,23 +447,27 @@ def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_
     the viewport height so the list always has room under it."""
     monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
     monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
-    # wait for the first /api/party answer before touching vm.party:
-    # #party-view appears before that fetch lands, and its arrival would
-    # overwrite the flags set below (a 5s poll follows, comfortably later)
-    with page.expect_response(lambda r: '/api/party' in r.url and r.status == 200):
-        page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+    # no stream is running in this fixture: every /api/party answer says
+    # one is, the way the node's would once it starts. Patching vm.party
+    # from the test instead raced the first fetch -- its response event
+    # fires before refreshParty() parses the body and assigns this.party,
+    # which then replaced the patched object and unrendered the picture.
+    def party_with_stream(route):
+        resp = route.fetch()
+        body = resp.json()
+        body['stream'] = dict(body.get('stream') or {}, active=True, url='/api/orbit-view', since=1)
+        body['now_playing'] = {'title': 'Late Night Mix.mp3', 'content_hash': 'a' * 64}
+        route.fulfill(response=resp, json=body)
+    page.route('**/api/party', party_with_stream)
+    page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
     page.wait_for_selector('#party-view')
-    vm = _vm(page)
     # Ryan: "remove the header in party mode": no site header, and no
     # placeholder "party" heading either -- the page starts at the picture
     assert page.locator('header').count() == 0
     assert page.locator('#party-view h2').count() == 0
     assert page.locator('#tabs').count() == 0
-    # no stream is running in this fixture: flip the flag the way a
-    # refresh would once one starts, so the block renders
-    page.evaluate("vm => { vm.party.stream.active = true; vm.party.stream.url = '/api/orbit-view'; vm.party.stream.since = 1; vm.party.now_playing = { title: 'Late Night Mix.mp3', content_hash: 'a'.repeat(64) }; }", vm)
     # attached, not visible: with no real stream the <img> has no size yet
-    page.wait_for_selector('.party-top .party-stream', state='attached')
+    page.wait_for_selector('.party-top .party-stream img', state='attached')
     css = page.evaluate("() => { const b = getComputedStyle(document.querySelector('.party-top')); const i = getComputedStyle(document.querySelector('.party-stream img')); return { position: b.position, top: b.top, maxHeight: i.maxHeight, fit: i.objectFit }; }")
     assert css['position'] == 'sticky' and css['top'] == '0px'
     assert css['maxHeight'].endswith('px') and float(css['maxHeight'][:-2]) < 900 * 0.5
