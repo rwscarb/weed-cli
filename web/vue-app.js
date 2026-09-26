@@ -189,6 +189,10 @@ const app = createApp({
       // it, so switching tabs doesn't stop or hide playback.
       orbitStreaming: false,
       orbitDelay: 0,
+      // the mix bus's filters, each as a 0..1 knob position (see
+      // audioFxSet): low-pass open at 1, high-pass open at 0. Not
+      // persisted -- a reload starts with the sound unfiltered.
+      audioFx: { lowpass: 1, highpass: 0, resonance: 0 },
       // Downloads tab: the tag chip that's filtering the table (null =
       // all), and the tag Autopilot draws its next track from ('' = any)
       tagFilters: [],     // the lit chips; a download must carry every one of them to show
@@ -599,6 +603,16 @@ const app = createApp({
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
     window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = Math.min(10000, Math.max(0, e.detail | 0)); });
+    // the MIDI panel's volume/filter rows (orbit_midi.js): the player's
+    // level and the mix bus's filters are this component's state too
+    window.orbitAudio = {
+      position: (param) => this.audioFxPosition(param),
+      set: (param, pos) => this.audioFxSet(param, pos),
+      action: (name) => {
+        if (name === 'mute') { this.audioToggleMute(); this.xfadeNotify(this.$refs.playerVideo && this.$refs.playerVideo.muted ? 'Muted' : 'Unmuted'); }
+        else if (name === 'fxReset') this.audioFxReset();
+      },
+    };
     // a knob on the MIDI panel's Crossfader row: cues on the first move if nothing is cued
     window.addEventListener('weed:orbit-xfade', (e) => {
       if (!this.player.visible) return;
@@ -1367,20 +1381,21 @@ const app = createApp({
       // renders nothing; the click that started playback lets this resume
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       const dest = ctx.createMediaStreamDestination();
-      (graph.mix || source).connect(dest);   // both decks, as heard
+      const tap = graph.out || graph.mix || source;
+      tap.connect(dest);   // both decks, as heard (filters included)
       let rec;
       try {
         rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 128000 });
       } catch (e) {
         console.error('[orbit] audio: MediaRecorder refused:', e);
-        try { source.disconnect(dest); } catch (e2) { /* already gone */ }
+        try { tap.disconnect(dest); } catch (e2) { /* already gone */ }
         return;
       }
       const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const actualMime = rec.mimeType || mime;
       const ws = new WebSocket(`${proto}//${location.host}/api/orbit-audio-ws?mime=${encodeURIComponent(actualMime)}`);
       ws.binaryType = 'arraybuffer';
-      const sender = { dest, source, rec, ws, stopped: false, bytes: 0 };
+      const sender = { dest, source: tap, rec, ws, stopped: false, bytes: 0 };
       this._orbitAudioSender = sender;
       ws.onopen = () => {
         if (sender.stopped) return;
@@ -2194,6 +2209,7 @@ const app = createApp({
       video.volume = v;
       if (v > 0 && video.muted) video.muted = false;
       this.player.audioVolume = v;
+      if (this._deckB) this._deckB.el.volume = v;   // the cued track sits at the same level
     },
     audioSeek(val) {
       const video = this.$refs.playerVideo;
@@ -2202,6 +2218,7 @@ const app = createApp({
     audioToggleMute() {
       const video = this.$refs.playerVideo;
       if (video) video.muted = !video.muted;
+      if (video && this._deckB) this._deckB.el.muted = video.muted;
     },
     // ── crossfader ───────────────────────────────────────────────────
     // DJ-style: ⇆ cues the next track on a second, hidden <video> (deck
@@ -2215,6 +2232,7 @@ const app = createApp({
         const el = this.$refs.deckB;
         const src = g.ctx.createMediaElementSource(el);
         const gainB = g.ctx.createGain(); gainB.gain.value = 0;
+        el.volume = this.player.audioVolume;
         src.connect(gainB); gainB.connect(g.mix);
         this._deckB = { el, src, gainB };
       }
@@ -2319,6 +2337,56 @@ const app = createApp({
       });
     },
     xfadeNotify(text) { if (window.orbitViz && window.orbitViz.toast) window.orbitViz.toast(text); },
+    // ── mix-bus filters (MIDI knobs: orbit_midi.js via window.orbitAudio) ──
+    // Every setting is a 0..1 knob position. Cutoffs sweep 20 Hz..20 kHz
+    // on a log scale (so the middle of the knob is ~630 Hz, not 10 kHz);
+    // resonance is the filters' Q, 0.707 (flat, no bump) up to 15.
+    // "filter" is the DJ-mixer one-knob filter: centre is off, left
+    // closes the low-pass, right opens the high-pass -- it drives the
+    // same two filters as the separate knobs, whichever moved last wins.
+    audioFxFreq(pos) { return 20 * Math.pow(1000, Math.min(1, Math.max(0, pos))); },
+    audioFxQ(pos) { return 0.707 * Math.pow(15 / 0.707, Math.min(1, Math.max(0, pos))); },
+    audioFxPosition(param) {
+      const fx = this.audioFx;
+      if (param === 'volume') return this.player.audioVolume;
+      if (param === 'filter') return fx.lowpass < 1 ? fx.lowpass / 2 : 0.5 + fx.highpass / 2;
+      return fx[param] !== undefined ? fx[param] : 0.5;
+    },
+    audioFxSet(param, pos) {
+      pos = Math.min(1, Math.max(0, parseFloat(pos) || 0));
+      if (param === 'volume') {
+        this.audioSetVolume(pos);
+        this.xfadeNotify(`Volume ${Math.round(pos * 100)}%`);
+        return;
+      }
+      const fx = this.audioFx;
+      if (param === 'filter') {
+        fx.lowpass = pos < 0.5 ? pos * 2 : 1;
+        fx.highpass = pos > 0.5 ? (pos - 0.5) * 2 : 0;
+      } else if (param in fx) fx[param] = pos;
+      else return;
+      // the filters live on the Web Audio graph; a knob turned before the
+      // visualizer ever opened builds it (only with the player up -- it
+      // routes the player's <video> through the graph)
+      if (!this._orbitAnalyser && !this.player.visible) return;
+      const g = this._ensureOrbitAnalyser();
+      if (g.ctx.state === 'suspended') g.ctx.resume().catch(() => {});
+      // a short glide, not a jump: a stepped cutoff crackles ("zipper noise")
+      const t = g.ctx.currentTime, glide = 0.015;
+      g.lowpass.frequency.setTargetAtTime(this.audioFxFreq(fx.lowpass), t, glide);
+      g.highpass.frequency.setTargetAtTime(this.audioFxFreq(fx.highpass), t, glide);
+      const q = this.audioFxQ(fx.resonance);
+      g.lowpass.Q.setTargetAtTime(q, t, glide); g.highpass.Q.setTargetAtTime(q, t, glide);
+      const hz = (pos) => { const f = this.audioFxFreq(pos); return f >= 1000 ? (f / 1000).toFixed(1) + ' kHz' : Math.round(f) + ' Hz'; };
+      this.xfadeNotify(param === 'resonance' ? `Resonance Q ${q.toFixed(1)}`
+        : fx.lowpass >= 1 && fx.highpass <= 0 ? 'Filter off'
+        : [fx.highpass > 0 ? 'High-pass ' + hz(fx.highpass) : '', fx.lowpass < 1 ? 'Low-pass ' + hz(fx.lowpass) : ''].filter(Boolean).join(' · '));
+    },
+    audioFxReset() {
+      this.audioFxSet('filter', 0.5);
+      this.audioFxSet('resonance', 0);
+      this.xfadeNotify('Filters off');
+    },
     onPlayerEnded() {
       this.player.isPlaying = false;
       // a track cued on deck B is what comes next, wherever the fader is
@@ -2614,13 +2682,24 @@ const app = createApp({
       // the mix
       const gainA = ctx.createGain(), mix = ctx.createGain();
       source.connect(gainA); gainA.connect(mix);
-      mix.connect(analyser);          // undelayed → visualizer data
-      mix.connect(delay);             // delayed → speakers
+      // the mix bus's filters (MIDI knobs, see audioFxSet): high-pass
+      // then low-pass, both parked wide open, so they're inaudible until
+      // turned. `out` is the bus as heard -- visualizer, speakers and
+      // the network stream all take it after the filters.
+      const highpass = ctx.createBiquadFilter(), lowpass = ctx.createBiquadFilter();
+      highpass.type = 'highpass'; lowpass.type = 'lowpass';
+      highpass.frequency.value = this.audioFxFreq(this.audioFx.highpass);
+      lowpass.frequency.value = this.audioFxFreq(this.audioFx.lowpass);
+      highpass.Q.value = lowpass.Q.value = this.audioFxQ(this.audioFx.resonance);
+      mix.connect(highpass); highpass.connect(lowpass);
+      const out = lowpass;
+      out.connect(analyser);          // undelayed → visualizer data
+      out.connect(delay);             // delayed → speakers
       delay.connect(ctx.destination);
       this._orbitAnalyser = {
         // source is kept so the network stream's audio sender
         // (_startOrbitAudio) can tap it ahead of the delay node
-        ctx, analyser, delay, source, gainA, mix,
+        ctx, analyser, delay, source, gainA, mix, highpass, lowpass, out,
         freq: new Uint8Array(analyser.frequencyBinCount),
         wave: new Uint8Array(analyser.fftSize),
       };

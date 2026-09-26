@@ -238,7 +238,13 @@ Zoom retune every mode; every setting persists in the browser.
   there; its width is the panel's **detent** field, 0 to turn it off.
   Each selector row has a **clicks** field, how many encoder clicks move
   one entry (mode and fade style default to 1, ASCII chars to 3 so a
-  nudge doesn't run through several sets). Every row, plugin modes
+  nudge doesn't run through several sets). The sound has rows too:
+  **Volume**, **Mute**, a DJ-mixer **DJ filter** (centre off, left
+  closes a low-pass, right opens a high-pass), separate **Low-pass** /
+  **High-pass** cutoffs, **Resonance** and **Filters off** -- unbound
+  by default, one Learn away. The filters sit on the mix bus, so the
+  visualizer, the cued crossfade deck and the network stream's audio
+  all hear them. Every row, plugin modes
   and transitions included, has a Learn button; **export** saves the
   keymap as a `.json` file and **import** loads one.
 - **Autopilot** (🤖 in the visualizer's header, or a MIDI pad): the

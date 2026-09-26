@@ -893,3 +893,53 @@ def test_a_change_by_hand_holds_autopilot_off_for_a_while(page, golden_path_serv
     page.wait_for_function("() => window.orbitViz.current().mode !== 'plasma' || window.orbitViz.debugState().vizOff", timeout=3_000)   # then it resumes
     page.select_option('#transitionSelect', 'wipe')                            # a fade-style change holds it too
     assert page.evaluate("() => window.orbitViz.autopilotHoldRemaining()") > 1.2
+
+
+def test_zoom_and_pan_apply_to_the_plain_video_too(page, golden_path_server):
+    """Ryan: "make zoom work on the raw videos like rotate does, not just
+    visualizer modes". With effects off the frame is drawn at the zoom,
+    around the panned centre. The test clip has no decodable frames, so
+    the player's <video> is given a 640x360 frame's worth of readiness
+    and drawImage is watched for where the video lands."""
+    page.add_init_script("""
+      const orig = CanvasRenderingContext2D.prototype.drawImage;
+      CanvasRenderingContext2D.prototype.drawImage = function (img, ...a) {
+        if (img instanceof HTMLVideoElement && a.length === 4 && this.canvas.id === 'vizCanvas') window.__videoRect = [...a, this.canvas.width, this.canvas.height];
+        return orig.call(this, img, ...a);
+      };
+    """)
+    _download_and_play(page, golden_path_server)
+    _open_orbit_viz(page)
+    page.evaluate("""() => { const v = document.querySelector('#global-player video:not(.swap-video)');
+        Object.defineProperty(v, 'readyState', { get: () => 4 });
+        Object.defineProperty(v, 'videoWidth', { get: () => 640 });
+        Object.defineProperty(v, 'videoHeight', { get: () => 360 }); }""")
+    page.evaluate("() => window.orbitViz.trigger('video')")
+    assert page.evaluate("() => window.orbitViz.debugState().vizOff") is True
+
+    def rect_at(pos):
+        page.evaluate("(p) => { window.orbitViz.control('zoom', p); window.__videoRect = null; }", pos)
+        page.wait_for_function("() => window.__videoRect")
+        return page.evaluate("() => [window.__videoRect, window.orbitViz.debugState().zoom]")
+
+    # the canvas can still be settling its size, so each draw is checked
+    # against its own canvas: the 16:9 frame fitted, times the zoom
+    def offset(r, z):
+        x, y, w, h, cw, ch = r
+        fit = min(cw / 640, ch / 360)
+        assert abs(w - 640 * fit * z) < 1 and abs(h - 360 * fit * z) < 1, (r, z)
+        return x + w / 2 - cw / 2, y + h / 2 - ch / 2      # the frame centre's offset from the canvas centre
+
+    r1, z1 = rect_at(0.5)
+    r2, z2 = rect_at(0.8)
+    assert z2 > z1 * 1.5
+    assert max(map(abs, offset(r1, z1))) < 1
+    assert max(map(abs, offset(r2, z2))) < 1                  # zoomed about the centre
+    box = page.locator('#vizCanvas').bounding_box()
+    cx, cy = box['x'] + box['width'] / 2, box['y'] + box['height'] / 2
+    page.mouse.move(cx, cy); page.mouse.down(); page.mouse.move(cx + 40, cy - 20, steps=4); page.mouse.up()   # left-drag pans
+    dx, dy = offset(*rect_at(0.8))
+    assert dx > 20 and dy < -10, (dx, dy)                     # moved right and up with the drag
+    page.evaluate("() => window.orbitViz.trigger('mode:tunnel')")          # back to a mode and to video again: pan resets
+    page.evaluate("() => window.orbitViz.trigger('video')")
+    assert max(map(abs, offset(*rect_at(0.8)))) < 1

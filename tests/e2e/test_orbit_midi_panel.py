@@ -83,3 +83,59 @@ def test_the_panel_fits_a_phone(page, golden_path_server):
     if SHOTS:
         page.locator('#midiPanel').scroll_into_view_if_needed()
         page.locator('#midiPanel').screenshot(path=os.path.join(SHOTS, 'midi-phone.png'))
+
+
+def test_knobs_drive_volume_and_the_filters(page, golden_path_server):
+    """Volume, the DJ filter, the separate cutoffs and resonance: rows
+    like any other, reaching the player's sound through window.orbitAudio
+    and the Web Audio graph's filters."""
+    _open_midi_panel(page, golden_path_server)
+    targets = {b['id']: b['target'] for b in page.evaluate("() => window.orbitMidi.bindings()")}
+    for row in ('kVol', 'kFilter', 'kLowpass', 'kHighpass', 'kReso', 'actMute', 'actFxReset'):
+        assert row in targets
+    page.evaluate("""() => window.orbitMidi.importKeymap({ format: 'weed.orbit.midi-keymap', version: 1, bindings: [
+        { id: 'kVol', key: 'c0:20' }, { id: 'kFilter', key: 'c0:21' }, { id: 'kLowpass', key: 'c0:22' },
+        { id: 'kReso', key: 'c0:23' }, { id: 'actMute', key: 'n0:60' }, { id: 'actFxReset', key: 'n0:61' } ] })""")
+    cc = lambda n, v: page.evaluate("([n, v]) => window.orbitMidi._onMessage({ data: [0xB0, n, v] })", [n, v])
+    note = lambda n: page.evaluate("(n) => window.orbitMidi._onMessage({ data: [0x90, n, 100] })", n)
+    vm = "document.getElementById('app').__vue_app__._container._vnode.component.proxy"
+    graph = lambda: page.evaluate(f"""() => {{ const g = {vm}._orbitAnalyser;
+        return {{ lp: g.lowpass.frequency.value, hp: g.highpass.frequency.value, q: g.lowpass.Q.value,
+                 vol: {vm}.$refs.playerVideo.volume, muted: {vm}.$refs.playerVideo.muted }}; }}""")
+
+    for v in (40, 50, 64):          # a pot sweeping (not step-looking values)
+        cc(20, v)
+    assert abs(graph()['vol'] - 64 / 127) < 0.01
+
+    for v in (60, 50, 32):          # DJ filter left of centre: low-pass closes
+        cc(21, v)
+    page.wait_for_timeout(200)      # the cutoff glides
+    g = graph()
+    assert g['lp'] < 2000 and g['hp'] < 25, g
+    for v in (80, 100, 112):        # right of centre: low-pass opens, high-pass rises
+        cc(21, v)
+    page.wait_for_timeout(200)
+    g = graph()
+    assert g['lp'] > 19000 and g['hp'] > 200, g
+    for v in (80, 70, 66):          # near the middle: the detent parks it off
+        cc(21, v)
+    page.wait_for_timeout(200)
+    assert page.evaluate("() => window.orbitAudio.position('filter')") == 0.5
+
+    for v in (30, 50, 100):
+        cc(23, v)
+    page.wait_for_timeout(200)
+    assert graph()['q'] > 3
+
+    cc(22, 40); cc(22, 30); cc(22, 20)
+    page.wait_for_timeout(200)
+    assert graph()['lp'] < 500
+    note(61)                        # "Filters off"
+    page.wait_for_timeout(200)
+    g = graph()
+    assert g['lp'] > 19000 and g['hp'] < 25 and g['q'] < 1, g
+
+    note(60)
+    assert graph()['muted'] is True
+    note(60)
+    assert graph()['muted'] is False

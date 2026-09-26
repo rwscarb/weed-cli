@@ -1011,6 +1011,7 @@ window.orbitViz = (function () {
     function setVizOff(transitionOverride) {
       if (!s.restoring) { s.randomPicked = null; snapshotForTransition(transitionOverride); showToast('Mode: Video' + pickSuffix() + holdSuffix()); }
       s.vizOff = true;
+      s.vizPanX = 0; s.vizPanY = 0;   // pan resets with the view, as in setVizMode
       autopilotHold();
       persistSettings();
       document.querySelectorAll('[data-viz]').forEach(b => b.classList.remove('active'));
@@ -1196,8 +1197,13 @@ window.orbitViz = (function () {
       vctx.fillStyle = '#000'; vctx.fillRect(0, 0, s.VW, s.VH);
       const v = pictureSource();
       if (!v || v.readyState < 2 || !v.videoWidth) { drawNoVideoMessage(hueBase); return; }
+      // zoom and pan apply here as in the modes (rotation is already
+      // done around the whole scene in drawViz): zoomed in, the frame
+      // overflows the canvas and a drag moves around it; zoomed out, it
+      // sits smaller on black
       const fit = fitFrameToCanvas(v.videoWidth, v.videoHeight);
-      vctx.drawImage(v, (s.VW - fit.w) / 2, (s.VH - fit.h) / 2, fit.w, fit.h);
+      const w = fit.w * s.vizUserScale, h = fit.h * s.vizUserScale;
+      vctx.drawImage(v, s.VW / 2 + s.vizPanX - w / 2, s.VH / 2 + s.vizPanY - h / 2, w, h);
     }
 
     // FREEFALL's recursive flower -- a ring of petals radiating from

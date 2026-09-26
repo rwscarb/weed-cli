@@ -19,6 +19,10 @@
 //                                                encoder: one entry per click
 //   parameter     (nothing)                      sets it: 0..127 -> its range
 //
+// Parameters include the player's sound as well as the picture: volume,
+// a DJ-style one-knob filter, separate low-pass/high-pass cutoffs and
+// their resonance (vue-app.js audioFxSet, via window.orbitAudio).
+//
 // The defaults match an AKAI MPK mini's factory MIDI program (pads on
 // channel 10: bank A notes 36-43, bank B 44-51; knobs K1-K8 as CC 70-77
 // on the mk3 -- the IV numbers its knobs differently, so those rows are
@@ -83,6 +87,15 @@ window.orbitMidi = (function () {
     { id: 'actAuto', label: 'Autopilot', target: 'autopilot:toggle', key: null },
     { id: 'actResetRot', label: 'Reset rotation', target: 'resetRot', key: null },
     { id: 'kXfade', label: 'Crossfader', target: 'param:xfade', key: null },
+    // the player's sound: level and the mix bus's filters (vue-app.js
+    // audioFxSet, reached through window.orbitAudio)
+    { id: 'kVol', label: 'Volume', target: 'param:volume', key: null },
+    { id: 'kFilter', label: 'DJ filter', target: 'param:filter', key: null },
+    { id: 'kLowpass', label: 'Low-pass', target: 'param:lowpass', key: null },
+    { id: 'kHighpass', label: 'High-pass', target: 'param:highpass', key: null },
+    { id: 'kReso', label: 'Resonance', target: 'param:resonance', key: null },
+    { id: 'actMute', label: 'Mute', target: 'audio:mute', key: null },
+    { id: 'actFxReset', label: 'Filters off', target: 'audio:fxReset', key: null },
   ];
   const TARGET_LABELS = {
     video: 'video only (toggle)', flash: 'fire transition', 'transition:next': 'next fade style',
@@ -93,6 +106,9 @@ window.orbitMidi = (function () {
     'param:asciiBrightness': 'ASCII brightness', 'param:asciiStride': 'ASCII resolution',
     'param:asciiBgAlpha': 'ASCII background', 'param:buildingWidth': 'Freefall size',
     'param:buildingHeight': 'Freefall bloom', 'param:buildingCount': 'Freefall count', 'param:delay': 'Audio delay', 'param:xfade': 'crossfade to the cued next track (A → B)',
+    'param:volume': 'Volume', 'param:filter': 'DJ filter: ← low-pass · off · high-pass →',
+    'param:lowpass': 'Low-pass cutoff (right = open)', 'param:highpass': 'High-pass cutoff (left = open)',
+    'param:resonance': 'Filter resonance', 'audio:mute': 'mute / unmute', 'audio:fxReset': 'filters off (open both)',
     'param:rotate': 'Rotate view', 'autopilot:toggle': 'autopilot: off → ↓ → ↑', resetRot: 'reset rotation (zoom/pan kept)',
   };
   const RELATIVE_CAPABLE = t => t.startsWith('param:') || t.startsWith('select:');
@@ -331,14 +347,16 @@ window.orbitMidi = (function () {
       // press again). A relative encoder fires it on every clockwise
       // click -- and, for the actions that have an opposite, fires that
       // on a counter-clockwise click, so one knob walks both ways.
-      if (kind === 'note') viz.trigger(t);
+      // audio:* belongs to the player (window.orbitAudio), the rest to the visualizer
+      const run = a => a.startsWith('audio:') ? (window.orbitAudio && window.orbitAudio.action(a.slice(6))) : viz.trigger(a);
+      if (kind === 'note') run(t);
       else if (forceRel || isRelative(b, ccKey)) {
         const step = stepOf(v);
-        if (step > 0) viz.trigger(t);
-        else if (step < 0 && OPPOSITE[t]) viz.trigger(OPPOSITE[t]);
+        if (step > 0) run(t);
+        else if (step < 0 && OPPOSITE[t]) run(OPPOSITE[t]);
       } else {
         const prev = lastCC[ccKey];
-        if (prev !== undefined && prev < 64 && v >= 64) viz.trigger(t);
+        if (prev !== undefined && prev < 64 && v >= 64) run(t);
       }
     }
   }
@@ -376,10 +394,26 @@ window.orbitMidi = (function () {
   // an encoder click that reaches or crosses it stops on it -- the next
   // click moves off again, so passing through costs one click. The
   // panel's "detent" field sets the width; 0 switches this off.
+  // the sound's parameters live outside the visualizer; their homes:
+  // the DJ filter's centre (off) and each cutoff's open end
+  const AUDIO_PARAMS = new Set(['volume', 'filter', 'lowpass', 'highpass', 'resonance']);
+  const AUDIO_DETENTS = { filter: 0.5, lowpass: 1, highpass: 0 };
   function detentOf(b) {
     const viz = window.orbitViz;
-    if (!detentZone || !b.target.startsWith('param:') || !viz.controlDetent) return null;
-    return viz.controlDetent(b.target.slice(6));
+    if (!detentZone || !b.target.startsWith('param:')) return null;
+    const param = b.target.slice(6);
+    if (AUDIO_PARAMS.has(param)) return AUDIO_DETENTS[param] !== undefined ? AUDIO_DETENTS[param] : null;
+    if (!viz.controlDetent) return null;
+    return viz.controlDetent(param);
+  }
+  // where a parameter sits now, 0..1 -- what an encoder's first click
+  // nudges from
+  function currentPosition(b) {
+    const param = b.target.slice(6);
+    if (b.target === 'param:xfade') return 0;
+    if (AUDIO_PARAMS.has(param)) return window.orbitAudio ? window.orbitAudio.position(param) : 0.5;
+    if (b.target.startsWith('param:') && b.target !== 'param:delay') return window.orbitViz.controlPosition(param);
+    return 0.5;
   }
   function knobPosition(b, v, ccKey) {
     // absolute: the knob's 0..127 is the position. relative (ticked, or
@@ -393,8 +427,9 @@ window.orbitMidi = (function () {
       return d !== null && Math.abs(pos - d) <= zone + 1e-9 ? d : pos;
     }
     // first nudge starts from where the parameter actually is
-    const cur = relValue[b.id] !== undefined ? relValue[b.id]
-              : (b.target === 'param:xfade' ? 0 : b.target.startsWith('param:') && b.target !== 'param:delay' ? window.orbitViz.controlPosition(b.target.slice(6)) : 0.5);
+    // (the sound's always does: the transport slider, the M key and the
+    // DJ filter vs. the separate cutoffs all move the same values)
+    const cur = relValue[b.id] !== undefined && !AUDIO_PARAMS.has(b.target.slice(6)) ? relValue[b.id] : currentPosition(b);
     const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
     pendingSteps[ccKey] = 0;
     // rotation is a circle: an encoder keeps turning the picture past a
@@ -414,6 +449,7 @@ window.orbitMidi = (function () {
   function applyParam(b, param, pos) {
     if (param === 'delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: Math.round(pos * 10000) }));
     else if (param === 'xfade') window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: pos }));
+    else if (AUDIO_PARAMS.has(param)) { if (window.orbitAudio) window.orbitAudio.set(param, pos); }
     else window.orbitViz.control(param, pos);
   }
 
