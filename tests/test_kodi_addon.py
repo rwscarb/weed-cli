@@ -154,7 +154,9 @@ def test_default_py_builds_plugin_urls_with_stubbed_kodi(monkeypatch):
                                  PlayList=lambda k: types.SimpleNamespace(clear=lambda: None, add=lambda *a: calls.append(('add',) + a)))
     xbmcaddon = types.SimpleNamespace(Addon=lambda: types.SimpleNamespace(
         getAddonInfo=lambda k: ADDON, getSetting=lambda k: {'server': 'http://node:8080', 'token': 't', 'insecure': 'true'}[k]))
-    xbmcgui = types.SimpleNamespace(ListItem=lambda **kw: types.SimpleNamespace(setInfo=lambda *a: None, setProperty=lambda *a: None, **kw),
+    xbmcgui = types.SimpleNamespace(ListItem=lambda **kw: types.SimpleNamespace(setInfo=lambda *a: None, setProperty=lambda *a: None,
+                                                                                setMimeType=lambda m: calls.append(('mime', m)),
+                                                                                setContentLookup=lambda on: calls.append(('lookup', on)), **kw),
                                     Dialog=lambda: types.SimpleNamespace(notification=lambda *a: calls.append(('notify',) + a)), NOTIFICATION_INFO=0)
     xbmcplugin = types.SimpleNamespace(addDirectoryItem=lambda h, url, item, isFolder=False: calls.append(('dir', url, item.label, isFolder)),
                                        endOfDirectory=lambda h: calls.append(('end',)), setContent=lambda h, c: calls.append(('content', c)),
@@ -178,6 +180,10 @@ def test_default_py_builds_plugin_urls_with_stubbed_kodi(monkeypatch):
     monkeypatch.setattr(sys, 'argv', ['plugin://plugin.video.weed/', '7', '?action=play&job_id=j1'])
     ui.play('http://node:8080/api/stream/j1?token=t', 'Track', {'title': 'Track'})
     assert calls[-1] == ('resolved', 'http://node:8080/api/stream/j1?token=t')
+    assert not any(c[0] in ('mime', 'lookup') for c in calls)                # files: Kodi looks them up itself
+    # a live feed: its type is given up front and Kodi's HEAD probe is off
+    ui.play('http://node:8080/api/orbit-view?token=t', 'weed Orbit', {'title': 'weed Orbit', 'mime': 'multipart/x-mixed-replace'})
+    assert calls[-3:-1] == [('mime', 'multipart/x-mixed-replace'), ('lookup', False)]
 
 
 def test_kodi_own_url_parameters_are_ignored(web_server):
@@ -264,7 +270,7 @@ def test_muxed_live_feed_needs_audio_and_ffmpeg(web_server, monkeypatch):
     monkeypatch.setattr(web_ui, '_ffmpeg_path', lambda: '/usr/bin/ffmpeg')
     ui = FakeUI(web_server)
     plugin.Plugin(ui).run(action='live', what='mux')
-    assert ui.played == [(web_server + '/api/orbit-mux', 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video'})]
+    assert ui.played == [(web_server + '/api/orbit-mux', 'weed Orbit', {'title': 'weed Orbit', 'mediatype': 'video', 'mime': 'video/x-matroska'})]
 
 
 def test_folders_screen_walks_the_hosts_folder_tree(web_server):

@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp
+//              Aurora, Flow, Life, Tree, Warp, Cymatics
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -2849,6 +2849,108 @@
           vctx.restore();
         }
         vctx.globalCompositeOperation = 'source-over';
+      },
+    });
+  })();
+
+  // ── Cymatics (mode): sand on a vibrating Chladni plate. The plate
+  // rings in one of its standing-wave modes -- which one follows where
+  // the music sits in the spectrum, simple figures for bass-heavy
+  // passages and intricate ones for bright ones -- and the sand shakes
+  // off the parts that move and piles up on the nodal lines that don't.
+  // A bass hit retunes the plate, so the sand scatters and walks to the
+  // new figure; louder music shakes it harder.
+  (function () {
+    const N = 5000, px = new Float32Array(N), py = new Float32Array(N), field = offscreen(), FW = 72, RINGS = 12;
+    // (n, m) plate modes, roughly simple -> intricate
+    const PAIRS = [[1, 2], [1, 3], [2, 3], [1, 4], [3, 4], [2, 5], [1, 5], [3, 5], [4, 5], [2, 7], [3, 7], [5, 6], [4, 7], [5, 7], [6, 7], [5, 8], [7, 8]];
+    let cur = 0, prev = 0, mix = 1, last = 0, bassAvg = 0, cooldown = 0, idle = 0, centroidAvg = 0.1;
+    const chladni = (n, m, u, v) => Math.cos(n * Math.PI * u) * Math.cos(m * Math.PI * v) - Math.cos(m * Math.PI * u) * Math.cos(n * Math.PI * v);
+    // how hard the plate moves at (u, v), morphing from the old mode to the new one
+    const amp = (u, v) => {
+      const [n1, m1] = PAIRS[cur];
+      if (mix >= 1) return Math.abs(chladni(n1, m1, u, v));
+      const [n0, m0] = PAIRS[prev];
+      return Math.abs(chladni(n0, m0, u, v) * (1 - mix) + chladni(n1, m1, u, v) * mix);
+    };
+    const scatter = () => { for (let i = 0; i < N; i++) { px[i] = Math.random(); py[i] = Math.random(); } };
+    const hsl = (h, s, l) => {
+      const a = s * Math.min(l, 1 - l), f = (k0) => { const k = (k0 + h / 30) % 12; return l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+      return [f(0) * 255, f(8) * 255, f(4) * 255];
+    };
+    scatter();
+    viz.registerMode({
+      id: 'cymatics', label: 'Cymatics',
+      init() { scatter(); cur = prev = 0; mix = 1; last = 0; bassAvg = 0; cooldown = 0; idle = 0; centroidAvg = 0.1; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        let sw = 0, sum = 0;
+        for (let i = 1; i < maxBin; i++) { sw += freqData[i] * i; sum += freqData[i]; }
+        centroidAvg += ((sum ? sw / sum / maxBin : 0) - centroidAvg) * Math.min(1, dt * 2);
+        // retune on a bass hit (or after a long quiet stretch) to the
+        // plate mode that matches the spectrum's centre of mass
+        bassAvg = bassAvg * 0.95 + bass * 0.05; cooldown = Math.max(0, cooldown - dt); idle += dt * speed;
+        if (cooldown === 0 && (bass > bassAvg * 1.25 + 0.06 || idle > 10)) {
+          let next = Math.min(PAIRS.length - 1, Math.floor(clamp01(centroidAvg * 2.5) * PAIRS.length));
+          if (next === cur) next = cur === PAIRS.length - 1 || (cur > 0 && Math.random() < 0.5) ? cur - 1 : cur + 1;
+          prev = cur; cur = next; mix = 0; cooldown = 2.5; idle = 0;
+        }
+        mix = Math.min(1, mix + dt * 1.5);
+        // shake: every grain takes a random step sized by how much the
+        // plate moves under it, so grains wander off antinodes and come
+        // to rest where the plate is still -- plus a little drift down
+        // the vibration's slope, which is what sharpens the lines
+        const shake = (0.012 + energy * 0.05) * speed * Math.min(3, dt * 60), E = 0.004, pull = shake * 0.01 / E;
+        for (let i = 0; i < N; i++) {
+          const x = px[i], y = py[i], a0 = amp(x, y), a = a0 + 0.004;
+          const gx = amp(x + E, y) - a0, gy = amp(x, y + E) - a0;
+          let u = x + (Math.random() - 0.5) * a * shake - gx * pull, v = y + (Math.random() - 0.5) * a * shake - gy * pull;
+          if (u < 0) u = -u; else if (u > 1) u = 2 - u;
+          if (v < 0) v = -v; else if (v > 1) v = 2 - v;
+          px[i] = u; py[i] = v;
+        }
+
+        vctx.fillStyle = '#050507'; vctx.fillRect(0, 0, VW, VH);
+        const L = Math.min(VW, VH) * 0.88 * vizUserScale;
+        vctx.save();
+        vctx.translate(cx, cy); vctx.rotate(vizRot * 0.1);
+        // the plate: still parts in one colour, vibrating parts glowing
+        // in the opposite one, brighter the louder it plays
+        const { c, ctx: fc } = field(FW, FW);
+        const img = fc.createImageData(FW, FW), d = img.data;
+        const still = hsl((hueBase + 250) % 360, 0.7, 0.12), hot = hsl((hueBase + 70) % 360, 0.95, 0.5), vibe = 0.25 + energy * 0.6;
+        for (let j = 0; j < FW; j++) for (let i = 0; i < FW; i++) {
+          const k = Math.min(1, amp((i + 0.5) / FW, (j + 0.5) / FW) * 0.5) * vibe, o = (j * FW + i) * 4;
+          d[o] = still[0] + (hot[0] - still[0]) * k; d[o + 1] = still[1] + (hot[1] - still[1]) * k; d[o + 2] = still[2] + (hot[2] - still[2]) * k; d[o + 3] = 255;
+        }
+        fc.putImageData(img, 0, 0);
+        vctx.imageSmoothingEnabled = true;
+        vctx.drawImage(c, -L / 2, -L / 2, L, L);
+        vctx.strokeStyle = `hsl(${(hueBase + 200) % 360 | 0},60%,${45 + bass * 30 | 0}%)`;
+        vctx.lineWidth = Math.max(2, L / 160);
+        vctx.strokeRect(-L / 2, -L / 2, L, L);
+        // the sand, in rainbow rings from the centre out: one path per
+        // ring, each ring lit by its own band -- bass in the middle,
+        // treble at the corners
+        const r = Math.max(1, L / 300), rings = Array.from({ length: RINGS }, () => new Path2D());
+        for (let i = 0; i < N; i++) {
+          const k = Math.min(RINGS - 1, (Math.hypot(px[i] - 0.5, py[i] - 0.5) * 1.414 * RINGS) | 0);
+          rings[k].rect(-L / 2 + px[i] * L - r / 2, -L / 2 + py[i] * L - r / 2, r, r);
+        }
+        vctx.globalCompositeOperation = 'lighter';
+        for (let k = 0; k < RINGS; k++) {
+          const lvl = freqData[Math.floor(Math.pow((k + 0.5) / RINGS, 1.5) * maxBin)] / 255, hue = (hueBase + k * 300 / RINGS) % 360 | 0;
+          // a soft halo under the grains, then the grains themselves
+          vctx.save();
+          vctx.shadowColor = `hsla(${hue},100%,60%,${(0.4 + lvl * 0.6).toFixed(2)})`; vctx.shadowBlur = r * (2 + lvl * 6);
+          vctx.fillStyle = `hsl(${hue},${(75 + lvl * 25) | 0}%,${(50 + lvl * 30) | 0}%)`;
+          vctx.fill(rings[k]);
+          vctx.restore();
+        }
+        vctx.globalCompositeOperation = 'source-over';
+        vctx.restore();
       },
     });
   })();

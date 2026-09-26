@@ -53,6 +53,12 @@ class KodiUI:
     def play(self, url, label, info):
         item = xbmcgui.ListItem(label=label, path=url)
         item.setInfo('video', {'title': info.get('title', label)})
+        if info.get('mime'):
+            # a live feed: tell Kodi what it is, so it doesn't send its
+            # own HEAD to find out -- and doesn't have to guess the format
+            # from the first bytes of a stream that never ends
+            item.setMimeType(info['mime'])
+            item.setContentLookup(False)
         # invoked as a playable item's resolver when Kodi called us for
         # it, otherwise (Autopilot, the live feeds) start playback directly
         if HANDLE >= 0 and 'action=play' in ' '.join(sys.argv):

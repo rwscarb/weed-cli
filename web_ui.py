@@ -1396,6 +1396,40 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_qr(data)
         self._serve_static(path)
 
+    def do_HEAD(self):
+        """The live feeds' headers without the feed. Players probe with
+        HEAD before they GET (Kodi does, to learn the Content-Type), and
+        BaseHTTPRequestHandler answers a missing do_HEAD with 501. Only
+        the live feeds: the GET for those would never end, so a HEAD
+        can't just be a GET with the body thrown away."""
+        parsed = urlparse(self.path)
+        path, qs = parsed.path, parse_qs(parsed.query)
+        # a HEAD response carries no body, so no _deny()/_json() here
+        def bare(status, **headers):
+            self.send_response(status)
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.send_header('Content-Length', '0')
+            self.end_headers()
+        if path not in ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux'):
+            return bare(405, Allow='GET')
+        if not self._guest_ok(qs):
+            return bare(401)
+        if path == '/api/orbit-view':
+            ctype = 'multipart/x-mixed-replace; boundary=orbit'
+        elif path == '/api/orbit-mux':
+            ctype = 'video/x-matroska'
+        else:
+            with _orbit_audio_lock:
+                on, ctype = _orbit_audio['on'], _orbit_audio['mime']
+            if not on or not ctype:
+                return bare(404)
+        self.send_response(200)
+        self.send_header('Content-Type', ctype)
+        self.send_header('Cache-Control', 'no-cache')
+        self.send_header('Connection', 'close')
+        self.end_headers()
+
     def _check_origin(self):
         """This server has no auth at all (see module docstring) -- the
         only thing stopping any webpage you happen to have open in the

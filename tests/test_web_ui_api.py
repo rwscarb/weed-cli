@@ -520,6 +520,31 @@ def test_stream_endpoints_take_the_token_as_a_query_param(web_server, monkeypatc
     assert cfg['auth'] is True and cfg['token'] == 'sekrit'
 
 
+def test_live_feeds_answer_head_with_their_type_and_no_body(web_server, monkeypatch):
+    """Kodi (and other players) HEAD a URL before playing it; without a
+    do_HEAD the stdlib server says 501. The live feeds answer at once with
+    their Content-Type and no body, behind the same token."""
+    import web_ui, http.client
+    from testutil import _split_url
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'sekrit')
+    host, port, _ = _split_url(web_server)
+
+    def head(path):
+        conn = http.client.HTTPConnection(host, port, timeout=5)
+        conn.request('HEAD', path)
+        resp = conn.getresponse()
+        out = resp.status, resp.getheader('Content-Type'), resp.read()
+        conn.close()
+        return out
+
+    status, ctype, body = head('/api/orbit-view?token=sekrit')
+    assert status == 200 and ctype.startswith('multipart/x-mixed-replace') and body == b''
+    assert head('/api/orbit-mux?token=sekrit')[:2] == (200, 'video/x-matroska')
+    assert head('/api/orbit-audio?token=sekrit')[0] == 404       # no audio being sent
+    assert head('/api/orbit-view')[0] == 401
+    assert head('/api/library?token=sekrit')[0] == 405
+
+
 def test_plain_stream_port_serves_only_the_stream_endpoints(web_server, monkeypatch):
     """The plain-HTTP side listener for players that can't do self-signed
     TLS: the stream endpoints work there (token rules unchanged), and
