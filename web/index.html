@@ -337,20 +337,20 @@
 
   <section class="tab-panel" v-show="activeTab === 'downloads'">
     <h2>Download</h2>
-    <!-- mobile only (see .filters-toggle in style.css): the by-hash form
-         folds away so the library itself is what a phone opens onto -->
-    <button type="button" class="filters-toggle" @click="downloadFormOpen = !downloadFormOpen"
+    <!-- the by-hash form: one row, folded behind its toggle at every
+         width (open or closed is remembered -- vue-app.js downloadFormOpen) -->
+    <button type="button" class="filters-toggle always" @click="downloadFormOpen = !downloadFormOpen"
             :aria-expanded="downloadFormOpen">
       {{ downloadFormOpen ? '▾' : '▸' }} Download by content hash
     </button>
-    <form class="download-form" :class="{'filters-open': downloadFormOpen}" @submit.prevent="submitDownload">
-      <label>Content hash
+    <form class="inline-form download-form" :class="{'filters-open': downloadFormOpen}" @submit.prevent="submitDownload">
+      <label class="dl-hash">Content hash
         <input type="text" v-model="downloadForm.hash" required>
       </label>
-      <label>Relay(s), comma-separated
+      <label class="dl-relays">Relay(s), comma-separated
         <input type="text" v-model="downloadForm.relays">
       </label>
-      <label>Output path (optional)
+      <label class="dl-out">Output path (optional)
         <input type="text" v-model="downloadForm.out">
       </label>
       <label class="checkbox">

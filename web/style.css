@@ -483,6 +483,26 @@ td button {
 .filters-toggle {
   display: none;
 }
+/* ...except where a form folds at every width (Downloads' by-hash form):
+   the same quiet disclosure line as on a phone */
+.filters-toggle.always {
+  display: block;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  padding: 0.4rem 0;
+  font-size: 0.85rem;
+  text-align: left;
+}
+.filters-toggle.always:hover { background: transparent; color: var(--text); }
+.download-form:not(.filters-open) { display: none; }
+/* one row: the hash gets the room (they're long), relays next, the
+   rest at their natural width; wraps as the window narrows */
+.download-form label { min-width: 0; }
+.download-form .dl-hash { flex: 3 1 22rem; }
+.download-form .dl-relays { flex: 2 1 14rem; }
+.download-form .dl-out { flex: 1 1 10rem; }
+.download-form label.checkbox { align-self: center; margin-top: 1.2rem; white-space: nowrap; }
 
 /* same language as .play-btn: faint dark outline at rest, only lights up
    on hover -- and a shared min-width so the "+1" badge and the star
@@ -2411,8 +2431,9 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
   .folder-filter .tag-chip { margin-left: 0 !important; }
   .tag-filter { gap: 0.3rem 0.25rem; }
 
-  /* Downloads' by-hash form folds behind its toggle, like Discover's filters */
-  .download-form:not(.filters-open) { display: none; }
+  /* stacked here: the row's flex sizes would turn into heights */
+  .download-form .dl-hash, .download-form .dl-relays, .download-form .dl-out { flex: none; }
+  .download-form label.checkbox { margin-top: 0; align-self: flex-start; }
 
   /* toolbar: search on its own line, then status + sort + count */
   .jobs-search { flex: 1 0 100%; max-width: none; }

@@ -127,8 +127,13 @@ const app = createApp({
       // need to detect viewport width here just to pick the right
       // default.
       discoverFiltersOpen: false,
-      // same idea for Downloads' by-hash form (collapsed on phones only)
-      downloadFormOpen: false,
+      // Downloads' by-hash form, folded behind its toggle at every
+      // width: open on a desktop and closed on a phone to begin with,
+      // then whatever it was last left as (watch below)
+      downloadFormOpen: (() => {
+        try { const v = localStorage.getItem('weed.downloadFormOpen'); if (v !== null) return v === '1'; } catch (e) { /* private mode */ }
+        return !window.matchMedia || window.matchMedia('(min-width: 461px)').matches;
+      })(),
       discoverFolder: '',      // a host's folder to narrow Discover to ('' = all)
       folderFilter: '',        // same for Downloads
 
@@ -477,6 +482,7 @@ const app = createApp({
     // orbit_visualizer.js's settings persistence): one record, rewritten
     // whenever any of the three changes, read back in mounted()
     orbitDelay() { this.saveStreamSettings(); },
+    downloadFormOpen(open) { try { localStorage.setItem('weed.downloadFormOpen', open ? '1' : '0'); } catch (e) { /* quota */ } },
     orbitRes() { this.saveStreamSettings(); },
     orbitQuality() { this.saveStreamSettings(); },
     // flipped mid-stream, the audio sender starts/stops on its own;
