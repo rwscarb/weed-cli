@@ -2975,8 +2975,9 @@
   // and a bass hit blasts an ejection wave back out across the system.
   // Planets behind the hole pass behind it. Out past the last planet,
   // Milliways, the Restaurant at the End of the Universe, makes its own
-  // slow lap: a domed saucer whose windows flicker with the treble, a
-  // beacon on its spire, and a neon sign that stutters on the beat.
+  // slow lap on a steeply inclined orbit: a Space Quest style red saucer
+  // with blue spokes lit by the treble, under a giant 3D yellow M that
+  // flares on the beat.
   (function () {
     // smoke puffs are one soft blob per 10-degree hue bucket, drawn once
     // and stamped with drawImage -- a radial gradient per puff, a
@@ -3005,8 +3006,9 @@
       { r: 0.95, size: 0.020, hue: 225, inc: 0.27, node: 4.7 },
       // Milliways, the Restaurant at the End of the Universe, out past
       // the last planet where the view of the end of everything (the
-      // hole) is best
-      { r: 1.04, size: 0.036, hue: 290, inc: 0.04, node: 2.6, restaurant: true },
+      // hole) is best -- on an orbit tipped steeply out of the plane, so
+      // it loops up over and down under the rest of the system
+      { r: 0.98, size: 0.032, hue: 0, inc: 0.5, node: 1.0, restaurant: true },
     ];
     let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0;
     viz.registerMode({
@@ -3153,57 +3155,65 @@
           vctx.strokeStyle = `hsla(${(h + 15) % 360},50%,85%,${front ? 0.5 : 0.25})`; vctx.lineWidth = Math.max(0.5, s * 0.03);
           vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 2.46, s * 2.46 * flat, rot, a0, a1); vctx.stroke();
         };
-        // Milliways: a saucer-shaped platform under a glass dome, a ring of
-        // warm windows round its rim that flicker with its band, a spire
-        // with a blinking beacon, and a neon sign that stutters on the beat
+        // Milliways, done the way Space Quest drew its burger joint in
+        // space: a red saucer, tipped over, with blue spokes round the rim
+        // whose tip lights flicker with the treble, and on a blue mast a
+        // giant yellow M, outlined red and extruded in blue off a blue
+        // backing plate, that flares on every beat
+        const M_SHAPE = [[0, 1], [0, 0], [0.22, 0], [0.5, 0.42], [0.78, 0], [1, 0], [1, 1], [0.78, 1], [0.78, 0.38], [0.5, 0.78], [0.22, 0.38], [0.22, 1]];
         const drawRestaurant = (b) => {
-          const h = hue(b), s = b.s, flat = 0.28 + tilt * 0.3, lvl = b.band;
+          const s = b.s, lvl = b.band, rot = -0.35, rx = s * 1.5, ry = rx * (0.3 + tilt * 0.5);
+          const cr = Math.cos(rot), sr2 = Math.sin(rot);
+          const onDisc = (a, k) => ({ x: b.x + (Math.cos(a) * rx * cr - Math.sin(a) * ry * sr2) * k, y: b.y + (Math.cos(a) * rx * sr2 + Math.sin(a) * ry * cr) * k });
+          const SPOKES = 8, spokeW = Math.max(0.8, s * 0.08);
+          const spoke = (k, front) => {
+            const a = Math.PI * 2 * k / SPOKES + 0.2;
+            if ((Math.sin(a) >= 0) !== front) return;
+            const p0 = onDisc(a, 1), p1 = onDisc(a, 1.45);
+            vctx.strokeStyle = 'hsl(215,70%,55%)'; vctx.lineWidth = spokeW;
+            vctx.beginPath(); vctx.moveTo(p0.x, p0.y); vctx.lineTo(p1.x, p1.y); vctx.stroke();
+            const lit = freqData[Math.floor((0.55 + 0.4 * k / SPOKES) * maxBin)] / 255;
+            vctx.fillStyle = `hsla(${190 + lit * 30 | 0},100%,${(60 + lit * 30) | 0}%,${(0.4 + lit * 0.6).toFixed(2)})`;
+            vctx.beginPath(); vctx.arc(p1.x, p1.y, Math.max(1, s * 0.1 * (0.7 + lit)), 0, Math.PI * 2); vctx.fill();
+          };
+          for (let k = 0; k < SPOKES; k++) spoke(k, false);
+          // the saucer: a darker rim under the red top face
+          vctx.fillStyle = 'hsl(355,70%,26%)';
+          vctx.beginPath(); vctx.ellipse(b.x, b.y + s * 0.22, rx, ry, rot, 0, Math.PI * 2); vctx.fill();
+          const tg = vctx.createRadialGradient(b.x - rx * 0.3, b.y - ry * 0.4, s * 0.1, b.x, b.y, rx);
+          tg.addColorStop(0, `hsl(5,90%,${(68 + lvl * 15) | 0}%)`); tg.addColorStop(1, 'hsl(355,80%,42%)');
+          vctx.fillStyle = tg;
+          vctx.beginPath(); vctx.ellipse(b.x, b.y, rx, ry, rot, 0, Math.PI * 2); vctx.fill();
+          // concentric grooves on the deck
+          vctx.strokeStyle = 'hsla(355,70%,30%,0.6)'; vctx.lineWidth = Math.max(0.5, s * 0.04);
+          for (const k of [0.45, 0.72]) { vctx.beginPath(); vctx.ellipse(b.x, b.y, rx * k, ry * k, rot, 0, Math.PI * 2); vctx.stroke(); }
+          for (let k = 0; k < SPOKES; k++) spoke(k, true);
+          // the mast, leaning back up off the deck to the sign
+          const mx = b.x + s * 0.9, my = b.y - s * 2.3;
+          vctx.strokeStyle = 'hsl(215,65%,50%)'; vctx.lineWidth = Math.max(1, s * 0.14);
+          vctx.beginPath(); vctx.moveTo(b.x, b.y); vctx.lineTo(mx, my); vctx.stroke();
+          // the sign, in its own skewed frame so it stands at an angle to
+          // the saucer: backing plate, blue extrusion, then the red-edged face
+          const W = s * 2.2, H = s * 1.9, flare = burst ? 1 : lvl;
           vctx.save();
-          vctx.shadowColor = `hsla(${h},100%,65%,${(0.3 + lvl * 0.6).toFixed(2)})`; vctx.shadowBlur = s * (1 + lvl * 2);
-          // the dome, behind the platform's near rim
-          const dg = vctx.createRadialGradient(b.x - s * 0.3, b.y - s * 0.9, s * 0.05, b.x, b.y - s * 0.3, s * 1.1);
-          dg.addColorStop(0, `hsla(${h},60%,92%,0.75)`); dg.addColorStop(0.5, `hsla(${(h + 30) % 360},70%,60%,0.35)`); dg.addColorStop(1, `hsla(${h},70%,35%,0.25)`);
-          vctx.fillStyle = dg;
-          vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 0.95, s * 1.05, 0, Math.PI, Math.PI * 2); vctx.fill();
+          vctx.translate(mx - W * 0.45, my - H * 0.95);
+          vctx.transform(1, -0.18, 0.28, 1, 0, 0);
+          const path = (ox, oy, k) => {
+            vctx.beginPath();
+            M_SHAPE.forEach(([px, py], i) => { const x = ox + px * W * k, y = oy + py * H * k; if (i) vctx.lineTo(x, y); else vctx.moveTo(x, y); });
+            vctx.closePath();
+          };
+          vctx.fillStyle = 'hsla(225,70%,45%,0.9)';
+          vctx.beginPath(); vctx.moveTo(-W * 0.25, H * 0.15); vctx.lineTo(W * 1.2, -H * 0.1); vctx.lineTo(W * 1.3, H * 0.75); vctx.lineTo(-W * 0.15, H * 1.0); vctx.closePath(); vctx.fill();
+          const EX = 5, ex = s * 0.09;
+          for (let k = EX; k >= 1; k--) { path(k * ex, k * ex, 1); vctx.fillStyle = `hsl(220,75%,${(28 + k * 3) | 0}%)`; vctx.fill(); }
+          vctx.shadowColor = `hsla(50,100%,60%,${(0.3 + flare * 0.7).toFixed(2)})`; vctx.shadowBlur = s * (0.5 + flare * 2);
+          const fg = vctx.createLinearGradient(0, 0, W, H);
+          fg.addColorStop(0, `hsl(55,100%,${(80 + flare * 15) | 0}%)`); fg.addColorStop(1, `hsl(42,100%,${(50 + flare * 20) | 0}%)`);
+          path(0, 0, 1); vctx.fillStyle = fg; vctx.fill();
+          vctx.shadowBlur = 0;
+          vctx.strokeStyle = 'hsl(355,85%,50%)'; vctx.lineWidth = Math.max(0.8, s * 0.1); vctx.lineJoin = 'round'; vctx.stroke();
           vctx.restore();
-          // the platform: a flat saucer seen at the camera's tilt
-          const pg = vctx.createLinearGradient(b.x, b.y - s * flat, b.x, b.y + s * flat);
-          pg.addColorStop(0, `hsl(${h},25%,${(55 + lvl * 20) | 0}%)`); pg.addColorStop(1, `hsl(${h},30%,14%)`);
-          vctx.fillStyle = pg;
-          vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 1.6, s * 1.6 * flat, 0, 0, Math.PI * 2); vctx.fill();
-          // underbelly
-          vctx.fillStyle = `hsl(${h},20%,10%)`;
-          vctx.beginPath(); vctx.ellipse(b.x, b.y + s * 0.1, s * 1.1, s * 0.55, 0, 0, Math.PI); vctx.fill();
-          // windows along the near rim, each its own slice of the treble
-          const WIN = 12;
-          for (let k = 0; k < WIN; k++) {
-            const a = Math.PI * (k + 0.5) / WIN;
-            const lit = freqData[Math.floor((0.55 + 0.4 * k / WIN) * maxBin)] / 255;
-            const on = 0.35 + lit * 0.65 * (0.7 + 0.3 * Math.sin(orbitT * 40 + k * 2.3));
-            vctx.fillStyle = `hsla(${38 + lit * 12 | 0},100%,${(55 + lit * 30) | 0}%,${on.toFixed(2)})`;
-            const w = Math.max(1, s * 0.13 * Math.sin(a) + s * 0.03);
-            vctx.fillRect(b.x + Math.cos(a) * s * 1.45 - w / 2, b.y + Math.sin(a) * s * 1.45 * flat - w * 0.4, w, w * 0.8);
-          }
-          // spire and beacon
-          vctx.strokeStyle = `hsla(${h},20%,75%,0.8)`; vctx.lineWidth = Math.max(0.6, s * 0.06);
-          vctx.beginPath(); vctx.moveTo(b.x, b.y - s * 1.0); vctx.lineTo(b.x, b.y - s * 1.7); vctx.stroke();
-          const blink = Math.sin(orbitT * 25) > 0.6 || burst;
-          if (blink) {
-            vctx.save(); vctx.shadowColor = 'hsla(0,100%,60%,1)'; vctx.shadowBlur = s * 1.2;
-            vctx.fillStyle = 'hsl(0,100%,70%)'; vctx.beginPath(); vctx.arc(b.x, b.y - s * 1.75, Math.max(1, s * 0.12), 0, Math.PI * 2); vctx.fill();
-            vctx.restore();
-          }
-          // the neon sign, only once it's big enough to read; it stutters
-          // off for a frame or two on a beat, like a tube on its last legs
-          if (s > 7 && !(burst && Math.random() < 0.6)) {
-            const fs = Math.max(8, s * 0.55) | 0;
-            vctx.save();
-            vctx.font = `italic bold ${fs}px Georgia, serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'top';
-            vctx.shadowColor = `hsla(${(h + 20) % 360},100%,60%,0.9)`; vctx.shadowBlur = fs * (0.4 + lvl);
-            vctx.fillStyle = `hsl(${(h + 20) % 360},100%,${(72 + lvl * 20) | 0}%)`;
-            vctx.fillText('Milliways', b.x, b.y + s * (1.6 * flat + 0.35));
-            vctx.restore();
-          }
         };
         const drawBody = (b) => {
           if (b.p.restaurant) { drawRestaurant(b); return; }
