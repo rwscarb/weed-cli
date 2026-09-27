@@ -79,6 +79,14 @@ window.orbitViz = (function () {
   //   removes them in teardown().
   // - teardown()?: called once when the dialog closes, or the plugin is
   //   unregistered while it's open -- undo whatever init() set up.
+  // - rotationCover?: defaults to true. Under the Rotate control the
+  //   whole scene is turned about the centre and scaled up just enough
+  //   to still cover the corners (see drawViz) -- right for full-frame
+  //   pictures, but a mode drawn on an empty background, whose content
+  //   doesn't need to reach the corners, reads that as an unwanted zoom.
+  //   false turns the scale-up off for that mode; it then owns the
+  //   uncovered corners itself (e.g. clearing/fading the whole canvas
+  //   in screen space rather than through the rotated transform).
   //
   // Every call into a plugin's own draw/init/teardown is wrapped in
   // try/catch (see callPlugin inside init() below): third-party code is
@@ -106,6 +114,7 @@ window.orbitViz = (function () {
       draw: def.draw,
       init: typeof def.init === 'function' ? def.init : null,
       teardown: typeof def.teardown === 'function' ? def.teardown : null,
+      rotationCover: def.rotationCover !== false,
       broken: false,
     };
     pluginModes.set(mode.id, mode);
@@ -1635,9 +1644,12 @@ window.orbitViz = (function () {
         // that a rotated frame still covers the corners (no wedges of
         // last frame peeking through). Feedback modes read the canvas
         // back each frame, so under a rotation their trails spiral --
-        // that's the fun of it.
+        // that's the fun of it. A plugin mode registered with
+        // rotationCover: false opts out of the scale-up (see the
+        // registry's own comment).
         const W = s.VW, H = s.VH, c = Math.abs(Math.cos(s.vizUserRot)), sn = Math.abs(Math.sin(s.vizUserRot));
-        const cover = Math.max((W * c + H * sn) / W, (W * sn + H * c) / H);
+        const pm = !s.vizOff && pluginModes.get(s.vizMode);
+        const cover = pm && !pm.rotationCover ? 1 : Math.max((W * c + H * sn) / W, (W * sn + H * c) / H);
         vctx.save();
         vctx.translate(W / 2, H / 2); vctx.rotate(s.vizUserRot); vctx.scale(cover, cover); vctx.translate(-W / 2, -H / 2);
         drawScene();

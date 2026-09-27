@@ -3004,6 +3004,8 @@
     let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0;
     viz.registerMode({
       id: 'orrery', label: 'Orrery',
+      // it's all on black, so Rotate should just turn it, not zoom it too
+      rotationCover: false,
       init() { flares = []; prevFreq = null; fluxAvg = 0; cooldown = 0; orbitT = 0; smoke = []; lastPos = []; glitter = []; swallow = 0; waves = []; bassAvg = 0; bassCool = 0; prevBass = 0; bassRiseAvg = 0; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
@@ -3012,12 +3014,20 @@
         const maxBin = Math.floor(freqData.length * 0.7);
         const R = Math.min(VW * 0.46, VH * 0.9) * vizUserScale;
         const tilt = 0.34 + 0.08 * Math.sin(vizRot * 0.3);   // the camera slowly nods
+        // with rotationCover off, a Rotate leaves the canvas corners outside
+        // this frame's (rotated) coordinates -- so fade in screen space,
+        // or they'd keep stale pixels forever
+        vctx.save(); vctx.setTransform(1, 0, 0, 1, 0, 0);
         fadeFrame(vctx, VW, VH, 0.35);
-        // background stars, fixed per position so they hold still
-        for (let i = 0; i < 160; i++) {
+        vctx.restore();
+        // background stars, fixed per position so they hold still, spread
+        // over the square the canvas sweeps when rotated so the corners
+        // aren't bare either
+        const D = Math.hypot(VW, VH);
+        for (let i = 0; i < 320; i++) {
           const tw = 0.4 + 0.6 * Math.abs(Math.sin(vizRot * 4 + i));
           vctx.fillStyle = `rgba(255,255,255,${(hash(i * 3.1) * 0.5 * tw).toFixed(2)})`;
-          vctx.fillRect(hash(i * 7.7) * VW, hash(i * 1.3) * VH, 1.5, 1.5);
+          vctx.fillRect(VW / 2 + (hash(i * 7.7) - 0.5) * D, VH / 2 + (hash(i * 1.3) - 0.5) * D, 1.5, 1.5);
         }
         // onsets (spectral flux against its own running average) launch flares
         let flux = 0;

@@ -319,7 +319,7 @@ window.orbitMidi = (function () {
       if (kind === 'note') {
         // a pad on a selector steps forward through the list
         idx = (Math.max(0, cur) + 1) % list.length;
-      } else if (isRelative(b, ccKey)) {
+      } else if (forceRel || isRelative(b, ccKey)) {
         // an encoder moves one entry per b.clicks clicks (the row's own
         // setting, see clicksOf), wrapping at the ends, never skipping
         // one. Clicks accumulate per row, a change of direction resets
@@ -480,15 +480,19 @@ window.orbitMidi = (function () {
     }
     const b = find(kind === 'note' ? 'n' : 'c', ch, n);
     const isAction = b && !b.target.startsWith('param:') && !b.target.startsWith('select:');
-    if (b && kind === 'cc' && undecided(b, ccKey, v) && !isAction) {
+    const isSelect = b && b.target.startsWith('select:');
+    if (b && kind === 'cc' && undecided(b, ccKey, v) && !isAction && !isSelect) {
       // a parameter: holding a lone step-looking value is what keeps an
       // undecided knob from slamming a slider to an end stop
       pendingSteps[ccKey] = (pendingSteps[ccKey] || 0) + stepOf(v);
     } else if (b) {
       // an action row takes a step-looking value as a click straight
       // away: the worst an absolute knob could do here is fire once,
-      // while holding it meant the first two or three clicks did nothing
-      fire(b, kind, v, ccKey, isAction && kind === 'cc' && isStep(v) && detectedRel[ccKey] === undefined);
+      // while holding it meant the first two or three clicks did nothing.
+      // A selector likewise: it only previews until the knob rests, so a
+      // wrong guess costs nothing, and holding ate the first three clicks
+      // of the session's first mode sweep
+      fire(b, kind, v, ccKey, (isAction || isSelect) && kind === 'cc' && isStep(v) && detectedRel[ccKey] === undefined);
     }
     if (kind === 'cc') lastCC[ccKey] = v;
     // just the "last:" readout -- rebuilding the whole list on every knob
