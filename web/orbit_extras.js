@@ -4504,7 +4504,9 @@
   // beat's range, so kicks on 1 and 3 still read as the beat), and each
   // onset pulls the step back into line, so the feet land on the kick. The louder it gets, the more backup babies join, in a
   // ring orbiting the first; the floor tiles are the video, the lit ones
-  // changing on every beat.
+  // changing on every beat, and a mirror ball spins overhead in a
+  // pin-spot that changes colour on the beat, thousands of mirrors
+  // throwing specks over the floor and walls, beams showing in the smoke.
   (function () {
     const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
     const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
@@ -4820,8 +4822,31 @@
       return { prims: out, root: [px, pz] };
     }
     const RING = 6, LIGHT = norm([-0.45, 0.55, 0.7]);
+    // ── the disco ball: a mirror-tiled sphere hanging over the star,
+    // spinning, with a pin-spot (the key light) trained on it from high
+    // out front, changing colour with the music -- every tile the spot
+    // hits bounces it back out as a speck of light, so thousands of
+    // specks sweep across the floor and the walls as it turns, and the
+    // smoke drifting through the room catches the beams ──
+    const BALL = [0, 1.32, 0], BALLR = 0.12, BLAT = 18, BLON = 36, KEY = norm([-0.5, 0.4, 0.8]);
+    const ballPt = (la, lo, spin) => {
+      const th = -Math.PI / 2 + la * Math.PI / BLAT, ph = lo * 2 * Math.PI / BLON + spin;
+      return [Math.cos(th) * Math.sin(ph), Math.sin(th), Math.cos(th) * Math.cos(ph)];
+    };
+    // the mirrors that throw specks: far finer than the drawn tiles, spread
+    // evenly over the sphere (a Fibonacci lattice), in hue buckets so each
+    // bucket's specks go down as one path
+    const SN = 4000, SB = 6, SX = new Float32Array(SN), SY = new Float32Array(SN), SZ = new Float32Array(SN);
+    for (let k = 0; k < SN; k++) {
+      const y = 1 - 2 * (k + 0.5) / SN, rr = Math.sqrt(1 - y * y), a = k * Math.PI * (3 - Math.sqrt(5));
+      SX[k] = Math.cos(a) * rr; SY[k] = y; SZ[k] = Math.sin(a) * rr;
+    }
+    // smoke: slow puffs hanging low over the floor, rolling about
+    const PUFFS = [];
+    for (let k = 0; k < 16; k++) PUFFS.push({ x: (hash(k * 4.7 + 1) - 0.5) * 4, z: (hash(k * 9.1 + 2) - 0.5) * 4, y: 0.15 + hash(k * 2.3 + 3) * 1.3, r: 0.6 + hash(k * 6.1 + 4) * 0.7, ph: hash(k * 1.9 + 5) * 6.3 });
     let last = 0, t = 0, beat = 0, period = 0.5, prevBass = 0, fluxAvg = 0.02, cool = 0, lastOnset = -1e9;
-    let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9, level = 0, crowd = 0, crowdBar = 0;
+    let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9, level = 0, crowd = 0, crowdBar = 0, spin = 0;
+    let keyHue = 200, keyTarget = 200;
     const joined = new Float32Array(RING);
     viz.registerMode({
       id: 'dancingbaby', label: 'Dancing baby',
@@ -4845,13 +4870,18 @@
           lastOnset = t;
           beat -= (beat - Math.round(beat)) * 0.5;
           flash = 1;
+          // the key light jumps to a new colour on the beat, further on a harder hit
+          keyTarget += 50 + hash(lastOnset * 13.1) * 70 + bass * 60;
           if (bass > 0.6 && t - lastShout > 14) { shout = 1; lastShout = t; }
         }
         if (t - lastOnset > 4) period += (0.5 - period) * Math.min(1, dt * 0.5);   // silence: drift back to ~120 bpm
         beat += dt / period * speed;
         const beatIdx = Math.floor(beat);
         flash = Math.max(0, flash - dt * 3);
-        orbit += dt * 0.22 * speed; ringRot += dt * 0.35 * speed * (0.6 + level);
+        orbit += dt * 0.22 * speed; spin += dt * 0.5 * speed;
+        keyHue += (keyTarget - keyHue) * Math.min(1, dt * 8);
+        const kh = ((keyHue % 360) + 360) % 360, kSat = 70 + energy * 30 | 0;
+        const keyCol = (l, a, dh = 0) => `hsla(${(kh + dh + 360) % 360 | 0},${kSat}%,${l | 0}%,${a.toFixed(3)})`; ringRot += dt * 0.35 * speed * (0.6 + level);
         // the backup crowd follows the loudness over the last few seconds, not
         // the instant, and gains or loses at most one dancer a bar (with a
         // little hysteresis), each walking in or out at full size over a beat or two
@@ -4883,6 +4913,50 @@
         sg.addColorStop(0, `rgba(255,240,210,${(0.18 + flash * 0.18).toFixed(3)})`); sg.addColorStop(1, 'rgba(255,240,210,0)');
         vctx.fillStyle = sg; vctx.fillRect(0, 0, VW, VH);
 
+        // the pin-spot's beam, from off-screen up to the ball, in the key's colour
+        const ballC = proj(BALL), specA = 0.5 + flash * 0.4, src = add(BALL, mul(KEY, 2.5));
+        if (D - toCam(src)[2] > 0.3) {
+          const sc = proj(src), br = BALLR * f / ballC[2], dx = ballC[0] - sc[0], dy = ballC[1] - sc[1], dl = Math.hypot(dx, dy) || 1;
+          const nx = -dy / dl, ny = dx / dl, bg2 = vctx.createLinearGradient(sc[0], sc[1], ballC[0], ballC[1]);
+          bg2.addColorStop(0, keyCol(85, 0)); bg2.addColorStop(1, keyCol(85, 0.28 + flash * 0.15));
+          vctx.fillStyle = bg2; vctx.beginPath();
+          vctx.moveTo(sc[0] + nx * br * 0.3, sc[1] + ny * br * 0.3); vctx.lineTo(ballC[0] + nx * br * 1.1, ballC[1] + ny * br * 1.1);
+          vctx.lineTo(ballC[0] - nx * br * 1.1, ballC[1] - ny * br * 1.1); vctx.lineTo(sc[0] - nx * br * 0.3, sc[1] - ny * br * 0.3);
+          vctx.closePath(); vctx.fill();
+        }
+        // the ball's specks: the spot mirrored off every mirror it hits,
+        // landing on the wall (drawn now) or on the floor (drawn over the
+        // tiles, below); a few of the rays kept to show as beams in the smoke
+        const floorSp = [], rays = [], wr = Math.min(VW, VH) * 0.011, cs0 = Math.cos(spin), sn0 = Math.sin(spin);
+        for (let b = 0; b < SB; b++) floorSp.push([]);
+        const wallSp = floorSp.map(() => []);
+        for (let k = 0; k < SN; k++) {
+          const nx = SX[k] * cs0 + SZ[k] * sn0, ny = SY[k], nz = -SX[k] * sn0 + SZ[k] * cs0;
+          const kn = KEY[0] * nx + KEY[1] * ny + KEY[2] * nz;
+          if (kn < 0.05) continue;
+          const d = [2 * kn * nx - KEY[0], 2 * kn * ny - KEY[1], 2 * kn * nz - KEY[2]], bk = k % SB;
+          if (d[1] < -0.12) {
+            const tt = -BALL[1] / d[1], hit = [d[0] * tt, 0, d[2] * tt];
+            if (hit[0] * hit[0] + hit[2] * hit[2] < 3.24) { floorSp[bk].push(hit); if (k % 53 === 0) rays.push(hit); }
+            continue;
+          }
+          // the room's wall: a cylinder round the floor
+          const hr = Math.hypot(d[0], d[2]);
+          if (hr < 0.2) continue;
+          const w = add(BALL, mul(d, 3.2 / hr));
+          if (w[1] < 0 || w[1] > 4 || D - toCam(w)[2] < 0.8) continue;
+          const pw = proj(w), r = wr * 3.2 / pw[2];
+          if (pw[0] < -r || pw[0] > VW + r || pw[1] < -r || pw[1] > VH + r) continue;
+          wallSp[bk].push([pw[0], pw[1], r]);
+          if (k % 53 === 0) rays.push(w);
+        }
+        const speckCol = (b, a) => keyCol(84 + b * 2, a, (b - SB / 2) * 7);
+        for (let b = 0; b < SB; b++) {
+          vctx.fillStyle = speckCol(b, Math.min(1, specA * 1.1)); vctx.beginPath();
+          for (const [x, y, r] of wallSp[b]) { vctx.moveTo(x + r, y); vctx.arc(x, y, r, 0, Math.PI * 2); }
+          vctx.fill();
+        }
+
         // ── the floor: a disco disc, textured with the video when there is one ──
         const T = 0.3, N = 6, RMAX = 1.85, vd = videoFrame && videoFrame.imageData.data;
         const tiles = [];
@@ -4909,6 +4983,16 @@
           for (let k = 1; k < 4; k++) vctx.lineTo(q[k][0], q[k][1]);
           vctx.closePath(); vctx.fill();
           vctx.strokeStyle = 'rgba(0,0,0,0.35)'; vctx.lineWidth = 1; vctx.stroke();
+        }
+        // the specks on the floor, flattened by the view
+        const fr = 0.016 * f, fy = 0.2 + ps * 0.9;
+        for (let b = 0; b < SB; b++) {
+          vctx.fillStyle = speckCol(b, Math.min(1, specA * 1.3)); vctx.beginPath();
+          for (const hit of floorSp[b]) {
+            const c = proj(hit), rr = Math.max(0.8, fr / c[2]);
+            vctx.moveTo(c[0] + rr, c[1]); vctx.ellipse(c[0], c[1], rr, rr * fy, 0, 0, Math.PI * 2);
+          }
+          vctx.fill();
         }
 
         // ── the babies: the star at the centre, backup dancers in an orbiting ring ──
@@ -4989,6 +5073,56 @@
           }
         }
         vctx.lineJoin = 'miter'; vctx.globalAlpha = 1;
+
+        // ── smoke: soft puffs rolling slowly through the room, lit by the key
+        // light (brighter on the beat), with the ball's beams showing through it
+        for (const pf of PUFFS) {
+          const w = [pf.x + Math.sin(t * 0.07 + pf.ph) * 0.5, pf.y + Math.sin(t * 0.11 + pf.ph * 2) * 0.12, pf.z + Math.cos(t * 0.05 + pf.ph) * 0.5];
+          if (D - toCam(w)[2] < 0.6) continue;
+          const c = proj(w), r = pf.r * f / c[2], a = 0.09 + flash * 0.04 + level * 0.06;
+          const g = vctx.createRadialGradient(c[0], c[1], 0, c[0], c[1], r);
+          g.addColorStop(0, keyCol(72, a, -20 + pf.ph * 6)); g.addColorStop(0.5, keyCol(65, a * 0.5, -20 + pf.ph * 6)); g.addColorStop(1, keyCol(60, 0));
+          vctx.fillStyle = g; vctx.fillRect(c[0] - r, c[1] - r, 2 * r, 2 * r);
+        }
+        vctx.strokeStyle = keyCol(85, 0.09 + flash * 0.06); vctx.lineWidth = Math.max(0.7, 0.004 * f / ballC[2]); vctx.beginPath();
+        for (const w of rays) { const c = proj(w); vctx.moveTo(ballC[0], ballC[1]); vctx.lineTo(c[0], c[1]); }
+        vctx.stroke();
+
+        // ── the disco ball: its chain up out of frame, then the front-facing
+        // mirror tiles, each catching the light (and some flashing on the beat)
+        const top = proj(add(BALL, [0, BALLR, 0]));
+        vctx.strokeStyle = 'rgba(170,170,180,0.7)'; vctx.lineWidth = Math.max(1, 0.006 * f / top[2]);
+        vctx.beginPath(); vctx.moveTo(top[0], top[1]); vctx.lineTo(top[0] + (top[0] - ballC[0]) * 40, top[1] + (top[1] - ballC[1]) * 40); vctx.stroke();
+        const glints = [];
+        vctx.lineWidth = 0.6;
+        for (let la = 0; la < BLAT; la++) for (let lo = 0; lo < BLON; lo++) {
+          const n = ballPt(la + 0.5, lo + 0.5, spin), nc = dirOf(n), m = toCam(add(BALL, mul(n, BALLR)));
+          if (dot(nc, [-m[0], -m[1], D - m[2]]) <= 0) continue;
+          const q = [[la, lo], [la, lo + 1], [la + 1, lo + 1], [la + 1, lo]].map(([a, o]) => proj(add(BALL, mul(ballPt(a, o, spin), BALLR))));
+          // a mirror: bright where it bounces the key light to the camera
+          const view = norm([-m[0], -m[1], D - m[2]]), refl = sub(mul(nc, 2 * dot(nc, view)), view);
+          const spec = Math.pow(Math.max(0, dot(refl, dirOf(KEY))), 12) + Math.max(0, dot(n, KEY)) * 0.35;
+          const pop = hash(la * 31.1 + lo * 7.7 + beatIdx * 5.3) > 0.9 ? flash : 0;
+          const L = Math.min(96, 30 + Math.max(0, nc[1]) * 18 + hash(la * 5.1 + lo * 9.7) * 16 + spec * 55 + pop * 50);
+          // tinted by the key light where it's catching it
+          vctx.fillStyle = spec > 0.2 ? `hsl(${kh | 0},${Math.min(90, 15 + spec * 60 + pop * 40) | 0}%,${L | 0}%)` : `hsl(${(hueBase + 200 + hash(la + lo * 3.1) * 40) % 360 | 0},${12 + pop * 60 | 0}%,${L | 0}%)`;
+          vctx.strokeStyle = 'rgba(20,20,30,0.6)';
+          vctx.beginPath(); vctx.moveTo(q[0][0], q[0][1]);
+          for (let k = 1; k < 4; k++) vctx.lineTo(q[k][0], q[k][1]);
+          vctx.closePath(); vctx.fill(); vctx.stroke();
+          if (spec > 0.8 || pop > 0.5) glints.push([(q[0][0] + q[2][0]) / 2, (q[0][1] + q[2][1]) / 2, Math.max(spec, pop)]);
+        }
+        // four-pointed sparkles on the brightest tiles
+        const gr = BALLR * f / ballC[2];
+        vctx.fillStyle = 'rgba(255,255,255,0.9)';
+        glints.sort((p, q) => q[2] - p[2]);
+        for (const [x, y, k] of glints.slice(0, 4)) {
+          const a = gr * (0.25 + k * 0.3), b = a * 0.12;
+          vctx.beginPath();
+          vctx.moveTo(x, y - a); vctx.lineTo(x + b, y - b); vctx.lineTo(x + a, y); vctx.lineTo(x + b, y + b);
+          vctx.lineTo(x, y + a); vctx.lineTo(x - b, y + b); vctx.lineTo(x - a, y); vctx.lineTo(x - b, y - b);
+          vctx.closePath(); vctx.fill();
+        }
 
         // ── now and then, on a big hit: the song's hook in WordArt ──
         if (shout > 0) {

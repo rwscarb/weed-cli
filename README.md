@@ -330,7 +330,9 @@ cha-cha-cha triple step, legs by IK -- the hand flipping over the head,
 air guitar, throwing both hands down at the floor as it bends over,
 bent over shaking its shoulders, hip circles, and jazz hands (with
 jointed, spreading, curling fingers), on a disco
-floor tiled with the video, backup babies joining in an orbiting ring as
+floor tiled with the video under a spinning mirror ball, a pin-spot trained
+on it changing colour on the beat, so thousands of specks of light sweep
+over the floor and walls and beams show through the drifting smoke, backup babies joining in an orbiting ring as
 the music gets louder, and "OOGA CHAKA" in WordArt on a big hit), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
