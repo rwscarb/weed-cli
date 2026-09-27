@@ -5337,9 +5337,16 @@
         if (videoFrame) {
           const { c: vc, ctx: vx } = vidBuf(videoFrame.w, videoFrame.h);
           vx.putImageData(videoFrame.imageData, 0, 0);
-          const a = videoFrame.w / videoFrame.h, dh = sz, dw = dh * a;
-          sx.globalAlpha = 0.35; sx.globalCompositeOperation = 'overlay';
+          // fit to the part of the sun above the horizon (the rest sinks behind it)
+          const a = videoFrame.w / videoFrame.h, dh = Math.min(sz, sz / 2 + (yH - sunY)), dw = dh * a;
+          // luminosity: the sun keeps its gradient's colours but takes its light
+          // and shade from the picture, so the video reads clearly without
+          // losing the sun; a little of the gradient screened back on top
+          // stops dark scenes from blacking the sun out
+          sx.globalCompositeOperation = 'luminosity';
           sx.drawImage(vc, (sz - dw) / 2, 0, dw, dh);
+          sx.globalAlpha = 0.3; sx.globalCompositeOperation = 'screen';
+          sx.fillStyle = sg; sx.fillRect(0, 0, sz, sz);
           sx.globalAlpha = 1; sx.globalCompositeOperation = 'destination-in';
           sx.beginPath(); sx.arc(sz / 2, sz / 2, R, 0, Math.PI * 2); sx.fill();
         }
