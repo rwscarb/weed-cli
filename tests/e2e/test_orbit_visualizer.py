@@ -581,18 +581,21 @@ def test_knobs_have_a_detent_at_home_and_ascii_sets_take_a_deliberate_twist(page
     page.click('[data-viz="ascii"]')
     ramps = page.evaluate("() => window.orbitViz.asciiRamps()")
     row = page.locator('.midi-row').filter(has=page.locator('.midi-label', has_text=re.compile('^ASCII chars')))
-    row.locator('button', has_text='learn').click()
-    for _ in range(4): page.evaluate("() => window.__midi.send([0xB0, 32, 1])")     # settle; the 4th counts as the first click
     ramp = lambda: (page.wait_for_timeout(450), page.evaluate("() => window.orbitViz.current().asciiRamp"))[1]   # once the knob has rested
+    at = lambda n: ramps[(ramps.index(first) + n) % len(ramps)]
     first = ramp()
-    page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
+    row.locator('button', has_text='learn').click()
+    page.evaluate("() => window.__midi.send([0xB0, 32, 1])")          # learned; the learn message itself isn't a click
+    # a selector counts clicks while the knob is still being recognised as
+    # an encoder, so the first three clicks already make one set
+    for _ in range(2): page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
     assert ramp() == first
     page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
-    assert ramp() == ramps[ramps.index(first) + 1]
+    assert ramp() == at(1)
     for _ in range(2): page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
-    assert ramp() == ramps[ramps.index(first) + 1]
+    assert ramp() == at(1)
     page.evaluate("() => window.__midi.send([0xB0, 32, 1])")
-    assert ramp() == ramps[ramps.index(first) + 2]
+    assert ramp() == at(2)
 
 
 def test_autopilot_alternates_modes_and_plain_video_on_the_music(page, golden_path_server):
