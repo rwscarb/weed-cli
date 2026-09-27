@@ -2977,7 +2977,7 @@
   // Milliways, the Restaurant at the End of the Universe, makes its own
   // slow lap on a steeply inclined orbit: a Space Quest style red saucer
   // with blue spokes lit by the treble, under a giant 3D yellow M that
-  // flares on the beat.
+  // spins on its mast, kicked faster and flaring on every beat.
   (function () {
     // smoke puffs are one soft blob per 10-degree hue bucket, drawn once
     // and stamped with drawImage -- a radial gradient per puff, a
@@ -3010,12 +3010,12 @@
       // it loops up over and down under the rest of the system
       { r: 0.98, size: 0.032, hue: 0, inc: 0.5, node: 1.0, restaurant: true },
     ];
-    let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0;
+    let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0, signSpin = 0, signVel = 0;
     viz.registerMode({
       id: 'orrery', label: 'Orrery',
       // it's all on black, so Rotate should just turn it, not zoom it too
       rotationCover: false,
-      init() { flares = []; prevFreq = null; fluxAvg = 0; cooldown = 0; orbitT = 0; smoke = []; lastPos = []; glitter = []; swallow = 0; waves = []; bassAvg = 0; bassCool = 0; prevBass = 0; bassRiseAvg = 0; },
+      init() { flares = []; prevFreq = null; fluxAvg = 0; cooldown = 0; orbitT = 0; smoke = []; lastPos = []; glitter = []; swallow = 0; waves = []; bassAvg = 0; bassCool = 0; prevBass = 0; bassRiseAvg = 0; signSpin = 0; signVel = 0; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
         orbitT += 0.006 * speed * Math.max(1, speed);
@@ -3192,25 +3192,38 @@
           const mx = b.x + s * 0.9, my = b.y - s * 2.3;
           vctx.strokeStyle = 'hsl(215,65%,50%)'; vctx.lineWidth = Math.max(1, s * 0.14);
           vctx.beginPath(); vctx.moveTo(b.x, b.y); vctx.lineTo(mx, my); vctx.stroke();
-          // the sign, in its own skewed frame so it stands at an angle to
-          // the saucer: backing plate, blue extrusion, then the red-edged face
+          // the sign turns on its mast like a rooftop sign: a steady spin
+          // that each beat kicks faster, easing back after. Its frame is the
+          // turn seen from a little above -- width shrinks by cos, and the
+          // far edge dips by sin -- plus a lean. The M is symmetric, so from
+          // behind it still reads right. The blue extrusion and backing
+          // plate sit along the sign's normal, so they swing from one side
+          // to the other as it turns, and edge-on it's just the slab's side.
+          const base = 0.03 * speed;
+          signVel = base + (signVel - base) * 0.93 + (burst ? 0.22 : 0); signSpin += signVel;
           const W = s * 2.2, H = s * 1.9, flare = burst ? 1 : lvl;
+          const cs = Math.cos(signSpin), sn = Math.sin(signSpin), edge = Math.abs(cs) < 0.08 ? 0.08 * Math.sign(cs || 1) : cs;
+          const EX = 5, ex = s * 0.09, nx = sn * ex, ny = ex * 0.45;
           vctx.save();
-          vctx.translate(mx - W * 0.45, my - H * 0.95);
-          vctx.transform(1, -0.18, 0.28, 1, 0, 0);
-          const path = (ox, oy, k) => {
+          vctx.translate(mx, my - H * 0.55);
+          const frame = (ox, oy) => { vctx.setTransform(base0); vctx.translate(ox, oy); vctx.transform(edge, sn * 0.22, 0.12, 1, 0, 0); };
+          const base0 = vctx.getTransform();
+          const path = () => {
             vctx.beginPath();
-            M_SHAPE.forEach(([px, py], i) => { const x = ox + px * W * k, y = oy + py * H * k; if (i) vctx.lineTo(x, y); else vctx.moveTo(x, y); });
+            M_SHAPE.forEach(([px, py], i) => { const x = (px - 0.5) * W, y = (py - 0.5) * H; if (i) vctx.lineTo(x, y); else vctx.moveTo(x, y); });
             vctx.closePath();
           };
+          frame(nx * (EX + 1), ny * (EX + 1));
           vctx.fillStyle = 'hsla(225,70%,45%,0.9)';
-          vctx.beginPath(); vctx.moveTo(-W * 0.25, H * 0.15); vctx.lineTo(W * 1.2, -H * 0.1); vctx.lineTo(W * 1.3, H * 0.75); vctx.lineTo(-W * 0.15, H * 1.0); vctx.closePath(); vctx.fill();
-          const EX = 5, ex = s * 0.09;
-          for (let k = EX; k >= 1; k--) { path(k * ex, k * ex, 1); vctx.fillStyle = `hsl(220,75%,${(28 + k * 3) | 0}%)`; vctx.fill(); }
+          vctx.beginPath(); vctx.moveTo(-W * 0.72, -H * 0.38); vctx.lineTo(W * 0.72, -H * 0.58); vctx.lineTo(W * 0.8, H * 0.28); vctx.lineTo(-W * 0.65, H * 0.52); vctx.closePath(); vctx.fill();
+          for (let k = EX; k >= 1; k--) { frame(nx * k, ny * k); path(); vctx.fillStyle = `hsl(220,75%,${(28 + k * 3) | 0}%)`; vctx.fill(); }
+          frame(0, 0);
           vctx.shadowColor = `hsla(50,100%,60%,${(0.3 + flare * 0.7).toFixed(2)})`; vctx.shadowBlur = s * (0.5 + flare * 2);
-          const fg = vctx.createLinearGradient(0, 0, W, H);
-          fg.addColorStop(0, `hsl(55,100%,${(80 + flare * 15) | 0}%)`); fg.addColorStop(1, `hsl(42,100%,${(50 + flare * 20) | 0}%)`);
-          path(0, 0, 1); vctx.fillStyle = fg; vctx.fill();
+          const fg = vctx.createLinearGradient(-W / 2, -H / 2, W / 2, H / 2);
+          // it catches the light as it comes round to face the camera
+          const shine = Math.abs(cs) * 10;
+          fg.addColorStop(0, `hsl(55,100%,${Math.min(97, 72 + shine + flare * 15) | 0}%)`); fg.addColorStop(1, `hsl(42,100%,${(44 + shine + flare * 20) | 0}%)`);
+          path(); vctx.fillStyle = fg; vctx.fill();
           vctx.shadowBlur = 0;
           vctx.strokeStyle = 'hsl(355,85%,50%)'; vctx.lineWidth = Math.max(0.8, s * 0.1); vctx.lineJoin = 'round'; vctx.stroke();
           vctx.restore();
