@@ -317,13 +317,19 @@ taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
 built entirely on that API and adds Halftone, Lava, Terrain, Rain,
 Lissajous, Vinyl 33, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
 glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe, Starfield,
-Spectrum 3D, Brain, Arcade, Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery
-and Doom95 (a 320-wide raycaster that fires its shotgun on the kick, with
-four kinds of monster, secret doors and teleporters) and Hackers (the film's
+Spectrum 3D, Brain, Arcade, Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery,
+Doom95 (a 320-wide raycaster that fires its shotgun on the kick, with
+four kinds of monster, secret doors and teleporters), Hackers (the film's
 flight through the Gibson's filesystem: glass towers crawling with hex,
 each lit by its own band, standing on a circuit board whose traces carry
 creeping pulses of current, the camera weaving down the streets and banking
-over the rooftops), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
+over the rooftops) and Dancing baby (the 1996 Character Studio baby from
+Ally McBeal in a pinned cloth nappy, dancing the original's routine on
+the detected beat: footstep-driven cha-cha -- rock step, then the
+cha-cha-cha triple step, legs by IK -- the hand flipping over the head,
+air guitar, bent over shaking its shoulders and hip circles, on a disco
+floor tiled with the video, backup babies joining in an orbiting ring as
+the music gets louder, and "OOGA CHAKA" in WordArt on a big hit), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
 draw perspective faces as runs of affine strips, since Canvas 2D has no

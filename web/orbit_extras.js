@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers
+//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -4482,6 +4482,428 @@
           vctx.fillStyle = `rgba(200,255,255,${a.toFixed(3)})`; vctx.fillText('HACK THE PLANET', VW / 2, VH / 2);
           vctx.textAlign = 'start';
         }
+      },
+    });
+  })();
+
+  // Dancing baby: the 1996 Character Studio demo ("Baby Cha-Cha",
+  // sk_baby.max) that became Ally McBeal's hallucination -- a shaded
+  // toddler in a cloth nappy doing the cha-cha on a disco floor, the
+  // camera swinging round it. Like the original's Biped rig, the dance is
+  // footstep-driven: each foot has a list of footsteps -- a rock step on
+  // 2 and 3, then the cha-cha-cha triple step on 4-&-1 that carries the
+  // baby a little way sideways, back again the next bar -- and the legs
+  // reach them by IK, the hips settling over whichever foot has the
+  // weight. The routine runs eight bars: two of the plain basic, two
+  // with the hand flipping over the head (the move Girard's first
+  // prototype already had), a bar of air guitar, a bar bent over shaking
+  // the shoulders (Lurye's additions), and two with the hips circling and
+  // both hands flipping. The beat comes from bass onsets (intervals
+  // folded into one beat's range, so kicks on 1 and 3 still read as the
+  // beat), and each onset pulls the step back into line, so the feet land
+  // on the kick. The louder it gets, the more backup babies join, in a
+  // ring orbiting the first; the floor tiles are the video, the lit ones
+  // changing on every beat.
+  (function () {
+    const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
+    const sub = (a, b) => [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    const mul = (a, k) => [a[0] * k, a[1] * k, a[2] * k];
+    const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+    const norm = (a) => { const l = Math.hypot(a[0], a[1], a[2]) || 1; return [a[0] / l, a[1] / l, a[2] / l]; };
+    const lerp = (a, b, k) => a + (b - a) * k;
+    const lerpV = (a, b, k) => [lerp(a[0], b[0], k), lerp(a[1], b[1], k), lerp(a[2], b[2], k)];
+    const rotY = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+    const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+    const rotZ = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c - p[1] * s, p[0] * s + p[1] * c, p[2]]; };
+    const smooth = (a, b, x) => { const u = clamp01((x - a) / (b - a)); return u * u * (3 - 2 * u); };
+    // a limb hanging straight down, swung forward by `swing`, out to the side by `out`
+    const limbDir = (side, swing, out) => norm([side * Math.sin(out), -Math.cos(out) * Math.cos(swing), Math.cos(out) * Math.sin(swing)]);
+    // a limb's second segment: the first one's direction bent by `bend` towards `toward`
+    function bendDir(d, bend, toward) {
+      let p = add(toward, mul(d, -dot(toward, d)));
+      p = Math.hypot(p[0], p[1], p[2]) < 1e-3 ? [0, 1, 0] : norm(p);
+      return norm(add(mul(d, Math.cos(bend)), mul(p, Math.sin(bend))));
+    }
+    // two-bone IK: the knee that joins hip to ankle, bending towards `pole`
+    const L1 = 0.17, L2 = 0.16;
+    function ik(hip, ank, pole) {
+      let d = sub(ank, hip), len = Math.hypot(d[0], d[1], d[2]);
+      const maxL = (L1 + L2) * 0.999;
+      if (len > maxL) { ank = add(hip, mul(d, maxL / len)); d = sub(ank, hip); len = maxL; }
+      const dir = mul(d, 1 / len);
+      const a = (L1 * L1 - L2 * L2 + len * len) / (2 * len), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+      const p = norm(add(pole, mul(dir, -dot(pole, dir))));
+      return { knee: add(add(hip, mul(dir, a)), mul(p, h)), ank };
+    }
+    const SKIN = [18, 62, 70], DARK = [15, 40, 12], HAIR = [30, 45, 40], METAL = [210, 8, 72], PIN = [200, 65, 76];
+
+    // ── the nappy: a cloth mesh round the hips, built once in pelvis
+    // space. Folds in the radius (and so in the normals, which is what
+    // makes them read), gathers at the waistband, a front panel wrapped
+    // over the sides and pinned, and leg holes cut high at the sides.
+    // Drawn as small back-face-culled panels sorted with the body, so no
+    // part of it can vanish behind a belly or a thigh the way one big
+    // shape does.
+    const DIAPER = [], PINS = [], NT = 24, NV = 4, FLAP = Math.PI / 4;
+    (function () {
+      const pt = (th, v, layer) => {
+        const yb = -0.1 + 0.08 * Math.pow(Math.sin(th), 2), top = 0.085;
+        const fold = 1 + 0.03 * Math.sin(th * 9 + 1.3) * (0.3 + v) + 0.016 * Math.sin(th * 22) * Math.max(0, 1 - v * 3.5);
+        const bulge = 1 + 0.08 * Math.sin(Math.PI * Math.min(1, v * 1.3));      // puffy through the middle
+        const rx = 0.14 * (1 - 0.16 * v * v) * fold * bulge * layer, rz = 0.122 * (1 - 0.5 * v * v) * fold * bulge * layer;
+        return [Math.sin(th) * rx, top + (yb - top) * v, Math.cos(th) * rz];
+      };
+      const STEP = 2 * Math.PI / NT;
+      for (let j = 0; j < NV; j++) for (let i = 0; i < NT; i++) {
+        const t0 = -Math.PI + i * STEP, t1 = t0 + STEP, v0 = j / NV, v1 = (j + 1) / NV;
+        const tm = (t0 + t1) / 2, vm = (v0 + v1) / 2, front = Math.abs(tm) < FLAP, L = front ? 1.035 : 1;
+        const e = 1e-3, n0 = cross(sub(pt(tm + e, vm, L), pt(tm - e, vm, L)), sub(pt(tm, vm + e, L), pt(tm, vm - e, L)));
+        let n = norm(n0); if (n[0] * Math.sin(tm) + n[2] * Math.cos(tm) < 0) n = mul(n, -1);
+        DIAPER.push({ q: [pt(t0, v0, L), pt(t1, v0, L), pt(t1, v1, L), pt(t0, v1, L)], n, band: j === 0, hem: j === NV - 1 });
+      }
+      // the front panel's edges: a short wall where it overlaps the sides
+      for (const sg of [-1, 1]) {
+        const th = sg * FLAP, n = mul([Math.cos(th), 0, -Math.sin(th)], sg);
+        for (let j = 0; j < NV; j++) {
+          const v0 = j / NV, v1 = (j + 1) / NV;
+          DIAPER.push({ q: [pt(th, v0, 1), pt(th, v0, 1.035), pt(th, v1, 1.035), pt(th, v1, 1)], n, wall: true });
+        }
+        // a nappy pin where the flap meets the side: bar and plastic head
+        PINS.push({ c: 1, a: pt(th, 0.12, 1.06), b: pt(th, 0.42, 1.06), r: 0.0065, col: METAL });
+        PINS.push({ a: pt(th, 0.1, 1.07), r: 0.014, col: PIN });
+      }
+    })();
+
+    // ── the footsteps ──
+    // Bars alternate: an even bar rocks forward on the +x foot and
+    // triple-steps G towards +x, an odd bar rocks back on the -x foot and
+    // triple-steps home. Bars that don't step keep the feet where they are.
+    const W = 0.15, G = 0.12, HIPW = 0.065;
+    const ROUTINE = ['basic', 'basic', 'flip', 'flip', 'guitar', 'shake', 'circle', 'circle'];
+    const typeOf = (n) => ROUTINE[((n % 8) + 8) % 8];
+    function footEvents(side, n) {
+      const k = typeOf(n);
+      if (k === 'guitar' || k === 'shake') return [];
+      const s = n & 1 ? -1 : 1, c0 = s > 0 ? 0 : G, c1 = s > 0 ? G : 0, t0 = n * 4;
+      if (side === s) return [
+        { t: t0 + 1, x: c0 + s * W / 2, z: s * 0.11, dur: 0.5 },             // 2: rock
+        { t: t0 + 2, x: c0 + s * W / 2, z: 0, dur: 0.5 },                    // 3: recover
+        { t: t0 + 3, x: c0 + s * (W / 2 + G * 0.5), z: 0, dur: 0.4 },        // 4: cha
+        { t: t0 + 4, x: c1 + s * W / 2, z: 0, dur: 0.35 },                   // 1: cha
+      ];
+      return [{ t: t0 + 3.5, x: c1 - s * W / 2, z: 0, dur: 0.35 }];         // &: cha (closing)
+    }
+    function footAt(side, b) {
+      const n = Math.floor(b / 4);
+      const ev = footEvents(side, n - 1).concat(footEvents(side, n), footEvents(side, n + 1));
+      let base = { x: side * W / 2, z: 0, t: -1e9 }, next = null;
+      for (const e of ev) { if (e.t <= b) base = e; else { next = e; break; } }
+      if (next && next.t - b < next.dur) {
+        const k = smooth(0, 1, 1 - (next.t - b) / next.dur);
+        return { x: lerp(base.x, next.x, k), z: lerp(base.z, next.z, k), y: Math.sin(Math.PI * k) * 0.04, air: true, land: -1e9 };
+      }
+      return { x: base.x, z: base.z, y: 0, air: false, land: base.t };
+    }
+    // which foot has the weight, -1..1, eased over the last third of a beat
+    function weightAt(b) {
+      let w = 0;
+      for (let k = 0; k < 6; k++) {
+        const bb = b - k * 0.06, l = footAt(1, bb), r = footAt(-1, bb);
+        w += l.air && !r.air ? -1 : r.air && !l.air ? 1 : l.land > r.land ? 1 : r.land > l.land ? -1 : 0;
+      }
+      return w / 6;
+    }
+
+    // ── the upper body, per section of the routine ──
+    const ARM = (swing, out, elbow, toward) => ({ swing, out, elbow, toward });
+    const basicArm = (side, b) => ARM(0.3 + side * Math.sin(Math.PI * b) * 0.45, 0.3, 1.4, [0, 0.4, 1]);
+    // the hand flip: the arm swings up, the forearm folds over the top of
+    // the head, and it comes back down, over `p` 0..1
+    function flipArm(side, p, base) {
+      const up = Math.pow(Math.sin(Math.PI * clamp01(p)), 0.5);
+      const over = smooth(0.3, 0.5, p) * (1 - smooth(0.62, 0.8, p));        // only while the arm is up
+      return ARM(lerp(base.swing, 3.0, up), lerp(base.out, 0.5, Math.min(1, up * 1.5)), lerp(base.elbow, 0.2, up) + over * 0.6, lerpV(base.toward, [-side, 0.4, 0.15], over));
+    }
+    function section(type, b) {
+      const n = Math.floor(b / 4), u = b - n * 4, s = n & 1 ? -1 : 1, sw = Math.sin(Math.PI * b), ai = (side) => side > 0 ? 0 : 1;
+      const P = { arms: [basicArm(1, b), basicArm(-1, b)], bend: 0.04, lean: 0, twist: 0, shimmy: 0, dip: 0.012 * Math.abs(sw), circle: 0, headYaw: -sw * 0.2, headTilt: 0 };
+      if (type === 'flip' || type === 'circle') {
+        const p = (u - 0.6) / 2;
+        P.arms[ai(s)] = flipArm(s, p, P.arms[ai(s)]);
+        // leaning away from the raised arm, so the hand clears the head
+        P.lean = s * 0.14 * Math.sin(Math.PI * clamp01(p));
+      }
+      if (type === 'circle') { const p2 = (u - 2.2) / 1.7; P.arms[ai(-s)] = flipArm(-s, p2, P.arms[ai(-s)]); P.lean -= s * 0.14 * Math.sin(Math.PI * clamp01(p2)); P.circle = 1; }
+      if (type === 'guitar') {
+        // fretting out to the side, strumming at the belly on the eighths, nodding along
+        const strum = Math.sin(Math.PI * 4 * b);
+        P.arms = [ARM(0.55, 1.15, 0.45, [0, 0.5, 1]), ARM(0.45 + strum * 0.22, 0.05, 1.85, [1, 0.1, 0.6])];
+        P.bend = -0.12; P.twist = 0.3; P.dip = 0.035 + 0.025 * Math.abs(sw); P.headYaw = 0.35; P.headTilt = 0.15 + 0.15 * Math.abs(sw);
+      }
+      if (type === 'shake') {
+        // bent over, knees bent, the shoulders shaking twice a beat
+        P.bend = 0.62; P.shimmy = Math.sin(Math.PI * 4 * b) * 0.38; P.dip = 0.07; P.headTilt = -0.55; P.headYaw = 0;
+        P.arms = [ARM(0.45, 0.45, 0.9, [0, 0.4, 1]), ARM(0.45, 0.45, 0.9, [0, 0.4, 1])];
+      }
+      return P;
+    }
+    const KEYS = ['bend', 'lean', 'twist', 'shimmy', 'dip', 'circle', 'headYaw', 'headTilt'];
+    function params(b) {
+      const n = Math.floor(b / 4), k = smooth(3.5, 4, b - n * 4), A = section(typeOf(n), b);
+      if (k <= 0) return A;
+      const B = section(typeOf(n + 1), b), o = {};
+      o.arms = A.arms.map((a, i) => { const c = B.arms[i]; return ARM(lerp(a.swing, c.swing, k), lerp(a.out, c.out, k), lerp(a.elbow, c.elbow, k), lerpV(a.toward, c.toward, k)); });
+      for (const key of KEYS) o[key] = lerp(A[key], B[key], k);
+      return o;
+    }
+
+    // the baby at beat `b` (continuous), as spheres, capsules and cloth
+    // panels in its own space: y up, facing +z, feet on y=0, about 0.9 tall
+    function pose(b) {
+      const P = params(b), out = [], cb = Math.PI * b;
+      const feet = [footAt(1, b), footAt(-1, b)], ws = weightAt(b);
+      const hipTwist = ws * 0.22 + P.twist + P.circle * Math.sin(cb) * 0.15;
+      const px = (feet[0].x + feet[1].x) / 2 + ws * 0.035 + P.circle * Math.cos(cb) * 0.04;
+      const pz = (feet[0].z + feet[1].z) * 0.25 + P.circle * Math.sin(cb) * 0.035;
+      const hips = [1, -1].map((side) => add([px, 0, pz], rotY([side * HIPW, 0, 0], hipTwist)));
+      const anks = feet.map((f) => [f.x, 0.04 + f.y, f.z]);
+      // the pelvis as high as the standing leg(s) reach, nearly straight (the Cuban motion)
+      let py = Infinity;
+      for (let i = 0; i < 2; i++) {
+        if (feet[i].air && !feet[1 - i].air) continue;
+        const dx = hips[i][0] - anks[i][0], dz = hips[i][2] - anks[i][2];
+        py = Math.min(py, anks[i][1] + Math.sqrt(Math.max(0, (0.965 * (L1 + L2)) ** 2 - dx * dx - dz * dz)));
+      }
+      py -= P.dip;
+      const pelvis = [px, py, pz];
+      for (let i = 0; i < 2; i++) {
+        const side = i ? -1 : 1, hip = add(hips[i], [0, py, 0]);
+        const { knee, ank } = ik(hip, anks[i], rotY(norm([side * 0.25, 0, 1]), hipTwist));
+        const toe = add(ank, rotY([0, -0.005, 0.075], hipTwist * 0.4 + side * 0.15));
+        out.push({ c: 1, a: add(hip, mul(norm(sub(knee, hip)), 0.03)), b: knee, r: 0.058, col: SKIN });
+        out.push({ c: 1, a: knee, b: ank, r: 0.047, col: SKIN });
+        out.push({ c: 1, a: ank, b: toe, r: 0.036, col: SKIN });
+      }
+      // torso: leaning off the weighted hip, the shoulders countering the hips a little
+      const lean = -ws * 0.06 + P.lean, bend = P.bend, yawU = hipTwist * 0.6 + P.shimmy;
+      // the pelvis tips with half the bend, the torso bends from the waist
+      const tilt = bend * 0.5, tipP = (p) => rotY(rotX(p, tilt), hipTwist);
+      const upper = (p) => rotY(rotX(rotZ(p, lean), bend), yawU);
+      const waist = add(pelvis, tipP([0, 0.07, 0])), chest = add(waist, upper([0, 0.15, 0]));
+      out.push({ c: 1, a: waist, b: chest, r: 0.1, col: SKIN });
+      out.push({ a: add(waist, upper([0, 0.06, 0.012])), r: 0.108, col: SKIN });
+      for (let i = 0; i < 2; i++) {
+        const side = i ? -1 : 1, A = P.arms[i];
+        const sho = add(chest, upper([side * 0.1, 0.02, 0]));
+        const up = upper(limbDir(side, A.swing, A.out)), el = add(sho, mul(up, 0.14));
+        const fore = bendDir(up, A.elbow, upper(norm(A.toward))), wr = add(el, mul(fore, 0.13));
+        out.push({ c: 1, a: sho, b: el, r: 0.04, col: SKIN });
+        out.push({ c: 1, a: el, b: wr, r: 0.035, col: SKIN });
+        out.push({ a: add(wr, mul(fore, 0.015)), r: 0.04, col: SKIN, bias: 0.03 });
+      }
+      // the big head
+      const head = add(chest, upper(rotX([0, 0.16, 0.015], P.headTilt * 0.5)));
+      const H = (p) => add(head, upper(rotX(rotY(p, P.headYaw), P.headTilt)));
+      out.push({ a: head, r: 0.138, col: SKIN });
+      out.push({ a: H([0.135, 0, -0.01]), r: 0.032, col: SKIN });
+      out.push({ a: H([-0.135, 0, -0.01]), r: 0.032, col: SKIN });
+      out.push({ a: H([0, 0.13, 0.02]), r: 0.026, col: HAIR });
+      out.push({ a: H([0.047, 0.02, 0.121]), r: 0.019, col: DARK, eye: 1 });
+      out.push({ a: H([-0.047, 0.02, 0.121]), r: 0.019, col: DARK, eye: 1 });
+      out.push({ a: H([0, -0.055, 0.122]), r: 0.017 + Math.abs(Math.sin(cb)) * 0.006, col: [0, 45, 35] });
+      out.push({ a: H([0, -0.012, 0.137]), r: 0.017, col: SKIN });
+      // the nappy rides the pelvis
+      const dF = (p) => add(pelvis, tipP(p)), dD = tipP;
+      for (const m of DIAPER) out.push({ q: m.q.map(dF), n: dD(m.n), band: m.band, hem: m.hem, wall: m.wall, bias: 0.03 });
+      for (const m of PINS) out.push(m.c ? { c: 1, a: dF(m.a), b: dF(m.b), r: m.r, col: m.col, bias: 0.04 } : { a: dF(m.a), r: m.r, col: m.col, bias: 0.04 });
+      return { prims: out, root: [px, pz] };
+    }
+    const RING = 6, LIGHT = norm([-0.45, 0.55, 0.7]);
+    let last = 0, t = 0, beat = 0, period = 0.5, prevBass = 0, fluxAvg = 0.02, cool = 0, lastOnset = -1e9;
+    let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9;
+    const joined = new Float32Array(RING);
+    viz.registerMode({
+      id: 'dancingbaby', label: 'Dancing baby',
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; t += dt;
+        const bass = bassOf(freqData), energy = energyOf(freqData);
+
+        // ── beat tracking ──
+        const flux = Math.max(0, bass - prevBass); prevBass = bass;
+        fluxAvg += (flux - fluxAvg) * 0.05; cool -= dt;
+        if (cool <= 0 && flux > fluxAvg * 2.2 + 0.02 && bass > 0.2) {
+          cool = 0.22;
+          let iv = t - lastOnset;
+          if (iv < 2.5) {
+            while (iv > 0.8) iv /= 2;
+            while (iv < 0.35) iv *= 2;
+            ivals.push(iv); if (ivals.length > 9) ivals.shift();
+            if (ivals.length >= 3) { const s = ivals.slice().sort((a, b) => a - b); period += (s[s.length >> 1] - period) * 0.5; }
+          }
+          lastOnset = t;
+          beat -= (beat - Math.round(beat)) * 0.5;
+          flash = 1;
+          if (bass > 0.6 && t - lastShout > 14) { shout = 1; lastShout = t; }
+        }
+        if (t - lastOnset > 4) period += (0.5 - period) * Math.min(1, dt * 0.5);   // silence: drift back to ~120 bpm
+        beat += dt / period * speed;
+        const beatIdx = Math.floor(beat);
+        flash = Math.max(0, flash - dt * 3);
+        orbit += dt * 0.22 * speed; ringRot += dt * 0.35 * speed * (0.6 + energy);
+        const want = Math.round(clamp01((energy - 0.12) / 0.4) * RING);
+        for (let k = 0; k < RING; k++) joined[k] += ((k < want ? 1 : 0) - joined[k]) * Math.min(1, dt * 2.5);
+
+        // ── camera: swinging round the baby, looking a little down ──
+        const cam = Math.sin(orbit) * 0.95, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
+        const cc = Math.cos(cam), cs = Math.sin(cam), pc = Math.cos(pitch), ps = Math.sin(pitch);
+        const D = 3.2, f = Math.min(VW, VH) * 1.55 * vizUserScale, oy = cy + VH * 0.02;
+        const toCam = (p) => {
+          const x = p[0] * cc + p[2] * cs, z = -p[0] * cs + p[2] * cc, y = p[1] - 0.45;
+          return [x, y * pc - z * ps, y * ps + z * pc];
+        };
+        const proj = (p) => { const q = toCam(p), d = Math.max(0.2, D - q[2]); return [cx + q[0] * f / d, oy - q[1] * f / d, d]; };
+
+        // ── backdrop: late-90s gradient, a spotlight that kicks with the beat ──
+        const bg = vctx.createLinearGradient(0, 0, 0, VH);
+        bg.addColorStop(0, `hsl(${(hueBase + 250) % 360 | 0},55%,12%)`);
+        bg.addColorStop(1, `hsl(${(hueBase + 190) % 360 | 0},60%,22%)`);
+        vctx.fillStyle = bg; vctx.fillRect(0, 0, VW, VH);
+        const sp = proj([0, 0.5, 0]), sr = Math.min(VW, VH) * (0.45 + flash * 0.12);
+        const sg = vctx.createRadialGradient(sp[0], sp[1], 0, sp[0], sp[1], sr);
+        sg.addColorStop(0, `rgba(255,240,210,${(0.18 + flash * 0.18).toFixed(3)})`); sg.addColorStop(1, 'rgba(255,240,210,0)');
+        vctx.fillStyle = sg; vctx.fillRect(0, 0, VW, VH);
+
+        // ── the floor: a disco disc, textured with the video when there is one ──
+        const T = 0.3, N = 6, RMAX = 1.85, vd = videoFrame && videoFrame.imageData.data;
+        const tiles = [];
+        for (let j = -N; j < N; j++) for (let i = -N; i < N; i++) {
+          const mx = (i + 0.5) * T, mz = (j + 0.5) * T;
+          if (Math.hypot(mx, mz) > RMAX) continue;
+          tiles.push({ i, j, d: toCam([mx, 0, mz])[2] });
+        }
+        tiles.sort((a, b) => a.d - b.d);
+        for (const { i, j } of tiles) {
+          const q = [[i * T, 0, j * T], [(i + 1) * T, 0, j * T], [(i + 1) * T, 0, (j + 1) * T], [i * T, 0, (j + 1) * T]].map(proj);
+          const lit = hash(i * 7.1 + j * 13.7 + beatIdx * 3.3) > 0.62;
+          const glow = lit ? 0.35 + flash * 0.5 : 0;
+          if (vd) {
+            const px = Math.min(videoFrame.w - 1, ((i + N + 0.5) / (2 * N) * videoFrame.w) | 0);
+            const py = Math.min(videoFrame.h - 1, ((j + N + 0.5) / (2 * N) * videoFrame.h) | 0), o = (py * videoFrame.w + px) * 4;
+            const m = (c) => Math.min(255, (c * (0.55 + glow) + glow * 120) | 0);
+            vctx.fillStyle = `rgb(${m(vd[o])},${m(vd[o + 1])},${m(vd[o + 2])})`;
+          } else {
+            const hue = (hueBase + hash(i * 3.7 + j * 5.3) * 360) % 360;
+            vctx.fillStyle = `hsl(${hue | 0},${lit ? 90 : 45}%,${(lit ? 45 + flash * 25 : 12 + ((i + j) & 1) * 6) | 0}%)`;
+          }
+          vctx.beginPath(); vctx.moveTo(q[0][0], q[0][1]);
+          for (let k = 1; k < 4; k++) vctx.lineTo(q[k][0], q[k][1]);
+          vctx.closePath(); vctx.fill();
+          vctx.strokeStyle = 'rgba(0,0,0,0.35)'; vctx.lineWidth = 1; vctx.stroke();
+        }
+
+        // ── the babies: the star at the centre, backup dancers in an orbiting ring ──
+        const dancers = [{ x: 0, z: 0, yaw: 0, s: 1 }];
+        for (let k = 0; k < RING; k++) {
+          if (joined[k] < 0.02) continue;
+          const a = ringRot + k * Math.PI * 2 / RING;
+          dancers.push({ x: Math.sin(a) * 1.25, z: Math.cos(a) * 1.25, yaw: a, s: 0.55 * joined[k] });
+        }
+        const { prims: body, root } = pose(beat), prims = [];
+        const dirOf = (d) => { const x = d[0] * cc + d[2] * cs, z = -d[0] * cs + d[2] * cc; return [x, d[1] * pc - z * ps, d[1] * ps + z * pc]; };
+        const scr = (q) => { const d = Math.max(0.2, D - q[2]); return [cx + q[0] * f / d, oy - q[1] * f / d, d]; };
+        for (const dn of dancers) {
+          const world = (p) => { const r = rotY(mul(p, dn.s), dn.yaw); return [r[0] + dn.x, r[1], r[2] + dn.z]; };
+          // shadow on the floor first, flattened by the view
+          const rw = world([root[0], 0, root[1]]), c = proj(rw), e = proj([rw[0] + 0.2 * dn.s, 0, rw[2]]);
+          const rr = Math.max(1, Math.hypot(e[0] - c[0], e[1] - c[1]) * 1.1);
+          vctx.fillStyle = 'rgba(0,0,0,0.35)';
+          vctx.beginPath(); vctx.ellipse(c[0], c[1], rr, rr * (0.2 + ps * 0.9), 0, 0, Math.PI * 2); vctx.fill();
+          for (const pr of body) {
+            const bias = (pr.bias || 0) * dn.s;
+            if (pr.q) {
+              const cq = pr.q.map((p) => toCam(world(p))), nc = dirOf(rotY(pr.n, dn.yaw));
+              const m = mul(add(cq[0], cq[2]), 0.5);
+              // a panel facing away is the inside of the far side, seen over the waistband: shaded, and not pulled forward
+              const inside = dot(nc, [-m[0], -m[1], D - m[2]]) <= 0;
+              if (inside && pr.wall) continue;
+              const pts = cq.map(scr);
+              prims.push({ pts, pr, inside, lit: inside ? 0 : Math.max(0, dot(nc, LIGHT)), d: (pts[0][2] + pts[1][2] + pts[2][2] + pts[3][2]) / 4 - (inside ? 0 : bias) });
+              continue;
+            }
+            const a = proj(world(pr.a)), b = pr.c ? proj(world(pr.b)) : null;
+            prims.push({ a, b, r: pr.r * dn.s, col: pr.col, eye: pr.eye, d: (b ? (a[2] + b[2]) / 2 : a[2]) - bias });
+          }
+        }
+        prims.sort((p, q) => q.d - p.d);
+        const hsl = (c, dl, al = 1) => `hsla(${c[0]},${c[1]}%,${Math.max(0, Math.min(100, c[2] + dl))}%,${al})`;
+        vctx.lineCap = 'round'; vctx.lineJoin = 'round';
+        for (const p of prims) {
+          if (p.pts) {
+            // cloth: soft cotton shading, a seam line at the hem, stitching under the waistband
+            const q = p.pts, L = Math.round(58 + p.lit * 38 + (p.pr.band ? 2 : 0) - (p.pr.wall ? 16 : 0) - (p.inside ? 12 : 0));
+            const col = `hsl(42,${p.pr.band ? 18 : 24}%,${L}%)`;
+            vctx.fillStyle = col; vctx.strokeStyle = col; vctx.lineWidth = 1;
+            vctx.beginPath(); vctx.moveTo(q[0][0], q[0][1]);
+            for (let k = 1; k < 4; k++) vctx.lineTo(q[k][0], q[k][1]);
+            vctx.closePath(); vctx.fill(); vctx.stroke();
+            const lw = Math.max(0.6, 0.005 * f / p.d);
+            if (p.inside) continue;
+            if (p.pr.hem) {
+              vctx.strokeStyle = `hsla(40,25%,${L - 24}%,0.8)`; vctx.lineWidth = lw * 1.4;
+              vctx.beginPath(); vctx.moveTo(q[3][0], q[3][1]); vctx.lineTo(q[2][0], q[2][1]); vctx.stroke();
+            } else if (p.pr.band) {
+              const y0 = 0.35, a = [lerp(q[0][0], q[3][0], y0), lerp(q[0][1], q[3][1], y0)], b = [lerp(q[1][0], q[2][0], y0), lerp(q[1][1], q[2][1], y0)];
+              vctx.strokeStyle = `hsla(40,25%,${L - 20}%,0.7)`; vctx.lineWidth = lw * 0.7; vctx.setLineDash([lw * 2, lw * 2]);
+              vctx.beginPath(); vctx.moveTo(a[0], a[1]); vctx.lineTo(b[0], b[1]); vctx.stroke(); vctx.setLineDash([]);
+            }
+            continue;
+          }
+          const R = p.r * f / p.a[2];
+          if (R < 0.3) continue;
+          if (p.b) {
+            // capsule: a dark rim, the body, then a highlight toward the light (up and left)
+            const w = 2 * p.r * f / ((p.a[2] + p.b[2]) / 2);
+            vctx.strokeStyle = hsl(p.col, -22); vctx.lineWidth = w;
+            vctx.beginPath(); vctx.moveTo(p.a[0], p.a[1]); vctx.lineTo(p.b[0], p.b[1]); vctx.stroke();
+            vctx.strokeStyle = hsl(p.col, 0); vctx.lineWidth = w * 0.74;
+            vctx.beginPath(); vctx.moveTo(p.a[0] - w * 0.06, p.a[1] - w * 0.06); vctx.lineTo(p.b[0] - w * 0.06, p.b[1] - w * 0.06); vctx.stroke();
+            vctx.strokeStyle = hsl(p.col, 14, 0.8); vctx.lineWidth = w * 0.26;
+            vctx.beginPath(); vctx.moveTo(p.a[0] - w * 0.18, p.a[1] - w * 0.2); vctx.lineTo(p.b[0] - w * 0.18, p.b[1] - w * 0.2); vctx.stroke();
+          } else {
+            const [x, y] = p.a;
+            const g = vctx.createRadialGradient(x - R * 0.35, y - R * 0.4, R * 0.08, x, y, R);
+            g.addColorStop(0, hsl(p.col, p.eye ? 40 : 18)); g.addColorStop(p.eye ? 0.3 : 0.55, hsl(p.col, 0)); g.addColorStop(1, hsl(p.col, -24));
+            vctx.fillStyle = g; vctx.beginPath(); vctx.arc(x, y, R, 0, Math.PI * 2); vctx.fill();
+          }
+        }
+        vctx.lineJoin = 'miter';
+
+        // ── now and then, on a big hit: the song's hook in WordArt ──
+        if (shout > 0) {
+          shout = Math.max(0, shout - dt * 0.45);
+          const words = 'OOGA CHAKA', bs = Math.round(Math.min(VW, VH) * 0.1);
+          vctx.save();
+          vctx.font = `italic 900 ${bs}px Impact, "Arial Black", sans-serif`; vctx.textBaseline = 'middle';
+          const tw = vctx.measureText(words).width;
+          let x = VW / 2 - tw / 2;
+          const y0 = VH * 0.16, a = Math.min(1, shout * 3);
+          for (let k = 0; k < words.length; k++) {
+            const ch = words[k], cw = vctx.measureText(ch).width;
+            const y = y0 - Math.abs(Math.sin((beat + k * 0.12) * Math.PI)) * bs * 0.25;
+            for (let e = 5; e > 0; e--) {                                  // the extrusion
+              vctx.fillStyle = `rgba(40,0,70,${(a * 0.9).toFixed(3)})`; vctx.fillText(ch, x + e * bs * 0.02, y + e * bs * 0.02);
+            }
+            const g = vctx.createLinearGradient(0, y - bs / 2, 0, y + bs / 2);
+            g.addColorStop(0, `hsla(${(hueBase + k * 36) % 360 | 0},100%,70%,${a})`);
+            g.addColorStop(1, `hsla(${(hueBase + k * 36 + 120) % 360 | 0},100%,50%,${a})`);
+            vctx.fillStyle = g; vctx.fillText(ch, x, y);
+            x += cw;
+          }
+          vctx.restore();
+        }
+        vctx.lineCap = 'butt';
       },
     });
   })();
