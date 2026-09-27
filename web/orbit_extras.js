@@ -4494,14 +4494,15 @@
   // 2 and 3, then the cha-cha-cha triple step on 4-&-1 that carries the
   // baby a little way sideways, back again the next bar -- and the legs
   // reach them by IK, the hips settling over whichever foot has the
-  // weight. The routine runs eight bars: two of the plain basic, two
+  // weight. The routine runs twelve bars: two of the plain basic, two
   // with the hand flipping over the head (the move Girard's first
-  // prototype already had), a bar of air guitar, a bar bent over shaking
-  // the shoulders (Lurye's additions), and two with the hips circling and
-  // both hands flipping. The beat comes from bass onsets (intervals
-  // folded into one beat's range, so kicks on 1 and 3 still read as the
-  // beat), and each onset pulls the step back into line, so the feet land
-  // on the kick. The louder it gets, the more backup babies join, in a
+  // prototype already had), a bar of air guitar, a bar throwing both
+  // hands down at the floor as it bends over, a bar bent over shaking
+  // the shoulders (Lurye's additions), another bar of throws, two
+  // with the hips circling and both hands flipping, and two of jazz
+  // hands. The beat comes from bass onsets (intervals folded into one
+  // beat's range, so kicks on 1 and 3 still read as the beat), and each
+  // onset pulls the step back into line, so the feet land on the kick. The louder it gets, the more backup babies join, in a
   // ring orbiting the first; the floor tiles are the video, the lit ones
   // changing on every beat.
   (function () {
@@ -4536,7 +4537,7 @@
       const p = norm(add(pole, mul(dir, -dot(pole, dir))));
       return { knee: add(add(hip, mul(dir, a)), mul(p, h)), ank };
     }
-    const SKIN = [18, 62, 70], DARK = [15, 40, 12], HAIR = [30, 45, 40], METAL = [210, 8, 72], PIN = [200, 65, 76];
+    const PACI = [198, 62, 70], SKIN = [18, 62, 70], DARK = [15, 40, 12], HAIR = [30, 45, 40], METAL = [210, 8, 72], PIN = [200, 65, 76];
 
     // ── the nappy: a cloth mesh round the hips, built once in pelvis
     // space. Folds in the radius (and so in the normals, which is what
@@ -4562,6 +4563,29 @@
         let n = norm(n0); if (n[0] * Math.sin(tm) + n[2] * Math.cos(tm) < 0) n = mul(n, -1);
         DIAPER.push({ q: [pt(t0, v0, L), pt(t1, v0, L), pt(t1, v1, L), pt(t0, v1, L)], n, band: j === 0, hem: j === NV - 1 });
       }
+      // closing it: a crotch panel from the front's bottom edge to the
+      // back's, sagging a little between the legs (the thighs fill the
+      // leg holes either side of it), and a turned-over rim from the
+      // waistband in to the body, so bent over, from behind or from above,
+      // there's never a view into the hollow
+      const quad = (q, up, extra) => {
+        let n = norm(cross(sub(q[1], q[0]), sub(q[3], q[0])));
+        if ((n[1] > 0) !== up) n = mul(n, -1);
+        DIAPER.push(Object.assign({ q, n }, extra));
+      };
+      const CROTCH = 2;                                                     // columns either side of centre
+      for (let i = NT / 2 - CROTCH; i < NT / 2 + CROTCH; i++) {
+        const t0 = -Math.PI + i * STEP, t1 = t0 + STEP;
+        const f0 = pt(t0, 1, 1.035), f1 = pt(t1, 1, 1.035), b0 = pt(Math.PI - t0, 1, 1), b1 = pt(Math.PI - t1, 1, 1);
+        const m0 = add(mul(add(f0, b0), 0.5), [0, -0.012, 0]), m1 = add(mul(add(f1, b1), 0.5), [0, -0.012, 0]);
+        quad([f0, f1, m1, m0], false, {});
+        quad([m0, m1, b1, b0], false, {});
+      }
+      for (let i = 0; i < NT; i++) {
+        const t0 = -Math.PI + i * STEP, t1 = t0 + STEP, L = Math.abs(t0 + STEP / 2) < FLAP ? 1.035 : 1;
+        const inner = (t) => [Math.sin(t) * 0.098, 0.08, Math.cos(t) * 0.09];
+        quad([pt(t0, 0, L), pt(t1, 0, L), inner(t1), inner(t0)], true, { band: true });
+      }
       // the front panel's edges: a short wall where it overlaps the sides
       for (const sg of [-1, 1]) {
         const th = sg * FLAP, n = mul([Math.cos(th), 0, -Math.sin(th)], sg);
@@ -4580,11 +4604,13 @@
     // triple-steps G towards +x, an odd bar rocks back on the -x foot and
     // triple-steps home. Bars that don't step keep the feet where they are.
     const W = 0.15, G = 0.12, HIPW = 0.065;
-    const ROUTINE = ['basic', 'basic', 'flip', 'flip', 'guitar', 'shake', 'circle', 'circle'];
-    const typeOf = (n) => ROUTINE[((n % 8) + 8) % 8];
+    // stepping bars come in even/odd pairs, so the traveller always starts a pair at home
+    const ROUTINE = ['basic', 'basic', 'flip', 'flip', 'guitar', 'throw', 'shake', 'throw', 'circle', 'circle', 'jazz', 'jazz'];
+    const PLANTED = { guitar: 1, throw: 1, shake: 1 };
+    const typeOf = (n) => ROUTINE[((n % ROUTINE.length) + ROUTINE.length) % ROUTINE.length];
     function footEvents(side, n) {
       const k = typeOf(n);
-      if (k === 'guitar' || k === 'shake') return [];
+      if (PLANTED[k]) return [];
       const s = n & 1 ? -1 : 1, c0 = s > 0 ? 0 : G, c1 = s > 0 ? G : 0, t0 = n * 4;
       if (side === s) return [
         { t: t0 + 1, x: c0 + s * W / 2, z: s * 0.11, dur: 0.5 },             // 2: rock
@@ -4616,18 +4642,26 @@
     }
 
     // ── the upper body, per section of the routine ──
-    const ARM = (swing, out, elbow, toward) => ({ swing, out, elbow, toward });
+    // a hand: which way the palm faces (in the body's frame, x towards the
+    // midline, so one value suits either hand), how far the fingers fan
+    // out, how far they curl (0 flat, ~1.6 a fist), and a roll about the wrist
+    const HAND = (palm, spread, curl, roll = 0) => ({ palm, spread, curl, roll });
+    const lerpH = (a, b, k) => HAND(lerpV(a.palm, b.palm, k), lerp(a.spread, b.spread, k), lerp(a.curl, b.curl, k), lerp(a.roll, b.roll, k));
+    const RELAXED = HAND([1, 0.1, 0.3], 0.35, 0.45), FIST = HAND([0, 0, 1], 0, 1.6);
+    const ARM = (swing, out, elbow, toward, hand = RELAXED) => ({ swing, out, elbow, toward, hand });
+    const lerpA = (a, b, k) => ARM(lerp(a.swing, b.swing, k), lerp(a.out, b.out, k), lerp(a.elbow, b.elbow, k), lerpV(a.toward, b.toward, k), lerpH(a.hand, b.hand, k));
     const basicArm = (side, b) => ARM(0.3 + side * Math.sin(Math.PI * b) * 0.45, 0.3, 1.4, [0, 0.4, 1]);
     // the hand flip: the arm swings up, the forearm folds over the top of
     // the head, and it comes back down, over `p` 0..1
     function flipArm(side, p, base) {
       const up = Math.pow(Math.sin(Math.PI * clamp01(p)), 0.5);
       const over = smooth(0.3, 0.5, p) * (1 - smooth(0.62, 0.8, p));        // only while the arm is up
-      return ARM(lerp(base.swing, 3.0, up), lerp(base.out, 0.5, Math.min(1, up * 1.5)), lerp(base.elbow, 0.2, up) + over * 0.6, lerpV(base.toward, [-side, 0.4, 0.15], over));
+      return ARM(lerp(base.swing, 3.0, up), lerp(base.out, 0.5, Math.min(1, up * 1.5)), lerp(base.elbow, 0.2, up) + over * 0.6, lerpV(base.toward, [-side, 0.4, 0.15], over),
+        lerpH(base.hand, HAND([1, -0.6, 0], 0.7, 0.2), up));                 // the palm turns down over the head
     }
     function section(type, b) {
       const n = Math.floor(b / 4), u = b - n * 4, s = n & 1 ? -1 : 1, sw = Math.sin(Math.PI * b), ai = (side) => side > 0 ? 0 : 1;
-      const P = { arms: [basicArm(1, b), basicArm(-1, b)], bend: 0.04, lean: 0, twist: 0, shimmy: 0, dip: 0.012 * Math.abs(sw), circle: 0, headYaw: -sw * 0.2, headTilt: 0 };
+      const P = { arms: [basicArm(1, b), basicArm(-1, b)], bend: 0.04, lean: 0, twist: 0, shimmy: 0, dip: 0.012 * Math.abs(sw), circle: 0, headYaw: -sw * 0.2, headTilt: 0, hipBack: 0 };
       if (type === 'flip' || type === 'circle') {
         const p = (u - 0.6) / 2;
         P.arms[ai(s)] = flipArm(s, p, P.arms[ai(s)]);
@@ -4638,24 +4672,79 @@
       if (type === 'guitar') {
         // fretting out to the side, strumming at the belly on the eighths, nodding along
         const strum = Math.sin(Math.PI * 4 * b);
-        P.arms = [ARM(0.55, 1.15, 0.45, [0, 0.5, 1]), ARM(0.45 + strum * 0.22, 0.05, 1.85, [1, 0.1, 0.6])];
+        P.arms = [ARM(0.55, 1.15, 0.45, [0, 0.5, 1], HAND([0, -0.4, 1], 0.1, 1.15)), ARM(0.45 + strum * 0.22, 0.05, 1.85, [1, 0.1, 0.6], HAND([1, 0, 0], 0.05, 1.0, strum * 0.3))];
         P.bend = -0.12; P.twist = 0.3; P.dip = 0.035 + 0.025 * Math.abs(sw); P.headYaw = 0.35; P.headTilt = 0.15 + 0.15 * Math.abs(sw);
       }
+      if (type === 'jazz') {
+        // jazz hands: arms flung out to the sides, forearms up, palms to the
+        // front and fingers splayed, the hands trembling at the wrist four
+        // times a beat, the arms popping a little wider on every beat,
+        // shoulders shimmying with them, the feet still doing the cha-cha
+        const tremble = Math.sin(Math.PI * 8 * b), pop = Math.pow(1 - (b - Math.floor(b)), 3);
+        P.arms = [1, -1].map((side) => ARM(0.3, 1.4 + pop * 0.12, 0.85, [0, 1, 0.2], HAND([0, 0.15, 1], 1, 0.02, tremble * 0.45)));
+        P.shimmy = tremble * 0.05; P.bend = -0.05; P.headTilt = -0.12; P.headYaw = Math.sin(Math.PI * b / 2) * 0.3;
+      }
       if (type === 'shake') {
-        // bent over, knees bent, the shoulders shaking twice a beat
-        P.bend = 0.62; P.shimmy = Math.sin(Math.PI * 4 * b) * 0.38; P.dip = 0.07; P.headTilt = -0.55; P.headYaw = 0;
-        P.arms = [ARM(0.45, 0.45, 0.9, [0, 0.4, 1]), ARM(0.45, 0.45, 0.9, [0, 0.4, 1])];
+        // still thrown forward, head hanging so you see the top of it, the
+        // arms dangling loose from the shoulders and swinging, a beat
+        // behind, as the shoulders shake twice a beat
+        const sh = Math.sin(Math.PI * 4 * b), lag = Math.sin(Math.PI * 4 * b - 1.2);
+        P.bend = 1.7; P.hipBack = 0.06; P.shimmy = sh * 0.38; P.dip = 0.015; P.headTilt = 0.55 + sh * 0.08; P.headYaw = -sh * 0.12;
+        P.arms = [1, -1].map((side) => ARM(1.55 + side * lag * 0.25, 0.16 + Math.abs(lag) * 0.08, 0.35, [0, 0.4, 1], HAND([1, 0, -0.3], 0.3, 0.5, lag * 0.3)));
+      }
+      if (type === 'throw') {
+        // every two beats: fists pulled up beside the ears, then the body
+        // thrown forward, landing on the beat -- the arms flung past the
+        // vertical and settling back to dangle, the head dropping after the
+        // body so it hangs, relaxed, top of the head to the camera -- held a
+        // moment, and drawn back up for the next one. The bar's last throw
+        // lands on the downbeat of the shimmy bar and carries straight into it.
+        const ph = b / 2 - Math.floor(b / 2);
+        const down = ph < 0.2 ? 1 : ph < 0.7 ? 1 - smooth(0.2, 0.7, ph) : smooth(0.84, 1, ph);
+        const settle = ph < 0.5 ? smooth(0, 0.18, ph) : 0;                   // the fling overshoots, then hangs
+        const slump = ph < 0.5 ? smooth(0, 0.12, ph) * 0.3 + 0.7 : 1;        // the head follows the body down
+        const upA = ARM(0.75, 1.0, 2.1, [0, 1, 0], FIST);
+        const dnA = ARM(lerp(1.95, 1.55, settle), lerp(0.3, 0.16, settle), lerp(0.05, 0.35, settle), [0, 0.4, 1], HAND([1, 0, -0.3], lerp(0.7, 0.3, settle), lerp(0.15, 0.5, settle)));
+        P.arms = [lerpA(upA, dnA, down), lerpA(upA, dnA, down)];
+        P.bend = lerp(0.05, 1.7, down); P.hipBack = 0.06 * down; P.dip = lerp(0.03, 0.015, down); P.headTilt = lerp(-0.1, 0.55, down) * (down > 0.5 ? slump : 1); P.headYaw = 0;
       }
       return P;
     }
-    const KEYS = ['bend', 'lean', 'twist', 'shimmy', 'dip', 'circle', 'headYaw', 'headTilt'];
+    const KEYS = ['bend', 'lean', 'twist', 'shimmy', 'dip', 'circle', 'headYaw', 'headTilt', 'hipBack'];
     function params(b) {
       const n = Math.floor(b / 4), k = smooth(3.5, 4, b - n * 4), A = section(typeOf(n), b);
       if (k <= 0) return A;
       const B = section(typeOf(n + 1), b), o = {};
-      o.arms = A.arms.map((a, i) => { const c = B.arms[i]; return ARM(lerp(a.swing, c.swing, k), lerp(a.out, c.out, k), lerp(a.elbow, c.elbow, k), lerpV(a.toward, c.toward, k)); });
+      o.arms = A.arms.map((a, i) => lerpA(a, B.arms[i], k));
       for (const key of KEYS) o[key] = lerp(A[key], B[key], k);
       return o;
+    }
+
+    // a hand at the wrist: a palm and four two-jointed fingers fanning
+    // out from its knuckles, curling towards the palm, and a thumb on the
+    // side that faces the midline when the palm faces front
+    const FINGERS = [[-0.35, -0.018, 0.034], [-0.12, -0.006, 0.04], [0.12, 0.006, 0.038], [0.36, 0.018, 0.031]];
+    function hand(out, wr, fore, side, H, upper) {
+      const u = fore, ph = upper([-side * H.palm[0], H.palm[1], H.palm[2]]);
+      let n = add(ph, mul(u, -dot(ph, u)));
+      n = Math.hypot(n[0], n[1], n[2]) < 1e-3 ? upper([-side, 0, 0]) : norm(n);
+      if (H.roll) n = norm(add(mul(n, Math.cos(H.roll)), mul(cross(u, n), Math.sin(H.roll))));
+      const v = cross(u, n), c = H.curl;
+      out.push({ a: add(wr, mul(u, 0.03)), r: 0.034, col: SKIN, bias: 0.03 });
+      for (const [fan, off, len] of FINGERS) {
+        const base = add(add(wr, mul(u, 0.054)), mul(v, off * (1 + H.spread * 0.25)));
+        const d = norm(add(u, mul(v, fan * H.spread)));
+        const d1 = norm(add(mul(d, Math.cos(c * 0.55)), mul(n, Math.sin(c * 0.55))));
+        const d2 = norm(add(mul(d, Math.cos(c * 1.2)), mul(n, Math.sin(c * 1.2))));
+        const k = add(base, mul(d1, len * 0.55));
+        out.push({ c: 1, a: base, b: k, r: 0.0093, col: SKIN, bias: 0.035 });
+        out.push({ c: 1, a: k, b: add(k, mul(d2, len * 0.45)), r: 0.0083, col: SKIN, bias: 0.035 });
+      }
+      const ts = mul(v, -side), tb = add(add(wr, mul(u, 0.022)), mul(ts, 0.024));
+      const td = norm(add(add(mul(ts, 0.75 * (0.4 + H.spread * 0.6)), mul(u, 0.6)), mul(n, 0.2 + c * 0.35)));
+      const tk = add(tb, mul(td, 0.023));
+      out.push({ c: 1, a: tb, b: tk, r: 0.0106, col: SKIN, bias: 0.035 });
+      out.push({ c: 1, a: tk, b: add(tk, mul(norm(add(td, mul(n, c * 0.5))), 0.019)), r: 0.0094, col: SKIN, bias: 0.035 });
     }
 
     // the baby at beat `b` (continuous), as spheres, capsules and cloth
@@ -4665,7 +4754,7 @@
       const feet = [footAt(1, b), footAt(-1, b)], ws = weightAt(b);
       const hipTwist = ws * 0.22 + P.twist + P.circle * Math.sin(cb) * 0.15;
       const px = (feet[0].x + feet[1].x) / 2 + ws * 0.035 + P.circle * Math.cos(cb) * 0.04;
-      const pz = (feet[0].z + feet[1].z) * 0.25 + P.circle * Math.sin(cb) * 0.035;
+      const pz = (feet[0].z + feet[1].z) * 0.25 + P.circle * Math.sin(cb) * 0.035 - P.hipBack;   // folding over, the hips go back over the heels
       const hips = [1, -1].map((side) => add([px, 0, pz], rotY([side * HIPW, 0, 0], hipTwist)));
       const anks = feet.map((f) => [f.x, 0.04 + f.y, f.z]);
       // the pelvis as high as the standing leg(s) reach, nearly straight (the Cuban motion)
@@ -4688,7 +4777,7 @@
       // torso: leaning off the weighted hip, the shoulders countering the hips a little
       const lean = -ws * 0.06 + P.lean, bend = P.bend, yawU = hipTwist * 0.6 + P.shimmy;
       // the pelvis tips with half the bend, the torso bends from the waist
-      const tilt = bend * 0.5, tipP = (p) => rotY(rotX(p, tilt), hipTwist);
+      const tilt = bend * (0.5 + 0.2 * clamp01(bend - 0.9)), tipP = (p) => rotY(rotX(p, tilt), hipTwist);
       const upper = (p) => rotY(rotX(rotZ(p, lean), bend), yawU);
       const waist = add(pelvis, tipP([0, 0.07, 0])), chest = add(waist, upper([0, 0.15, 0]));
       out.push({ c: 1, a: waist, b: chest, r: 0.1, col: SKIN });
@@ -4700,10 +4789,10 @@
         const fore = bendDir(up, A.elbow, upper(norm(A.toward))), wr = add(el, mul(fore, 0.13));
         out.push({ c: 1, a: sho, b: el, r: 0.04, col: SKIN });
         out.push({ c: 1, a: el, b: wr, r: 0.035, col: SKIN });
-        out.push({ a: add(wr, mul(fore, 0.015)), r: 0.04, col: SKIN, bias: 0.03 });
+        hand(out, wr, fore, side, A.hand, upper);
       }
       // the big head
-      const head = add(chest, upper(rotX([0, 0.16, 0.015], P.headTilt * 0.5)));
+      const head = add(chest, upper(rotX([0, 0.16, 0.015], P.headTilt * 0.75)));
       const H = (p) => add(head, upper(rotX(rotY(p, P.headYaw), P.headTilt)));
       out.push({ a: head, r: 0.138, col: SKIN });
       out.push({ a: H([0.135, 0, -0.01]), r: 0.032, col: SKIN });
@@ -4711,7 +4800,18 @@
       out.push({ a: H([0, 0.13, 0.02]), r: 0.026, col: HAIR });
       out.push({ a: H([0.047, 0.02, 0.121]), r: 0.019, col: DARK, eye: 1 });
       out.push({ a: H([-0.047, 0.02, 0.121]), r: 0.019, col: DARK, eye: 1 });
-      out.push({ a: H([0, -0.055, 0.122]), r: 0.017 + Math.abs(Math.sin(cb)) * 0.006, col: [0, 45, 35] });
+      // a pacifier: the shield across the lips, the button, and the ring
+      // handle hanging from it, swinging with the dance
+      out.push({ c: 1, a: H([-0.032, -0.056, 0.134]), b: H([0.032, -0.056, 0.134]), r: 0.019, col: PACI, bias: 0.01 });
+      out.push({ a: H([0, -0.056, 0.152]), r: 0.012, col: [40, 30, 92], bias: 0.015 });
+      const sway = Math.sin(cb) * 0.45 + P.shimmy * 0.8, RINGR = 0.019;
+      let prev = null;
+      for (let k = 0; k <= 10; k++) {
+        const t = k / 10 * Math.PI * 2, y = -RINGR + RINGR * Math.cos(t), x = RINGR * Math.sin(t);
+        const q = H([x, -0.056 + y * Math.cos(sway), 0.158 + y * Math.sin(sway) * -1]);
+        if (prev) out.push({ c: 1, a: prev, b: q, r: 0.0042, col: PACI, bias: 0.02 });
+        prev = q;
+      }
       out.push({ a: H([0, -0.012, 0.137]), r: 0.017, col: SKIN });
       // the nappy rides the pelvis
       const dF = (p) => add(pelvis, tipP(p)), dD = tipP;
@@ -4721,7 +4821,7 @@
     }
     const RING = 6, LIGHT = norm([-0.45, 0.55, 0.7]);
     let last = 0, t = 0, beat = 0, period = 0.5, prevBass = 0, fluxAvg = 0.02, cool = 0, lastOnset = -1e9;
-    let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9;
+    let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9, level = 0, crowd = 0, crowdBar = 0;
     const joined = new Float32Array(RING);
     viz.registerMode({
       id: 'dancingbaby', label: 'Dancing baby',
@@ -4751,9 +4851,17 @@
         beat += dt / period * speed;
         const beatIdx = Math.floor(beat);
         flash = Math.max(0, flash - dt * 3);
-        orbit += dt * 0.22 * speed; ringRot += dt * 0.35 * speed * (0.6 + energy);
-        const want = Math.round(clamp01((energy - 0.12) / 0.4) * RING);
-        for (let k = 0; k < RING; k++) joined[k] += ((k < want ? 1 : 0) - joined[k]) * Math.min(1, dt * 2.5);
+        orbit += dt * 0.22 * speed; ringRot += dt * 0.35 * speed * (0.6 + level);
+        // the backup crowd follows the loudness over the last few seconds, not
+        // the instant, and gains or loses at most one dancer a bar (with a
+        // little hysteresis), each walking in or out at full size over a beat or two
+        level += (energy - level) * Math.min(1, dt / 4);
+        if (Math.floor(beat / 4) !== crowdBar) {
+          crowdBar = Math.floor(beat / 4);
+          const want = clamp01((level - 0.12) / 0.4) * RING;
+          if (want > crowd + 0.7) crowd++; else if (want < crowd - 0.7) crowd--;
+        }
+        for (let k = 0; k < RING; k++) joined[k] = clamp01(joined[k] + (k < crowd ? 1 : -1) * dt * 0.6);
 
         // ── camera: swinging round the baby, looking a little down ──
         const cam = Math.sin(orbit) * 0.95, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
@@ -4770,7 +4878,7 @@
         bg.addColorStop(0, `hsl(${(hueBase + 250) % 360 | 0},55%,12%)`);
         bg.addColorStop(1, `hsl(${(hueBase + 190) % 360 | 0},60%,22%)`);
         vctx.fillStyle = bg; vctx.fillRect(0, 0, VW, VH);
-        const sp = proj([0, 0.5, 0]), sr = Math.min(VW, VH) * (0.45 + flash * 0.12);
+        const sp = proj([0, 0.5, 0]), sr = Math.min(VW, VH) * 0.5;
         const sg = vctx.createRadialGradient(sp[0], sp[1], 0, sp[0], sp[1], sr);
         sg.addColorStop(0, `rgba(255,240,210,${(0.18 + flash * 0.18).toFixed(3)})`); sg.addColorStop(1, 'rgba(255,240,210,0)');
         vctx.fillStyle = sg; vctx.fillRect(0, 0, VW, VH);
@@ -4806,9 +4914,9 @@
         // ── the babies: the star at the centre, backup dancers in an orbiting ring ──
         const dancers = [{ x: 0, z: 0, yaw: 0, s: 1 }];
         for (let k = 0; k < RING; k++) {
-          if (joined[k] < 0.02) continue;
-          const a = ringRot + k * Math.PI * 2 / RING;
-          dancers.push({ x: Math.sin(a) * 1.25, z: Math.cos(a) * 1.25, yaw: a, s: 0.55 * joined[k] });
+          if (joined[k] <= 0) continue;
+          const a = ringRot + k * Math.PI * 2 / RING, e = smooth(0, 1, joined[k]), r = 1.25 + (1 - e) * 0.8;
+          dancers.push({ x: Math.sin(a) * r, z: Math.cos(a) * r, yaw: a, s: 0.55, alpha: e });
         }
         const { prims: body, root } = pose(beat), prims = [];
         const dirOf = (d) => { const x = d[0] * cc + d[2] * cs, z = -d[0] * cs + d[2] * cc; return [x, d[1] * pc - z * ps, d[1] * ps + z * pc]; };
@@ -4818,7 +4926,8 @@
           // shadow on the floor first, flattened by the view
           const rw = world([root[0], 0, root[1]]), c = proj(rw), e = proj([rw[0] + 0.2 * dn.s, 0, rw[2]]);
           const rr = Math.max(1, Math.hypot(e[0] - c[0], e[1] - c[1]) * 1.1);
-          vctx.fillStyle = 'rgba(0,0,0,0.35)';
+          const al = dn.alpha === undefined ? 1 : dn.alpha;
+          vctx.fillStyle = `rgba(0,0,0,${(0.35 * al).toFixed(3)})`;
           vctx.beginPath(); vctx.ellipse(c[0], c[1], rr, rr * (0.2 + ps * 0.9), 0, 0, Math.PI * 2); vctx.fill();
           for (const pr of body) {
             const bias = (pr.bias || 0) * dn.s;
@@ -4829,17 +4938,18 @@
               const inside = dot(nc, [-m[0], -m[1], D - m[2]]) <= 0;
               if (inside && pr.wall) continue;
               const pts = cq.map(scr);
-              prims.push({ pts, pr, inside, lit: inside ? 0 : Math.max(0, dot(nc, LIGHT)), d: (pts[0][2] + pts[1][2] + pts[2][2] + pts[3][2]) / 4 - (inside ? 0 : bias) });
+              prims.push({ al, pts, pr, inside, lit: inside ? 0 : Math.max(0, dot(nc, LIGHT)), d: (pts[0][2] + pts[1][2] + pts[2][2] + pts[3][2]) / 4 - (inside ? 0 : bias) });
               continue;
             }
             const a = proj(world(pr.a)), b = pr.c ? proj(world(pr.b)) : null;
-            prims.push({ a, b, r: pr.r * dn.s, col: pr.col, eye: pr.eye, d: (b ? (a[2] + b[2]) / 2 : a[2]) - bias });
+            prims.push({ al, a, b, r: pr.r * dn.s, col: pr.col, eye: pr.eye, d: (b ? (a[2] + b[2]) / 2 : a[2]) - bias });
           }
         }
         prims.sort((p, q) => q.d - p.d);
         const hsl = (c, dl, al = 1) => `hsla(${c[0]},${c[1]}%,${Math.max(0, Math.min(100, c[2] + dl))}%,${al})`;
         vctx.lineCap = 'round'; vctx.lineJoin = 'round';
         for (const p of prims) {
+          vctx.globalAlpha = p.al;
           if (p.pts) {
             // cloth: soft cotton shading, a seam line at the hem, stitching under the waistband
             const q = p.pts, L = Math.round(58 + p.lit * 38 + (p.pr.band ? 2 : 0) - (p.pr.wall ? 16 : 0) - (p.inside ? 12 : 0));
@@ -4878,7 +4988,7 @@
             vctx.fillStyle = g; vctx.beginPath(); vctx.arc(x, y, R, 0, Math.PI * 2); vctx.fill();
           }
         }
-        vctx.lineJoin = 'miter';
+        vctx.lineJoin = 'miter'; vctx.globalAlpha = 1;
 
         // ── now and then, on a big hit: the song's hook in WordArt ──
         if (shout > 0) {

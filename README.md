@@ -327,7 +327,9 @@ over the rooftops) and Dancing baby (the 1996 Character Studio baby from
 Ally McBeal in a pinned cloth nappy, dancing the original's routine on
 the detected beat: footstep-driven cha-cha -- rock step, then the
 cha-cha-cha triple step, legs by IK -- the hand flipping over the head,
-air guitar, bent over shaking its shoulders and hip circles, on a disco
+air guitar, throwing both hands down at the floor as it bends over,
+bent over shaking its shoulders, hip circles, and jazz hands (with
+jointed, spreading, curling fingers), on a disco
 floor tiled with the video, backup babies joining in an orbiting ring as
 the music gets louder, and "OOGA CHAKA" in WordArt on a big hit), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
