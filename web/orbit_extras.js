@@ -9,7 +9,8 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby
+//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
+//              Synthwave
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -5148,6 +5149,235 @@
           vctx.restore();
         }
         vctx.lineCap = 'butt';
+      },
+    });
+  })();
+
+  // ── Synthwave (mode): an outrun sunset. A striped sun sinks behind two
+  // ranges of wireframe mountains whose peaks are the spectrum (bass on
+  // the outside, treble toward the sun, mirrored), over a neon grid that
+  // scrolls toward the camera at Speed, laid over a mirror floor that
+  // reflects the whole sky and ripples with the waveform. Each kick sends a bright rung
+  // racing down the grid and widens the gaps in the sun; the video, when
+  // there is one, shows through the sun's face. Palms sway on the edges.
+  (function () {
+    const RIDGE = 48, sunBuf = offscreen(), vidBuf = offscreen(), skyBuf = offscreen();
+    let stars = null, far = null, near = null, lastRot = 0, bassAvg = 0, kick = 0, rungs = [];
+    function palm(vctx, x, baseY, h, lean, sway, dir) {
+      const topX = x + lean * h, topY = baseY - h;
+      vctx.strokeStyle = '#07010c'; vctx.fillStyle = '#07010c'; vctx.lineCap = 'round';
+      for (let i = 0; i < 12; i++) {                        // a trunk that tapers
+        const t0 = i / 12, t1 = (i + 1) / 12, bend = (t) => lean * h * t * t;
+        vctx.lineWidth = h * (0.05 - t0 * 0.03);
+        vctx.beginPath();
+        vctx.moveTo(x + bend(t0), baseY - h * t0); vctx.lineTo(x + bend(t1), baseY - h * t1); vctx.stroke();
+      }
+      // the crown: fronds that arch up and droop, each a spine carrying two
+      // dense rows of tapered leaflets that hang toward the ground, all
+      // filled as one silhouette so the crown reads solid, not as sticks
+      const leaves = new Path2D(), spines = new Path2D();
+      const FRONDS = [-172, -148, -122, -96, -70, -44, -18, 8, 168, 194, 28];
+      for (let n = 0; n < FRONDS.length; n++) {
+        const a = (FRONDS[n] * dir + (dir < 0 ? 180 : 0)) * Math.PI / 180 + sway * (0.7 + 0.3 * Math.sin(n * 1.7));
+        const len = h * (0.36 + 0.1 * hash(n * 5.3 + dir));
+        const ux = Math.cos(a), uy = Math.sin(a), up = uy < 0 ? -uy : 0;
+        const x1 = topX + ux * len * 0.5, y1 = topY + uy * len * 0.5 - len * (0.18 + up * 0.2);
+        const x2 = topX + ux * len, y2 = topY + uy * len * 0.55 + len * (0.28 - up * 0.1);
+        spines.moveTo(topX, topY); spines.quadraticCurveTo(x1, y1, x2, y2);
+        const LEAFLETS = 24;
+        for (let k = 1; k <= LEAFLETS; k++) {
+          const t = 0.06 + 0.94 * k / LEAFLETS, u = 1 - t;
+          const px = u * u * topX + 2 * u * t * x1 + t * t * x2, py = u * u * topY + 2 * u * t * y1 + t * t * y2;
+          let tx = 2 * u * (x1 - topX) + 2 * t * (x2 - x1), ty = 2 * u * (y1 - topY) + 2 * t * (y2 - y1);
+          const tl = Math.hypot(tx, ty) || 1; tx /= tl; ty /= tl;
+          const L = len * (0.07 + 0.2 * Math.pow(Math.sin(Math.PI * Math.min(1, t * 1.15)), 0.8));
+          const w = len * 0.02 * (1 - t * 0.5);
+          for (const side of [-1, 1]) {
+            // out from the spine, swept forward along it, pulled down by gravity
+            let dx = -ty * side + tx * 0.45, dy = tx * side + ty * 0.45 + 0.9;
+            const dl = Math.hypot(dx, dy) || 1; dx /= dl; dy /= dl;
+            const bx = px - tx * w, by = py - ty * w;
+            leaves.moveTo(bx, by);
+            leaves.quadraticCurveTo(px + dx * L * 0.5 + tx * w * 2, py + dy * L * 0.5 + ty * w * 2 - L * 0.08, px + dx * L, py + dy * L);
+            leaves.quadraticCurveTo(px + dx * L * 0.45, py + dy * L * 0.45 + L * 0.06, px + tx * w, py + ty * w);
+            leaves.closePath();
+          }
+        }
+      }
+      vctx.fill(leaves);
+      vctx.lineWidth = Math.max(1, h * 0.008); vctx.stroke(spines);
+      for (let c = 0; c < 4; c++) {                          // coconuts tucked under the crown
+        vctx.beginPath(); vctx.arc(topX + (c - 1.5) * h * 0.022, topY + h * (0.02 + (c % 2) * 0.015), h * 0.018, 0, Math.PI * 2); vctx.fill();
+      }
+    }
+    viz.registerMode({
+      id: 'synthwave', label: 'Synthwave',
+      init() { far = near = null; rungs = []; kick = 0; bassAvg = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, vizUserScale, videoFrame } = ctx;
+        if (!stars) stars = Array.from({ length: 120 }, (_, i) => ({ x: hash(i * 4.3), y: hash(i * 9.1), s: 0.6 + hash(i * 2.2) * 1.3, p: hash(i * 6.7) * 6.28 }));
+        if (!far) { far = new Float32Array(RIDGE); near = new Float32Array(RIDGE); lastRot = vizRot; }
+        const dRot = Math.max(0, Math.min(0.5, vizRot - lastRot)); lastRot = vizRot;
+        const bass = bassOf(freqData), energy = energyOf(freqData);
+        // a kick is the bass jumping clear of its recent level -- an absolute
+        // margin, since a ratio never fires on bass-heavy mixes that sit high
+        bassAvg += (bass - bassAvg) * 0.12;
+        if (bass - bassAvg > 0.05 && kick < 0.5) { kick = 1; rungs.push(40); }
+        kick *= 0.9;
+        const S = Math.min(VW, VH), zoom = vizUserScale;
+        const yH = cy + VH * 0.04, H1 = hueBase + 300, H2 = hueBase + 190;
+
+        // ── sky, sun and mountains, drawn into a buffer so the floor can mirror them ──
+        const { c: skc, ctx: g } = skyBuf(VW, VH);
+        g.clearRect(0, 0, VW, VH);
+        const sky = g.createLinearGradient(0, 0, 0, yH);
+        sky.addColorStop(0, '#05010f');
+        sky.addColorStop(0.6, `hsl(${(H1 - 40) % 360 | 0},60%,10%)`);
+        sky.addColorStop(1, `hsl(${H1 % 360 | 0},80%,${(24 + kick * 10) | 0}%)`);
+        g.fillStyle = sky; g.fillRect(0, 0, VW, VH);
+        for (const st of stars) {
+          const sy = st.y * yH * 0.8; if (sy > yH) continue;
+          const tw = 0.5 + 0.5 * Math.sin(vizRot * 4 + st.p);
+          g.fillStyle = `rgba(255,230,255,${(0.1 + tw * 0.6 * (1 - sy / yH)).toFixed(2)})`;
+          g.fillRect(st.x * VW, sy, st.s, st.s);
+        }
+
+        // ── the sun: gradient disc, video through its face, bands cut out of its lower half ──
+        const R = S * 0.26 * zoom, sunY = yH - R * 0.35;
+        const sz = Math.ceil(R * 2) + 2, { c: sc, ctx: sx } = sunBuf(sz, sz);
+        sx.globalCompositeOperation = 'source-over'; sx.clearRect(0, 0, sz, sz);
+        const sg = sx.createLinearGradient(0, 0, 0, sz);
+        sg.addColorStop(0, `hsl(${(hueBase + 50) % 360 | 0},100%,65%)`);
+        sg.addColorStop(0.55, `hsl(${(hueBase + 15) % 360 | 0},100%,58%)`);
+        sg.addColorStop(1, `hsl(${(hueBase + 320) % 360 | 0},100%,55%)`);
+        sx.fillStyle = sg; sx.beginPath(); sx.arc(sz / 2, sz / 2, R, 0, Math.PI * 2); sx.fill();
+        if (videoFrame) {
+          const { c: vc, ctx: vx } = vidBuf(videoFrame.w, videoFrame.h);
+          vx.putImageData(videoFrame.imageData, 0, 0);
+          const a = videoFrame.w / videoFrame.h, dh = sz, dw = dh * a;
+          sx.globalAlpha = 0.35; sx.globalCompositeOperation = 'overlay';
+          sx.drawImage(vc, (sz - dw) / 2, 0, dw, dh);
+          sx.globalAlpha = 1; sx.globalCompositeOperation = 'destination-in';
+          sx.beginPath(); sx.arc(sz / 2, sz / 2, R, 0, Math.PI * 2); sx.fill();
+        }
+        sx.globalCompositeOperation = 'destination-out';
+        const drift = (vizRot * 0.6) % 1;
+        for (let b = 0; b < 8; b++) {
+          const t = (b + drift) / 8, y = sz / 2 + t * R;
+          sx.fillRect(0, y, sz, R * (0.012 + t * 0.07) * (1 + kick * 0.8));
+        }
+        sx.globalCompositeOperation = 'source-over';
+        g.save();
+        g.shadowColor = `hsl(${(hueBase + 330) % 360 | 0},100%,60%)`; g.shadowBlur = R * (0.35 + energy * 0.5);
+        g.drawImage(sc, cx - sz / 2, sunY - sz / 2);
+        g.restore();
+
+        // ── mountains: the spectrum, mirrored about the sun ──
+        const maxBin = Math.floor(freqData.length * 0.7);
+        for (let i = 0; i < RIDGE; i++) {
+          const lo = Math.floor(Math.pow(i / RIDGE, 1.7) * maxBin), hi = Math.max(lo + 1, Math.floor(Math.pow((i + 1) / RIDGE, 1.7) * maxBin));
+          let v = 0; for (let k = lo; k < hi; k++) v += freqData[k]; v /= (hi - lo) * 255;
+          far[i] = Math.max(far[i] * 0.97, v);
+          near[i] += (v - near[i]) * 0.25;
+        }
+        const range = (lvl, amp, rough, fill, stroke, lw) => {
+          const pts = [];
+          for (let j = 0; j <= RIDGE * 2; j++) {
+            const i = Math.abs(RIDGE - j), idx = RIDGE - 1 - Math.min(RIDGE - 1, i);   // bass at the edges
+            const edge = Math.min(1, i / RIDGE * 1.4);             // valley where the sun sets
+            const h = (lvl[idx] * 0.8 + 0.12 + rough * hash(j * 3.7 + amp)) * amp * edge * zoom;
+            pts.push([cx + (j - RIDGE) / RIDGE * VW * 0.62 * zoom, yH - h]);
+          }
+          g.beginPath(); g.moveTo(pts[0][0], yH);
+          for (const [x, y] of pts) g.lineTo(x, y);
+          g.lineTo(pts[pts.length - 1][0], yH); g.closePath();
+          g.fillStyle = fill; g.fill();
+          g.strokeStyle = stroke; g.lineWidth = lw; g.lineJoin = 'round'; g.stroke();
+          g.beginPath();                                          // wireframe ribs down to the base
+          for (let j = 0; j < pts.length; j += 2) { g.moveTo(pts[j][0], pts[j][1]); g.lineTo(cx + (pts[j][0] - cx) * 0.85, yH); }
+          g.globalAlpha = 0.35; g.stroke(); g.globalAlpha = 1;
+        };
+        const g1 = `hsl(${H2 % 360 | 0},100%,60%)`, g2 = `hsl(${H1 % 360 | 0},100%,62%)`;
+        range(far, S * 0.3, 0.25, '#0b0320', g1, Math.max(1, S / 700));
+        range(near, S * 0.17, 0.35, '#10021a', g2, Math.max(1, S / 500));
+
+        vctx.drawImage(skc, 0, 0);
+
+        // ── the grid floor ──
+        const fl = vctx.createLinearGradient(0, yH, 0, VH);
+        fl.addColorStop(0, `hsl(${H1 % 360 | 0},70%,14%)`); fl.addColorStop(1, '#020006');
+        vctx.fillStyle = fl; vctx.fillRect(0, yH, VW, VH - yH);
+        const f = VH * 0.9, camH = 1, spacing = 1 / zoom, zFar = 40;
+        const zNear = camH * f / Math.max(1, VH - yH);
+        const scroll = (vizRot * 5) % spacing;
+        // the low camera squashes the floor, so the lengthwise lines run closer than the rungs
+        const xs = spacing * 0.35, zb = zNear * 0.5, spanX = (VW / 2 + Math.abs(cx - VW / 2)) * zb / f + xs;
+        // the floor is a mirror: the sky above the horizon, flipped under it
+        // strip by strip, each strip pushed sideways by the waveform (like
+        // Mirror's trace through its middle) so the reflection ripples with
+        // the music -- harder toward the camera, calm at the horizon
+        const Hf = VH - yH, STRIP = Math.max(2, Math.ceil(Hf / 140)), WL = ctx.waveData.length;
+        for (let y0 = 0; y0 < Hf; y0 += STRIP) {
+          const sy = yH - y0 - STRIP; if (sy < 0) break;
+          const d = y0 / Hf, w = WL ? ctx.waveData[Math.min(WL - 1, (d * WL) | 0)] / 128 - 1 : 0;
+          const dx = (w * S * 0.08 + Math.sin(y0 / (S * 0.012) - vizRot * 9) * S * 0.004 * (1 + energy * 3)) * d;
+          vctx.globalAlpha = 0.85 * (1 - d * 0.55);
+          vctx.drawImage(skc, 0, sy, VW, STRIP, dx, yH + y0, VW, STRIP + 1);
+        }
+        vctx.globalAlpha = 1;
+        const gridCol = (a) => `hsla(${H1 % 360 | 0},100%,${(55 + energy * 20 + kick * 15) | 0}%,${a.toFixed(3)})`;
+        vctx.lineWidth = Math.max(1, S / 600);
+        for (let z = zNear - scroll + spacing; z < zFar; z += spacing) {
+          const y = yH + camH * f / z, a = clamp01(1 - z / zFar) * (0.3 + energy * 0.25 + kick * 0.35);
+          vctx.strokeStyle = gridCol(a); vctx.beginPath(); vctx.moveTo(0, y); vctx.lineTo(VW, y); vctx.stroke();
+        }
+        vctx.strokeStyle = gridCol(0.3 + kick * 0.4); vctx.beginPath();
+        for (let X = -Math.ceil(spanX / xs) * xs; X <= spanX; X += xs) {
+          vctx.moveTo(cx + X * f / zb, yH + camH * f / zb); vctx.lineTo(cx + X * f / zFar, yH + camH * f / zFar);
+        }
+        vctx.stroke();
+        // Mirror's waveform trace, laid down the middle of the road: evenly
+        // spaced in depth (so it bunches up toward the horizon like the rungs
+        // do), each sample swinging it left or right of the centre line
+        if (WL) {
+          const zTop = Math.min(zFar, 24), zBot = zNear * 0.9, amp = xs * 7 * (1 + kick * 0.5);
+          vctx.save();
+          vctx.beginPath();
+          for (let i = 0; i < WL; i++) {
+            const t = i / (WL - 1), z = zTop + (zBot - zTop) * t;
+            const X = (ctx.waveData[i] / 128 - 1) * amp;
+            const x = cx + X * f / z, y = yH + camH * f / z;
+            i === 0 ? vctx.moveTo(x, y) : vctx.lineTo(x, y);
+          }
+          vctx.lineJoin = 'round';
+          vctx.shadowColor = g1; vctx.shadowBlur = S * 0.015;
+          vctx.strokeStyle = `hsla(${H2 % 360 | 0},100%,70%,0.9)`; vctx.lineWidth = Math.max(1.5, S / 300); vctx.stroke();
+          vctx.shadowBlur = 0;
+          vctx.strokeStyle = `hsla(${H2 % 360 | 0},60%,92%,0.9)`; vctx.lineWidth = Math.max(1, S / 900); vctx.stroke();
+          vctx.restore();
+        }
+        // kicks: bright rungs racing toward the camera
+        vctx.save(); vctx.shadowColor = g2; vctx.shadowBlur = S * 0.02; vctx.lineWidth = Math.max(2, S / 250);
+        rungs = rungs.filter(z => z > zNear * 0.8);
+        for (let r = 0; r < rungs.length; r++) {
+          rungs[r] -= dRot * 110;
+          const z = rungs[r], y = yH + camH * f / Math.max(zNear * 0.8, z);
+          vctx.strokeStyle = `hsla(${(H1 + 20) % 360 | 0},100%,80%,${clamp01(1.2 - z / zFar).toFixed(3)})`;
+          vctx.beginPath(); vctx.moveTo(0, y); vctx.lineTo(VW, y); vctx.stroke();
+        }
+        vctx.restore();
+        // haze over the horizon line
+        const hz = vctx.createLinearGradient(0, yH - S * 0.03, 0, yH + S * 0.05);
+        hz.addColorStop(0, `hsla(${H1 % 360 | 0},100%,70%,0)`);
+        hz.addColorStop(0.4, `hsla(${H1 % 360 | 0},100%,75%,${(0.35 + kick * 0.3).toFixed(3)})`);
+        hz.addColorStop(1, `hsla(${H1 % 360 | 0},100%,70%,0)`);
+        vctx.fillStyle = hz; vctx.fillRect(0, yH - S * 0.03, VW, S * 0.08);
+
+        // ── palms on the edges ──
+        const sway = Math.sin(vizRot * 2) * 0.08 + bass * 0.18;
+        palm(vctx, VW * 0.07, VH * 1.02, VH * 0.62 * zoom, 0.18, sway, 1);
+        palm(vctx, VW * 0.93, VH * 1.02, VH * 0.5 * zoom, -0.22, sway * 0.8, -1);
+        vctx.lineCap = 'butt'; vctx.lineJoin = 'miter';
       },
     });
   })();
