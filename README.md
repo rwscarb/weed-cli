@@ -317,7 +317,9 @@ taking the draw loop down. `web/orbit_extras.js` (loaded by default) is
 built entirely on that API and adds Halftone, Lava, Terrain, Rain,
 Lissajous, Vinyl 33, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
 glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe, Starfield,
-Spectrum 3D, Brain, Arcade, Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery,
+Spectrum 3D, Brain, Arcade, Aurora, Flow, Life, Tree, Warp, Cymatics,
+Orrery (planets round a black hole, with Milliways, the Restaurant at the
+End of the Universe, done Space Quest style on a steeply tilted outer orbit),
 Doom95 (a 320-wide raycaster that fires its shotgun on the kick, with
 four kinds of monster, secret doors and teleporters), Hackers (the film's
 flight through the Gibson's filesystem: glass towers crawling with hex,
