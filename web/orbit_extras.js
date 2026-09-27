@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95
+//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -3339,7 +3339,7 @@
   // Speed and the music's energy set the walking pace. Pair it with the
   // Melt transition.
   (function () {
-    const RW = 320, BAR = 32, TEX = 64, N = 21;
+    const RW = 320, BAR = 32, TEX = 64, N = 21, ZOOM_HOME = 0.39;
     const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1];
     const pack = (r, g, b) => (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
     const byte = (v) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
@@ -3847,7 +3847,10 @@
           }
         }
 
-        const planeLen = (0.66 / Math.max(0.35, Math.min(3, vizUserScale))) * (1 + st.tele * st.tele * 1.2);
+        // Zoom's 1x is a wide 0.39x of Doom's own field of view -- the
+        // halls read better with more of the walls in frame -- and the
+        // slider zooms in and out from there
+        const planeLen = (0.66 / Math.max(0.2, Math.min(3, vizUserScale * ZOOM_HOME))) * (1 + st.tele * st.tele * 1.2);
         const dirX = Math.cos(cam.a), dirY = Math.sin(cam.a), plX = -dirY * planeLen, plY = dirX * planeLen;
         const F = RW / 2 / planeLen;
 
@@ -4101,6 +4104,374 @@
         vctx.save(); vctx.imageSmoothingEnabled = false;
         vctx.drawImage(can, 0, 0, VW, VH);
         vctx.restore();
+      },
+    });
+  })();
+
+  // ── Hackers (mode): the Gibson's filesystem, the way the 1995 film
+  // flew through it -- a city of dark glass towers, every face crawling
+  // with glowing hex, file names and permission bits, the camera
+  // skimming down the canyons between them, climbing over the rooftops
+  // to bank across into another street, then diving back down. Each
+  // tower listens to one band of the spectrum: its edges and text
+  // brighten with it and a tide of light rises up its face; the bass
+  // punches the throttle. The playing video shows through as a mask on
+  // the text. The camera only ever looks straight down the street, so
+  // every front face is a flat on-screen rectangle (plain fillText, no
+  // texture mapping); turns are faked with a sideways glide, a bank
+  // (the whole frame rotated) and a pitch (the horizon shifted), which
+  // on screen reads exactly like the real thing.
+  (function () {
+    const PX = 2.6, PZ = 1.6;          // lot pitch across / along the streets
+    const FAR = 30, NEAR = 0.12;
+    const CYCLE = 44;                  // world units of travel per low-climb-cross-dive cycle
+    const ROW = 0.1, GLYPH = 0.074;    // text row height / font size, world units
+    const PCB_LANE = 0.11, PCB_W = 0.011;   // floor trace pitch / width, world units
+    const PCB_BANDS = [0, 0.6, 0.8, 1, 1.3, 1.7, 2.2, 3, 4, 5.5, 8, 12, 18, FAR];   // depth bands the floor is stroked in
+    const PALETTE = [190, 195, 205, 215, 185, 300, 320, 28, 130];   // mostly cyan/blue, a few neon accents
+    const PATHS = ['/', '/usr', '/usr/garbage', '/etc/passwd', '/sys/kernel', '/root', '/var/spool', '/dev/null',
+      '/bin/gibson', '/home/plague', '/tmp/.da_vinci', '/proc/ellingson', '/lib/worm', '/opt/crash_override'];
+    const WORDS = ['GARBAGE', 'rwxr-x---', 'ROOT', 'KERNEL', 'DA VINCI', 'WORM', 'CORE', '.plan', 'GIBSON', 'ELLINGSON', 'ACCESS', 'SUPERUSER'];
+    const HEX = '0123456789ABCDEF';
+    // a fixed pool of lines every face draws its text from, so nothing
+    // gets built per frame
+    const POOL = [];
+    for (let i = 0; i < 256; i++) {
+      let s = '';
+      while (s.length < 44) {
+        const r = hash(i * 13.7 + s.length * 1.3);
+        if (r < 0.62) { for (let k = 0; k < 4; k++) s += HEX[(hash(i * 7.9 + s.length * 3.1 + k) * 16) | 0]; s += ' '; }
+        else if (r < 0.8) s += (hash(i + s.length) < 0.5 ? '0101 1101 ' : '1110 0010 ');
+        else s += WORDS[(hash(i * 3.3 + s.length) * WORDS.length) | 0] + ' ';
+      }
+      POOL.push(s);
+    }
+    // The text atlas: every pool line pre-rendered once per palette
+    // colour into an offscreen canvas, one line per row at the same
+    // row pitch the faces use. fillText is by far the most expensive
+    // thing this mode does (each distinct size a face lands on is a
+    // fresh glyph rasterisation), so every face whose text is at most a
+    // little bigger than the atlas's own is drawn as a scaled copy of a
+    // strip of it; only the few near ones still get real fillText.
+    const ATLAS_ROWS = 128, ATLAS_CHARS = 32, ATLAS_FS = 14, ATLAS_MAX = 18;
+    const HOT = POOL.map((_, i) => hash(i * 1.9 + 0.4) > 0.9);   // the odd row lit white-hot
+    const atlases = new Map();
+    function atlasFor(hue) {
+      let at = atlases.get(hue);
+      if (at) return at;
+      const c = document.createElement('canvas'), g = c.getContext('2d');
+      const font = `${ATLAS_FS}px "Courier New", monospace`;
+      g.font = font;
+      const cw = g.measureText('0').width, rowH = ATLAS_FS * ROW / GLYPH;
+      c.width = Math.ceil(cw * ATLAS_CHARS) + 2; c.height = Math.ceil(rowH * ATLAS_ROWS);
+      g.font = font; g.textBaseline = 'top';
+      for (let i = 0; i < ATLAS_ROWS; i++) {
+        g.fillStyle = HOT[i] ? 'rgb(235,250,255)' : `hsl(${hue},100%,72%)`;
+        g.fillText(POOL[i].slice(0, ATLAS_CHARS), 0, i * rowH + rowH * 0.15);
+      }
+      at = { c, cw, rowH };
+      atlases.set(hue, at);
+      return at;
+    }
+    const smooth = (a, b, v) => { const t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); };
+    const lane = (k) => Math.round((hash(k * 5.17 + 0.3) - 0.5) * 6);     // which street each cycle flies down
+    // the camera's place for a given distance travelled: fly low down
+    // one street, climb above every roof, glide across to the next
+    // street, dive back in
+    function camAt(z) {
+      const c = Math.floor(z / CYCLE), u = z / CYCLE - c;
+      const up = smooth(0.3, 0.45, u) * (1 - smooth(0.72, 0.88, u));
+      const across = smooth(0.46, 0.7, u);
+      return {
+        x: (lane(c) + (lane(c + 1) - lane(c)) * across) * PX + PX / 2,
+        y: 0.45 + up * 5.4,
+        up, c: across > 0.5 ? c + 1 : c,
+      };
+    }
+    function towerAt(i, j) {
+      const s = i * 91.7 + j * 17.3;
+      if (hash(s) < 0.12) return null;                                   // an empty lot
+      const hw = 0.5 + hash(s + 1) * 0.15, d = 0.95 + hash(s + 2) * 0.25, t = hash(s + 3);
+      return {
+        x0: i * PX - hw, x1: i * PX + hw, z0: j * PZ, z1: j * PZ + d,
+        h: 0.5 + t * t * 4.2, hue: PALETTE[(hash(s + 4) * PALETTE.length) | 0],
+        band: hash(s + 5), line: (hash(s + 6) * 256) | 0, scroll: 0.6 + hash(s + 7) * 2.2,
+      };
+    }
+
+    let last = 0, dist = 0, kick = 0, t = 0, pcbT = 0, shout = 0, lastShout = -1e9, roll = 0, prevX = null;
+    viz.registerMode({
+      id: 'hackers', label: 'Hackers',
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        kick = Math.max(kick * 0.9, bass > 0.5 ? bass : 0);
+        dist += dt * (1.6 * speed + kick * 3 + energy * 0.8); t += dt;
+        pcbT += dt * speed * (0.8 + energy * 0.8);   // the current creeps, a little faster when it's loud
+        const cam = camAt(dist), camZ = dist;
+        // bank into the glide, from how fast the camera is moving sideways
+        if (prevX === null) prevX = cam.x;
+        const vx = (cam.x - prevX) / Math.max(1e-3, dt); prevX = cam.x;
+        roll += (Math.max(-0.4, Math.min(0.4, -vx * 0.06)) - roll) * Math.min(1, dt * 3);
+        const drift = 18 * Math.sin(hueBase * Math.PI / 180);
+        const f = Math.min(VW, VH) * 0.85 * vizUserScale;
+        const hy = cy - cam.up * VH * 0.22 + VH * 0.04;               // pitching down over the roofs lifts the horizon
+
+        // sky: near black, a cold glow at the horizon
+        vctx.setTransform(1, 0, 0, 1, 0, 0);
+        vctx.fillStyle = '#01030a'; vctx.fillRect(0, 0, VW, VH);
+        vctx.save();
+        vctx.translate(cx, cy); vctx.rotate(roll); vctx.translate(-cx, -cy);
+        const R = Math.hypot(VW, VH);                                  // oversize, so a banked frame has no bare corners
+        const g = vctx.createLinearGradient(0, hy - VH * 0.3, 0, hy + VH * 0.05);
+        g.addColorStop(0, 'rgba(0,40,80,0)'); g.addColorStop(1, `hsla(${(200 + drift) | 0},90%,22%,${(0.5 + energy * 0.4).toFixed(2)})`);
+        vctx.fillStyle = g; vctx.fillRect(cx - R, hy - VH * 0.3, R * 2, VH * 0.35);
+        const gg = vctx.createLinearGradient(0, hy + VH * 0.05, 0, hy + VH * 0.2);
+        gg.addColorStop(0, `hsla(${(200 + drift) | 0},90%,22%,${(0.5 + energy * 0.4).toFixed(2)})`); gg.addColorStop(1, '#010806');
+        vctx.fillStyle = gg; vctx.fillRect(cx - R, hy + VH * 0.05, R * 2, VH * 0.15);
+        vctx.fillStyle = '#010806'; vctx.fillRect(cx - R, hy + VH * 0.2, R * 2, R);
+
+        const P = (x, y, z) => { const dz = z - camZ; return [cx + (x - cam.x) * f / dz, hy - (y - cam.y) * f / dz]; };
+        const fogOf = (dz) => Math.pow(clamp01(1 - dz / FAR), 1.3);
+
+        // the floor: a circuit board. Every street carries a bus of
+        // parallel traces; now and then an outer one peels off at 45° to
+        // a pad at a tower's foot (the towers are the chips), and short
+        // cross traces with a via at each end fill the gaps between the
+        // rows. Pulses of current creep along all of them. Everything is
+        // bucketed by depth band (for width and fog) and by brightness,
+        // so the whole board costs a few dozen strokes, not thousands.
+        const ci = Math.round((cam.x - PX / 2) / PX), j0 = Math.floor(camZ / PZ), jN = j0 + Math.ceil(FAR / PZ);
+        const zMin = camZ + NEAR * 3, bucket = PCB_BANDS.map(() => [[], [], [], [], []]), pads = PCB_BANDS.map(() => [[], []]);
+        const addSeg = (x0, z0, x1, z1, lvl) => {
+          for (let b = 0; b < PCB_BANDS.length - 1; b++) {
+            const lo = camZ + PCB_BANDS[b], hi = camZ + PCB_BANDS[b + 1];
+            if (z0 === z1) { if (z0 >= lo && z0 < hi && z0 >= zMin) bucket[b][lvl].push(x0, z0, x1, z1); continue; }
+            const ta = (Math.max(lo, zMin) - z0) / (z1 - z0), tb = (hi - z0) / (z1 - z0);
+            const t0 = Math.max(0, Math.min(ta, tb)), t1 = Math.min(1, Math.max(ta, tb));
+            if (t1 > t0) bucket[b][lvl].push(x0 + (x1 - x0) * t0, z0 + (z1 - z0) * t0, x0 + (x1 - x0) * t1, z0 + (z1 - z0) * t1);
+          }
+        };
+        const addPad = (x, z, lit) => {
+          const dz = z - camZ; if (dz < NEAR * 3 || dz > 16) return;
+          for (let b = 0; b < PCB_BANDS.length - 1; b++) if (dz < PCB_BANDS[b + 1]) { pads[b][lit ? 1 : 0].push(x, z); return; }
+        };
+        // a polyline of [x, z] points, and a pulse whose head is `head`
+        // along it: the tail is three slices fading out behind the head,
+        // plus a wide halo over all of it
+        const addPoly = (pts) => { for (let k = 1; k < pts.length; k++) addSeg(pts[k - 1][0], pts[k - 1][1], pts[k][0], pts[k][1], 0); };
+        const addPulse = (pts, head, tail) => {
+          let acc = 0;
+          for (let k = 1; k < pts.length; k++) {
+            const [ax, az] = pts[k - 1], [bx, bz] = pts[k], len = Math.hypot(bx - ax, bz - az);
+            for (let q = 0; q < 3; q++) {
+              const s0 = Math.max(acc, head - tail + q * tail / 3), s1 = Math.min(acc + len, head - tail + (q + 1) * tail / 3);
+              if (s1 <= s0) continue;
+              const u0 = (s0 - acc) / len, u1 = (s1 - acc) / len;
+              addSeg(ax + (bx - ax) * u0, az + (bz - az) * u0, ax + (bx - ax) * u1, az + (bz - az) * u1, q + 1);
+              addSeg(ax + (bx - ax) * u0, az + (bz - az) * u0, ax + (bx - ax) * u1, az + (bz - az) * u1, 4);
+            }
+            acc += len;
+          }
+        };
+        const frac = (v) => v - Math.floor(v);
+        for (let i = ci - 6; i <= ci + 6; i++) {
+          const xs = i * PX + PX / 2, nL = 4 + ((hash(i * 2.9) * 3) | 0), xo = (nL - 1) / 2 * PCB_LANE;
+          // the bus: long straight lanes, pulses running either way
+          for (let k = 0; k < nL; k++) {
+            const x = xs + (k - (nL - 1) / 2) * PCB_LANE, hs = hash(i * 7.3 + k * 1.9);
+            addSeg(x, zMin, x, camZ + FAR, 0);
+            const dir = hs < 0.5 ? 1 : -1, sp = 3.5 + hash(hs * 91) * 4, ph = frac(dir * pcbT * (0.5 + hs * 0.5) / sp + hs) * sp;
+            for (let n = Math.floor((camZ - ph) / sp); n * sp + ph < camZ + 22; n++) {
+              const zh = n * sp + ph; addPulse([[x, zh - dir * 0.7], [x, zh]], 0.7, 0.7);
+            }
+          }
+          for (let j = j0 - 1; j <= jN; j++) {
+            // stubs out to the chips on either side
+            for (const s of [-1, 1]) {
+              const hs = hash(i * 13.1 + j * 3.7 + s * 0.77);
+              if (hs > 0.55) continue;
+              const x0 = xs + s * xo, za = j * PZ + 0.1 + hash(hs * 51) * PZ * 0.5, x1 = xs + s * (xo + 0.28);
+              const pts = [[x0, za], [x1, za + 0.28], [x1, za + 0.28 + 0.12 + hash(hs * 7) * 0.25]];
+              addPoly(pts);
+              const L = 0.28 * Math.SQRT2 + (pts[2][1] - pts[1][1]), head = frac(pcbT * 0.18 + hs * 5) * (L + 1.2);
+              if (head < L + 0.45) addPulse(pts, head, 0.45);
+              addPad(pts[2][0], pts[2][1], head > L - 0.05 && head < L + 0.45);
+            }
+            // a cross trace through the gap between this row and the next
+            const hc = hash(i * 5.3 + j * 11.9);
+            if (hc < 0.45) {
+              const zc = (j + 1) * PZ - 0.08 - hc * 0.3, xa = xs + xo + 0.2, xb = xs + PX - xo - 0.2, L = xb - xa;
+              const pts = hc < 0.22 ? [[xa, zc], [xb, zc]] : [[xb, zc], [xa, zc]];
+              addPoly(pts); addPad(xa, zc, false); addPad(xb, zc, false);
+              const head = frac(pcbT * 0.12 + hc * 9) * (L + 1.5);
+              if (head < L + 0.6) addPulse(pts, head, 0.6);
+            }
+          }
+        }
+        const glow = 0.55 + energy * 0.45;
+        vctx.lineCap = 'butt';
+        for (let b = 0; b < PCB_BANDS.length - 1; b++) {
+          const mid = (PCB_BANDS[b] + PCB_BANDS[b + 1]) / 2, fog = fogOf(mid), w = Math.max(0.7, Math.min(VH * 0.006, PCB_W * f / mid));
+          if (fog <= 0.01) continue;
+          const stroke = (lvl, style, lw) => {
+            const segs = bucket[b][lvl]; if (!segs.length) return;
+            vctx.beginPath();
+            for (let k = 0; k < segs.length; k += 4) {
+              const [ax, ay] = P(segs[k], 0, segs[k + 1]), [bx, by] = P(segs[k + 2], 0, segs[k + 3]);
+              vctx.moveTo(ax, ay); vctx.lineTo(bx, by);
+            }
+            vctx.strokeStyle = style; vctx.lineWidth = lw; vctx.stroke();
+          };
+          stroke(0, `hsla(${(168 + drift) | 0},55%,${22 + energy * 8 | 0}%,${(fog * 0.75).toFixed(3)})`, w);
+          // pads and vias: a copper ring, foreshortened onto the floor
+          const ring = (list, style, fill) => {
+            if (!list.length) return;
+            vctx.beginPath();
+            for (let k = 0; k < list.length; k += 2) {
+              const dz = list[k + 1] - camZ, [px, py] = P(list[k], 0, list[k + 1]);
+              const rx = 0.035 * f / dz, ry = rx * Math.min(1, Math.max(0.08, cam.y / dz));
+              if (rx < 0.8) continue;
+              vctx.moveTo(px + rx, py); vctx.ellipse(px, py, rx, ry, 0, 0, Math.PI * 2);
+            }
+            if (fill) { vctx.fillStyle = style; vctx.fill(); } else { vctx.strokeStyle = style; vctx.lineWidth = Math.max(0.7, w * 0.8); vctx.stroke(); }
+          };
+          vctx.fillStyle = '#010806';
+          ring(pads[b][0], `hsla(${(168 + drift) | 0},55%,26%,${(fog * 0.8).toFixed(3)})`, false);
+          ring(pads[b][1], `hsla(${(168 + drift) | 0},55%,26%,${(fog * 0.8).toFixed(3)})`, false);
+          vctx.globalCompositeOperation = 'lighter';
+          const hot = (a) => `hsla(${(185 + drift) | 0},100%,${60 + a * 30 | 0}%,${(fog * glow * a).toFixed(3)})`;
+          stroke(4, hot(0.14), w * 3.5);
+          stroke(1, hot(0.3), w * 1.4); stroke(2, hot(0.6), w * 1.6); stroke(3, hot(1), w * 1.8);
+          ring(pads[b][1], hot(0.9), true);
+          vctx.globalCompositeOperation = 'source-over';
+        }
+
+        // the towers in view, far to near
+        const towers = [];
+        for (let j = j0 - 1; j <= jN; j++) for (let i = ci - 5; i <= ci + 6; i++) {
+          const tw = towerAt(i, j); if (!tw || tw.z1 - camZ < NEAR) continue;
+          const mx = Math.max(0, Math.max(tw.x0 - cam.x, cam.x - tw.x1));
+          tw.key = Math.hypot(mx, Math.max(0, tw.z0 - camZ)); towers.push(tw);
+        }
+        towers.sort((a, b) => b.key - a.key);
+        vctx.textBaseline = 'top';
+        const quad = (pts, fill, stroke, lw) => {
+          vctx.beginPath(); vctx.moveTo(pts[0][0], pts[0][1]); for (let k = 1; k < pts.length; k++) vctx.lineTo(pts[k][0], pts[k][1]); vctx.closePath();
+          vctx.fillStyle = fill; vctx.fill(); if (stroke) { vctx.strokeStyle = stroke; vctx.lineWidth = lw; vctx.stroke(); }
+        };
+        for (const tw of towers) {
+          const zA = Math.max(tw.z0, camZ + NEAR), dzA = zA - camZ, fog = fogOf(Math.max(dzA, tw.z0 - camZ));
+          if (fog <= 0.01) continue;
+          const v = freqData[Math.floor(tw.band * maxBin)] / 255, hue = (tw.hue + drift + 360) % 360;
+          const edge = `hsla(${hue | 0},100%,${(50 + v * 35) | 0}%,${(fog * (0.55 + v * 0.45)).toFixed(3)})`;
+          const body = `hsla(${hue | 0},70%,${(4 + v * 6) | 0}%,${(0.35 + fog * 0.55).toFixed(3)})`;
+          const lw = Math.max(1, f / Math.max(dzA, 0.5) * 0.012);
+          // side faces: whichever one faces the street the camera's in,
+          // with dashed data lines running along them
+          for (const x of [tw.x0, tw.x1]) {
+            if ((x === tw.x0 && cam.x >= tw.x0) || (x === tw.x1 && cam.x <= tw.x1)) continue;
+            quad([P(x, 0, zA), P(x, 0, tw.z1), P(x, tw.h, tw.z1), P(x, tw.h, zA)], body, edge, lw);
+            if (dzA < 14) {
+              vctx.strokeStyle = `hsla(${hue | 0},100%,${(55 + v * 30) | 0}%,${(fog * (0.35 + v * 0.5)).toFixed(3)})`;
+              vctx.lineWidth = Math.max(1, lw * 0.8);
+              vctx.beginPath();
+              const rows = Math.floor(tw.h / (ROW * 1.5)), sc = t * tw.scroll * 0.4;
+              for (let r = 1; r < rows; r++) {
+                const y = r * ROW * 1.5;
+                for (let s = 0; s < 4; s++) {
+                  if (hash(tw.line + r * 3.7 + s + Math.floor(sc + r * 0.3)) < 0.45) continue;
+                  const za = tw.z0 + (tw.z1 - tw.z0) * (s + 0.1) / 4, zb = tw.z0 + (tw.z1 - tw.z0) * (s + 0.8) / 4;
+                  if (zb <= camZ + NEAR) continue;
+                  const [ax, ay] = P(x, y, Math.max(za, camZ + NEAR)), [bx, by] = P(x, y, zb);
+                  vctx.moveTo(ax, ay); vctx.lineTo(bx, by);
+                }
+              }
+              vctx.stroke();
+            }
+          }
+          // the roof, when the camera's above it
+          if (cam.y > tw.h) quad([P(tw.x0, tw.h, zA), P(tw.x1, tw.h, zA), P(tw.x1, tw.h, tw.z1), P(tw.x0, tw.h, tw.z1)], body, edge, lw);
+          // the front face: a flat rectangle facing the camera, full of text
+          if (tw.z0 - camZ <= NEAR) continue;
+          const dz = tw.z0 - camZ, k = f / dz;
+          const [sx0, sy0] = P(tw.x0, tw.h, tw.z0), [sx1, sy1] = P(tw.x1, 0, tw.z0);
+          if (sx1 < -R || sx0 > VW + R || sy0 > VH + R || sy1 < -R) continue;
+          vctx.fillStyle = body; vctx.fillRect(sx0, sy0, sx1 - sx0, sy1 - sy0);
+          // a tide of light rising up the face with its band
+          const tide = (sy1 - sy0) * v;
+          const tg = vctx.createLinearGradient(0, sy1, 0, sy1 - tide - 1);
+          tg.addColorStop(0, `hsla(${hue | 0},100%,45%,${(fog * 0.35).toFixed(3)})`); tg.addColorStop(1, `hsla(${hue | 0},100%,45%,0)`);
+          vctx.fillStyle = tg; vctx.fillRect(sx0, sy1 - tide, sx1 - sx0, tide);
+          vctx.strokeStyle = edge; vctx.lineWidth = lw; vctx.strokeRect(sx0, sy0, sx1 - sx0, sy1 - sy0);
+          const rowPx = ROW * k, fs = Math.round(GLYPH * k);
+          if (fs < 4) {
+            // too far for glyphs: a few bright scan rows stand in for them
+            if (rowPx > 0.8) {
+              vctx.fillStyle = `hsla(${hue | 0},100%,70%,${(fog * (0.25 + v * 0.4)).toFixed(3)})`;
+              for (let y = sy0 + rowPx; y < sy1 - rowPx; y += rowPx * 2) vctx.fillRect(sx0 + (sx1 - sx0) * 0.08, y, (sx1 - sx0) * 0.84, Math.max(0.6, rowPx * 0.5));
+            }
+            continue;
+          }
+          const chars = Math.min(ATLAS_CHARS, Math.max(1, Math.floor((sx1 - sx0 - fs) / (fs * 0.6))));
+          const sc = t * tw.scroll, base = Math.floor(sc), off = (sc - base) * rowPx;
+          const nRows = Math.floor((sy1 - sy0) / rowPx);
+          const rTop = Math.max(0, Math.floor((0 - sy0) / rowPx) - 1), rBot = Math.min(nRows, Math.ceil((VH - sy0) / rowPx) + 1);
+          const alpha = fog * (0.45 + v * 0.55);
+          if (fs <= ATLAS_MAX) {
+            // small and mid-size faces: one scaled copy out of the
+            // pre-rendered atlas (two when the rows wrap round it)
+            // instead of a fillText per row -- flying high puts hundreds
+            // of these faces on screen at once
+            const rA = Math.max(rTop, Math.ceil(off / rowPx - 0.05)), rB = Math.min(rBot - 1, Math.floor((sy1 - sy0 - rowPx * 0.25 - fs + off) / rowPx));
+            if (rB < rA) continue;
+            const at = atlasFor(tw.hue), sk = rowPx / at.rowH, sw = chars * at.cw;
+            let a = alpha;
+            if (videoFrame) a *= 0.35 + lumAt(videoFrame, Math.max(0, Math.min(VW - 1, (sx0 + sx1) / 2)), Math.max(0, Math.min(VH - 1, (sy0 + sy1) / 2)), VW, VH) * 1.1;
+            vctx.globalAlpha = Math.min(1, a);
+            let q = (tw.line + rA + base) & (ATLAS_ROWS - 1), r = rA;
+            while (r <= rB) {
+              const n = Math.min(rB - r + 1, ATLAS_ROWS - q);
+              vctx.drawImage(at.c, 0, q * at.rowH, sw, n * at.rowH, sx0 + fs * 0.5, sy0 + r * rowPx - off, sw * sk, n * rowPx);
+              r += n; q = 0;
+            }
+            vctx.globalAlpha = 1;
+            continue;
+          }
+          vctx.font = `${fs}px "Courier New", monospace`;
+          for (let r = rTop; r < rBot; r++) {
+            const y = sy0 + r * rowPx - off + rowPx * 0.15;
+            if (y < sy0 + rowPx * 0.1 || y + fs > sy1 - rowPx * 0.1) continue;
+            const idx = (tw.line + r + base) & (ATLAS_ROWS - 1);
+            let a = alpha;
+            if (videoFrame) a *= 0.35 + lumAt(videoFrame, Math.max(0, Math.min(VW - 1, (sx0 + sx1) / 2)), Math.max(0, Math.min(VH - 1, y)), VW, VH) * 1.1;
+            vctx.fillStyle = HOT[idx] ? `rgba(235,250,255,${Math.min(1, a * 1.2).toFixed(3)})` : `hsla(${tw.hue},100%,72%,${Math.min(1, a).toFixed(3)})`;
+            vctx.fillText(POOL[idx].slice(0, chars), sx0 + fs * 0.5, y);
+          }
+        }
+        vctx.restore();
+
+        // HUD: where in the filesystem we are, and -- on a big enough
+        // hit, not too often -- the film's battle cry
+        const hs = Math.max(10, Math.round(Math.min(VW, VH) * 0.026));
+        vctx.font = `${hs}px "Courier New", monospace`; vctx.textBaseline = 'top';
+        const path = PATHS[((cam.c % PATHS.length) + PATHS.length) % PATHS.length];
+        const cursor = Math.floor(t * 2) % 2 ? '_' : ' ';
+        vctx.fillStyle = 'rgba(120,230,255,0.85)';
+        vctx.fillText(`GIBSON:${path}$ ls -la${cursor}`, hs, hs);
+        vctx.fillStyle = 'rgba(120,230,255,0.5)';
+        vctx.fillText(`SECTOR 0x${((camZ * 64) >>> 0).toString(16).toUpperCase().padStart(6, '0')}  ALT ${cam.y.toFixed(2)}`, hs, VH - hs * 2);
+        if (kick > 0.72 && t - lastShout > 12) { shout = 1; lastShout = t; }
+        if (shout > 0) {
+          shout = Math.max(0, shout - dt * 0.7);
+          const bs = Math.round(Math.min(VW, VH) * 0.075);
+          vctx.font = `bold ${bs}px "Courier New", monospace`; vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+          const a = Math.min(1, shout * 2) * (Math.floor(t * 12) % 2 ? 1 : 0.7);
+          vctx.fillStyle = `rgba(255,60,200,${(a * 0.35).toFixed(3)})`; vctx.fillText('HACK THE PLANET', VW / 2 + bs * 0.06, VH / 2 + bs * 0.04);
+          vctx.fillStyle = `rgba(200,255,255,${a.toFixed(3)})`; vctx.fillText('HACK THE PLANET', VW / 2, VH / 2);
+          vctx.textAlign = 'start';
+        }
       },
     });
   })();

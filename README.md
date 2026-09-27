@@ -194,7 +194,7 @@ The player's 🌀 button opens the **Orbit Visualizer**: a canvas driven by
 the track's audio (Web Audio analyser) and a low-res sample of its
 picture. Eleven built-in modes — Tunnel, Bars, Mirror, Scope, Spiral,
 Pixels, ASCII (six character sets, natural or neon), Plasma, Kaleido,
-Particles, Freefall — plus the twenty-nine in `web/orbit_extras.js` (next
+Particles, Freefall — plus the thirty in `web/orbit_extras.js` (next
 section). Click the lit mode again for the plain video. Speed, React and
 Zoom retune every mode; every setting persists in the browser.
 
@@ -319,7 +319,11 @@ Lissajous, Vinyl 33, Cube, VHS, Win95, Joy Division, Spectrogram, Stained
 glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe, Starfield,
 Spectrum 3D, Brain, Arcade, Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery
 and Doom95 (a 320-wide raycaster that fires its shotgun on the kick, with
-four kinds of monster, secret doors and teleporters), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
+four kinds of monster, secret doors and teleporters) and Hackers (the film's
+flight through the Gibson's filesystem: glass towers crawling with hex,
+each lit by its own band, standing on a circuit board whose traces carry
+creeping pulses of current, the camera weaving down the streets and banking
+over the rooftops), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
 draw perspective faces as runs of affine strips, since Canvas 2D has no
