@@ -37,14 +37,21 @@ body {
   padding: 0 1.5rem 3rem;
 }
 
+/* one row: title + tagline on the left, identity and the header
+   buttons pushed right; wraps as a unit when the window gets narrow */
 header {
-  padding: 1.5rem 0 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.35rem 1rem;
+  padding: 0.75rem 0 0.6rem;
   border-bottom: 1px solid var(--border);
 }
 
-h1 { margin: 0; font-size: 1.6rem; letter-spacing: 0.02em; }
-.tagline { margin: 0.25rem 0 0.75rem; color: var(--muted); font-size: 0.9rem; }
-.identity { font-size: 0.85rem; color: var(--muted); }
+h1 { margin: 0; font-size: 1.4rem; letter-spacing: 0.02em; }
+.tagline { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.identity { font-size: 0.85rem; color: var(--muted); margin-left: auto; }
+header .qr-toggle { margin-top: 0; align-self: center; }
 .identity code { color: var(--accent); }
 
 nav#tabs {

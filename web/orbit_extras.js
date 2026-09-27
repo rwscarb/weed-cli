@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp, Cymatics
+//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -2951,6 +2951,369 @@
         }
         vctx.globalCompositeOperation = 'source-over';
         vctx.restore();
+      },
+    });
+  })();
+
+  // Orrery: a little solar system seen at a tilt. Each planet is one
+  // band of the spectrum -- bass close in, treble far out -- swelling
+  // and glowing with its band and trailing a plume of smoke behind
+  // it and a fine trail of glitter, a pinch more on every beat. Orbits are a softened Kepler (inner planets lap the outer
+  // ones: ~6s a lap closest in, ~40s farthest out at Speed 1) off
+  // their own clock, orbitT: it gains what vizRot does (0.006 x Speed
+  // a frame) up to 1x, but Speed squared above that, so the slider's
+  // 3x top end spins the planets 9x -- a real whirl -- without
+  // touching the shared slider's range. An accumulator, so Speed
+  // changes never jump. Hence the big multipliers, too. No two orbits
+  // share a plane: each is inclined (inc, radians) about its own node
+  // line (node), so they cross over one another in real 3D, and a
+  // planet's depth is where that puts it, not just which half of the
+  // ellipse it's on. At the centre, in place of a sun, a black hole:
+  // a lensed accretion disc whose bands are the spectrum, breathing
+  // with the bass; a beat sends a bright pulse falling inward through
+  // the disc until the hole swallows it and the photon ring flashes,
+  // and a bass hit blasts an ejection wave back out across the system.
+  // Planets behind the hole pass behind it.
+  (function () {
+    // smoke puffs are one soft blob per 10-degree hue bucket, drawn once
+    // and stamped with drawImage -- a radial gradient per puff, a
+    // thousand puffs a frame, would be far too slow
+    const puffSprites = new Map();
+    function puffSprite(hue) {
+      const key = Math.round(hue / 10) % 36;
+      let c = puffSprites.get(key);
+      if (!c) {
+        c = document.createElement('canvas'); c.width = c.height = 64;
+        const g2 = c.getContext('2d'), g = g2.createRadialGradient(32, 32, 0, 32, 32, 32);
+        g.addColorStop(0, `hsla(${key * 10},35%,72%,1)`); g.addColorStop(0.45, `hsla(${key * 10},30%,55%,0.45)`); g.addColorStop(1, `hsla(${key * 10},25%,40%,0)`);
+        g2.fillStyle = g; g2.fillRect(0, 0, 64, 64);
+        puffSprites.set(key, c);
+      }
+      return c;
+    }
+    const PLANETS = [
+      { r: 0.16, size: 0.010, hue: 20,  inc: 0.30, node: 0.4 },
+      { r: 0.24, size: 0.016, hue: 45,  inc: 0.12, node: 2.1 },
+      { r: 0.33, size: 0.018, hue: 200, inc: 0.05, node: 4.0, moon: true },
+      { r: 0.42, size: 0.013, hue: 5,   inc: 0.22, node: 5.3 },
+      { r: 0.56, size: 0.034, hue: 30,  inc: 0.16, node: 1.2, moon: true },
+      { r: 0.70, size: 0.028, hue: 50,  inc: 0.35, node: 3.3, ring: true },
+      { r: 0.83, size: 0.021, hue: 180, inc: 0.09, node: 0.9 },
+      { r: 0.95, size: 0.020, hue: 225, inc: 0.27, node: 4.7 },
+    ];
+    let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0;
+    viz.registerMode({
+      id: 'orrery', label: 'Orrery',
+      init() { flares = []; prevFreq = null; fluxAvg = 0; cooldown = 0; orbitT = 0; smoke = []; lastPos = []; glitter = []; swallow = 0; waves = []; bassAvg = 0; bassCool = 0; prevBass = 0; bassRiseAvg = 0; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, vizRot, speed, vizUserScale } = ctx;
+        orbitT += 0.006 * speed * Math.max(1, speed);
+        const energy = energyOf(freqData), bass = bassOf(freqData);
+        const maxBin = Math.floor(freqData.length * 0.7);
+        const R = Math.min(VW * 0.46, VH * 0.9) * vizUserScale;
+        const tilt = 0.34 + 0.08 * Math.sin(vizRot * 0.3);   // the camera slowly nods
+        fadeFrame(vctx, VW, VH, 0.35);
+        // background stars, fixed per position so they hold still
+        for (let i = 0; i < 160; i++) {
+          const tw = 0.4 + 0.6 * Math.abs(Math.sin(vizRot * 4 + i));
+          vctx.fillStyle = `rgba(255,255,255,${(hash(i * 3.1) * 0.5 * tw).toFixed(2)})`;
+          vctx.fillRect(hash(i * 7.7) * VW, hash(i * 1.3) * VH, 1.5, 1.5);
+        }
+        // onsets (spectral flux against its own running average) launch flares
+        let flux = 0;
+        if (prevFreq && prevFreq.length === freqData.length) for (let i = 0; i < maxBin; i++) { const d = freqData[i] - prevFreq[i]; if (d > 0) flux += d; }
+        flux /= (maxBin * 255); prevFreq = Uint8Array.from(freqData);
+        fluxAvg = fluxAvg * 0.9 + flux * 0.1; cooldown = Math.max(0, cooldown - 1);
+        let burst = false;
+        if (cooldown === 0 && flux > fluxAvg * 1.7 + 0.01) { flares.push({ t: 0, hue: (hueBase + 30) % 360 }); cooldown = 12; burst = true; }
+        // bass hits blast an ejection wave out of the hole. A kick shows up
+        // far more reliably as how fast the bass bins *rise* frame to frame
+        // than as their level, which real mixes keep nearly flat -- so
+        // either a rise well above the usual rise, or the level poking
+        // modestly over its own running average, counts. Harder hits make
+        // hotter, brighter waves.
+        const rise = Math.max(0, bass - prevBass); prevBass = bass;
+        bassRiseAvg = bassRiseAvg * 0.95 + rise * 0.05; bassAvg = bassAvg * 0.92 + bass * 0.08;
+        bassCool = Math.max(0, bassCool - 1);
+        if (bassCool === 0 && bass > 0.05 && (rise > bassRiseAvg * 4 + 0.02 || bass > bassAvg * 1.1 + 0.03)) {
+          waves.push({ t: 0, power: clamp01(Math.max(rise * 8, (bass - bassAvg) * 5)) }); bassCool = 10;
+        }
+        // a point at angle a along planet p's orbit, in 3D: the orbit's own
+        // circle tipped by inc about its node line, then seen by a camera
+        // raised so the reference plane squashes to `tilt`. depth is +1
+        // nearest the camera, -1 straight behind the sun.
+        const lift = Math.sqrt(1 - tilt * tilt);
+        const project = (p, a) => {
+          const ca = Math.cos(a), sa = Math.sin(a), cn = Math.cos(p.node), sn = Math.sin(p.node), ci = Math.cos(p.inc);
+          const x = cn * ca - sn * sa * ci, y = sn * ca + cn * sa * ci, z = sa * Math.sin(p.inc);
+          return { x: cx + x * p.r * R, y: cy + (y * tilt - z * lift) * p.r * R, depth: y * lift + z * tilt };
+        };
+        const trace = (p, a0, a1, steps) => {
+          vctx.beginPath();
+          for (let k = 0; k <= steps; k++) { const q = project(p, a0 + (a1 - a0) * k / steps); if (k) vctx.lineTo(q.x, q.y); else vctx.moveTo(q.x, q.y); }
+        };
+        // orbit guides
+        vctx.lineWidth = 1;
+        for (const p of PLANETS) {
+          vctx.strokeStyle = `hsla(${(hueBase + p.hue) % 360 | 0},40%,60%,0.12)`;
+          trace(p, 0, Math.PI * 2, 96); vctx.stroke();
+        }
+        // the black hole's scale and its beat pulses. A beat starts a pulse
+        // at the disc's rim that runs inward through the bands (position
+        // 1 - t^2.2 of the way out, so it drifts then plunges); reaching
+        // the inner edge, it's swallowed and the photon ring flashes.
+        const sr = R * (0.06 + bass * 0.015);
+        swallow = Math.max(0, swallow - 0.04 * speed);
+        const pulses = [];
+        for (let i = flares.length - 1; i >= 0; i--) {
+          const f = flares[i]; f.t += 0.012 * speed;
+          if (f.t >= 1) { flares.splice(i, 1); swallow = 1; continue; }
+          pulses.push(1 - Math.pow(f.t, 2.2));
+        }
+        // ejection waves: the infall run backwards. A wave bursts out of
+        // the photon ring and decelerates (radius eases out as
+        // 1 - (1-t)^2.5) to just past the outermost orbit. Close in, the
+        // same lensing as the disc bends it up into a near-circle round
+        // the hole; as it gets clear it flattens down into the orbital
+        // plane. It cools as it goes -- white-hot to deep red -- thins,
+        // fades, and is Doppler-beamed brighter on the left like the disc.
+        // Drawn in halves (drawWaves) so the far half goes behind the
+        // hole and disc and the near half in front.
+        const waveNow = [];
+        for (let i = waves.length - 1; i >= 0; i--) {
+          const w = waves[i]; w.t += 0.013 * speed;
+          if (w.t >= 1) { waves.splice(i, 1); continue; }
+          const r = sr * 1.1 + (R * 1.1 - sr * 1.1) * (1 - Math.pow(1 - w.t, 2.5));
+          const near = clamp01(1 - (r - sr) / (R * 0.5));
+          waveNow.push({ r, t: w.t, power: w.power, ry: r * (tilt + (1 - tilt) * Math.pow(near, 1.6) * 0.9) });
+        }
+        const drawWaves = (front) => {
+          const a0 = front ? 0 : Math.PI, a1 = front ? Math.PI : Math.PI * 2;
+          vctx.globalCompositeOperation = 'lighter';
+          for (const w of waveNow) {
+            const life = Math.pow(1 - w.t, 1.5), a = life * (0.35 + w.power * 0.5) * (front ? 1 : 0.7);
+            const hue = 42 - w.t * 34, L = 88 - w.t * 40;
+            const beam = vctx.createLinearGradient(cx - w.r, cy, cx + w.r, cy);
+            beam.addColorStop(0, `hsla(${hue | 0},100%,${L | 0}%,${clamp01(a * 1.4).toFixed(2)})`);
+            beam.addColorStop(1, `hsla(${(hue - 12) | 0},100%,${(L - 20) | 0}%,${(a * 0.45).toFixed(2)})`);
+            // a wide soft shock front under a thin bright leading edge
+            vctx.strokeStyle = beam;
+            vctx.globalAlpha = 0.35; vctx.lineWidth = sr * (0.5 * (1 - w.t) + 0.15);
+            vctx.beginPath(); vctx.ellipse(cx, cy, w.r, w.ry, 0, a0, a1); vctx.stroke();
+            vctx.globalAlpha = 1; vctx.lineWidth = Math.max(1, sr * (0.12 * (1 - w.t) + 0.03));
+            vctx.beginPath(); vctx.ellipse(cx, cy, w.r, w.ry, 0, a0, a1); vctx.stroke();
+          }
+          vctx.globalCompositeOperation = 'source-over';
+        };
+        // place every planet (and its moon) first, so depth order can be sorted
+        const bodies = PLANETS.map((p, i) => {
+          const band = freqData[Math.floor(Math.pow((i + 0.5) / PLANETS.length, 1.6) * maxBin)] / 255;
+          const a = hash(i + 1) * Math.PI * 2 + orbitT * 3 * Math.pow(p.r / 0.16, -1.1);
+          const q = project(p, a), persp = 1 + q.depth * 0.18;
+          return { p, i, a, band, depth: q.depth, x: q.x, y: q.y, s: p.size * R * persp * (1 + band * 0.7) };
+        });
+        const hue = (b) => (hueBase + b.p.hue) % 360 | 0;
+        // the ring system: a flat, banded disc seen nearly edge-on, not a
+        // hoop -- filled annuli (inner and outer edge, in planet radii,
+        // plus how dense and how bright each band is), with a dark gap
+        // between the two main bands like Saturn's Cassini Division. Each
+        // half is filled separately so the far half goes behind the
+        // planet and the near half in front of it; the band's own level
+        // makes the rings shimmer.
+        const RING_BANDS = [[1.25, 1.45, 0.22, 48], [1.47, 1.72, 0.55, 62], [1.72, 1.98, 0.8, 74], [2.07, 2.36, 0.6, 66], [2.40, 2.46, 0.35, 58]];
+        const drawRing = (b, front) => {
+          const s = b.s, h = hue(b), flat = 0.14 + tilt * 0.3, rot = -0.3;
+          const a0 = front ? 0 : Math.PI, a1 = front ? Math.PI : Math.PI * 2;
+          for (const [ri, ro, dens, lit] of RING_BANDS) {
+            vctx.beginPath();
+            vctx.ellipse(b.x, b.y, s * ro, s * ro * flat, rot, a0, a1);
+            vctx.ellipse(b.x, b.y, s * ri, s * ri * flat, rot, a1, a0, true);
+            vctx.closePath();
+            vctx.fillStyle = `hsla(${(h + 15) % 360},${front ? 38 : 30}%,${(lit - (front ? 0 : 12) + b.band * 12) | 0}%,${(dens * (front ? 0.9 : 0.7)).toFixed(2)})`;
+            vctx.fill();
+          }
+          // a hairline at the outer edge catches the light
+          vctx.strokeStyle = `hsla(${(h + 15) % 360},50%,85%,${front ? 0.5 : 0.25})`; vctx.lineWidth = Math.max(0.5, s * 0.03);
+          vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 2.46, s * 2.46 * flat, rot, a0, a1); vctx.stroke();
+        };
+        const drawBody = (b) => {
+          const h = hue(b), s = b.s;
+          if (b.p.ring) drawRing(b, false);
+          // lit from the sun: the highlight sits on the sun-facing side
+          const lx = b.x + (cx - b.x) / (b.p.r * R) * s * 0.5, ly = b.y + (cy - b.y) / (b.p.r * R) * s * 0.5;
+          const g = vctx.createRadialGradient(lx, ly, s * 0.1, b.x, b.y, s);
+          g.addColorStop(0, `hsl(${h},80%,${(70 + b.band * 25) | 0}%)`); g.addColorStop(1, `hsl(${h},70%,${(12 + b.band * 20) | 0}%)`);
+          vctx.save();
+          vctx.shadowColor = `hsla(${h},100%,60%,${(b.band * 0.9).toFixed(2)})`; vctx.shadowBlur = s * 2 * b.band;
+          vctx.fillStyle = g; vctx.beginPath(); vctx.arc(b.x, b.y, s, 0, Math.PI * 2); vctx.fill();
+          vctx.restore();
+          if (b.p.ring) drawRing(b, true);
+          if (b.p.moon) {
+            const ma = orbitT * 8 + b.i, md = s * 2.4;
+            vctx.fillStyle = `hsla(${h},15%,${(65 + b.band * 30) | 0}%,0.9)`;
+            vctx.beginPath(); vctx.arc(b.x + Math.cos(ma) * md, b.y + Math.sin(ma) * md * tilt, Math.max(1.2, s * 0.28), 0, Math.PI * 2); vctx.fill();
+          }
+        };
+        // smoke trails: each planet sheds puffs where it's been, filled in
+        // along the path since last frame so a fast planet leaves a
+        // continuous plume rather than a dotted one. Puffs stay put in
+        // the sky, drift and curl a little, swell and thin out; a loud
+        // band sheds thicker, brighter smoke. Each keeps the depth it was
+        // shed at, so smoke behind the sun is hidden by it too.
+        for (const b of bodies) {
+          const prev = lastPos[b.i];
+          const dist = prev ? Math.hypot(b.x - prev.x, b.y - prev.y) : 0;
+          const n = prev && dist < R ? Math.min(8, 1 + Math.floor(dist / Math.max(1, b.s * 0.5))) : 1;
+          for (let k = 0; k < n; k++) {
+            const t = n > 1 ? (k + 1) / n : 1;
+            const x = prev && dist < R ? prev.x + (b.x - prev.x) * t : b.x, y = prev && dist < R ? prev.y + (b.y - prev.y) * t : b.y;
+            smoke.push({
+              x, y, depth: b.depth, hue: hue(b), seed: Math.random() * 100,
+              vx: (Math.random() - 0.5) * b.s * 0.04, vy: (Math.random() - 0.5) * b.s * 0.04 - b.s * 0.01,
+              size: b.s * (0.7 + b.band * 0.5), grow: b.s * (0.007 + Math.random() * 0.007),
+              life: 1, decay: 0.005 + Math.random() * 0.003, alpha: 0.10 + b.band * 0.22,
+            });
+          }
+          lastPos[b.i] = { x: b.x, y: b.y };
+          // glitter: a light sprinkle that thickens a little with the band,
+          // and a small pinch tossed out on every beat. Nearly still at
+          // birth, so it stays strung out along the planet's path
+          const flakes = (Math.random() < 0.25 + b.band * 0.5 ? 1 : 0) + Math.floor(b.band * b.band * 2) + (burst ? 5 + Math.floor(b.band * 8) : 0);
+          for (let k = 0; k < flakes; k++) {
+            const ang = Math.random() * Math.PI * 2, v = (burst ? 0.3 + Math.random() * 0.7 : Math.random() * 0.12) * b.s * 0.12;
+            glitter.push({
+              x: b.x + (Math.random() - 0.5) * b.s, y: b.y + (Math.random() - 0.5) * b.s, depth: b.depth,
+              vx: Math.cos(ang) * v, vy: Math.sin(ang) * v, hue: Math.random() < 0.5 ? hue(b) : (hueBase + Math.random() * 360) % 360,
+              size: Math.max(1, R * (0.0014 + Math.random() * 0.002)), phase: Math.random() * 6.3, spin: 0.06 + Math.random() * 0.14,
+              life: 1, decay: 0.0025 + Math.random() * 0.0017,
+            });
+          }
+        }
+        const pace = Math.sqrt(speed);
+        for (let i = smoke.length - 1; i >= 0; i--) {
+          const q = smoke[i];
+          q.life -= q.decay * pace;
+          if (q.life <= 0) { smoke.splice(i, 1); continue; }
+          q.x += (q.vx + Math.sin(q.seed + q.life * 6) * q.grow * 0.5) * pace; q.y += q.vy * pace; q.size += q.grow * pace;
+        }
+        if (smoke.length > 4000) smoke.splice(0, smoke.length - 4000);
+        // no gravity: flakes coast to a stop and hang where they were shed,
+        // so the trail holds its shape along the orbit for ~4-6s while it
+        // fades. They keep tumbling in place -- the tumble is what makes
+        // them twinkle.
+        for (let i = glitter.length - 1; i >= 0; i--) {
+          const q = glitter[i];
+          q.life -= q.decay * pace;
+          if (q.life <= 0) { glitter.splice(i, 1); continue; }
+          q.vx *= 0.94; q.vy *= 0.94;
+          q.x += q.vx * pace; q.y += q.vy * pace; q.phase += q.spin * pace;
+        }
+        if (glitter.length > 6000) glitter.splice(0, glitter.length - 6000);
+        // each flake is a tiny square whose brightness tracks how square-on
+        // its tumble has it to the camera; the ones that catch the light
+        // just right throw a four-point glint
+        const drawGlitter = (front) => {
+          vctx.globalCompositeOperation = 'lighter';
+          for (const q of glitter) {
+            if ((q.depth >= 0) !== front) continue;
+            const face = Math.abs(Math.sin(q.phase)), flash = Math.pow(face, 12), a = Math.pow(q.life, 1.3) * (0.1 + face * 0.45);
+            const w = q.size * (0.35 + face * 0.65);
+            vctx.fillStyle = `hsla(${q.hue | 0},85%,${(55 + flash * 30) | 0}%,${a.toFixed(2)})`;
+            vctx.fillRect(q.x - w / 2, q.y - q.size / 2, w, q.size);
+            if (flash > 0.85 && q.life > 0.3) {
+              const g = q.size * (1.5 + flash * 2);
+              vctx.strokeStyle = `hsla(${q.hue | 0},100%,90%,${(flash * q.life * 0.45).toFixed(2)})`; vctx.lineWidth = Math.max(0.6, q.size * 0.2);
+              vctx.beginPath(); vctx.moveTo(q.x - g, q.y); vctx.lineTo(q.x + g, q.y); vctx.moveTo(q.x, q.y - g); vctx.lineTo(q.x, q.y + g); vctx.stroke();
+            }
+          }
+          vctx.globalCompositeOperation = 'source-over';
+        };
+        const drawSmoke = (front) => {
+          for (const q of smoke) {
+            if ((q.depth >= 0) !== front) continue;
+            vctx.globalAlpha = q.alpha * q.life;
+            vctx.drawImage(puffSprite(q.hue), q.x - q.size, q.y - q.size, q.size * 2, q.size * 2);
+          }
+          vctx.globalAlpha = 1;
+        };
+        bodies.sort((a, b) => a.depth - b.depth);
+        drawSmoke(false); drawGlitter(false);
+        for (const b of bodies) if (b.depth < 0) drawBody(b);
+        // the black hole, after the classic lensed-disc renders: an
+        // accretion disc seen nearly edge-on, whose far side light bends
+        // up over the top of the hole as a big arch and whose underside
+        // bends round below it as a smaller arc, round a black shadow
+        // edged by a hairline photon ring. The near side of the flat disc
+        // is drawn last, cutting across the front of the shadow.
+        //
+        // The disc is BANDS thin streaks, inner to outer, and each is one
+        // slice of the spectrum -- bass at the hot inner edge, treble at
+        // the rim -- glowing with its loudness, plus whatever beat pulse
+        // is passing through it. Along each band, brightness clumps drift
+        // round (inner bands faster, like a real disc), and the left,
+        // approaching side is Doppler-beamed brighter than the right.
+        const BANDS = 26, SEG = 16, rin = sr * 1.55, rout = sr * 4.6, flatK = 1.3;
+        const bandW = (rout - rin) / (BANDS - 1), flatE = 0.07 + tilt * 0.15;
+        const band = [];
+        for (let k = 0; k < BANDS; k++) {
+          const f = k / (BANDS - 1);
+          const lvl = freqData[Math.floor(Math.pow(f, 1.5) * maxBin * 0.85)] / 255;
+          let boost = 0;
+          for (const pp of pulses) boost += Math.exp(-Math.pow((f - pp) * BANDS / 1.8, 2));
+          const B = clamp01((0.22 + lvl * 0.55 + boost * 0.7 + (1 - f) * 0.2) * (0.55 + 0.45 * hash(k * 12.9 + 1)));
+          band.push({ f, r: rin + bandW * k, B, spin: orbitT * 6 / (1 + f * 3) + k * 1.7, hue: 10 + (1 - f) * 18 + B * 8 });
+        }
+        // one band as SEG arc pieces between angles a0..a1 of an ellipse
+        const strokeBand = (b, rx, ry, a0, a1, gain, width) => {
+          vctx.lineWidth = width;
+          for (let g = 0; g < SEG; g++) {
+            const s0 = a0 + (a1 - a0) * g / SEG, s1 = a0 + (a1 - a0) * (g + 1) / SEG, mid = (s0 + s1) / 2;
+            const m = (0.65 + 0.35 * Math.sin(mid * 2 + b.spin)) * (1 - 0.35 * Math.cos(mid)) * gain;
+            // dim and deep orange by default, only the hottest bits go
+            // yellow-white -- this is drawn 'lighter' onto a frame that
+            // only fades 35%, so it stacks up fast
+            const v = b.B * m, L = Math.min(78, 22 + v * 45);
+            vctx.strokeStyle = `hsla(${b.hue | 0},100%,${L | 0}%,${clamp01(v * 0.42).toFixed(2)})`;
+            vctx.beginPath(); vctx.ellipse(cx, cy, rx, ry, 0, s0, s1); vctx.stroke();
+          }
+        };
+        // a soft warm haze first -- kept faint on purpose: fadeFrame only
+        // takes away 35% a frame, so a faint layer redrawn every frame
+        // builds up to nearly 3x its own alpha
+        const gr = sr * (7 + energy * 3), ga = 0.10 + energy * 0.12;
+        const glow = vctx.createRadialGradient(cx, cy, sr, cx, cy, gr);
+        for (const [at, k] of [[0, 1], [0.12, 0.62], [0.28, 0.32], [0.5, 0.12], [0.75, 0.03], [1, 0]]) glow.addColorStop(at, `hsla(24,90%,55%,${(ga * k).toFixed(3)})`);
+        vctx.fillStyle = glow; vctx.beginPath(); vctx.arc(cx, cy, gr, 0, Math.PI * 2); vctx.fill();
+        drawWaves(false);
+        vctx.globalCompositeOperation = 'lighter';
+        // far half of the flat disc, then the lensed arch over the top
+        // (inner bands nearly circular, outer ones flattening out into
+        // the disc), then the lensed underside, a smaller ring hugging
+        // the bottom of the shadow
+        for (const b of band) strokeBand(b, b.r * flatK, b.r * flatK * flatE, Math.PI, Math.PI * 2, 0.6, Math.max(1, bandW * 0.3));
+        for (const b of band) strokeBand(b, b.r, b.r * (0.92 - b.f * 0.5), Math.PI, Math.PI * 2, 1, bandW * 0.7);
+        for (const b of band) { const rl = sr * (1.12 + b.f * 0.55); strokeBand(b, rl, rl * 0.8, 0, Math.PI, 1.1, Math.max(1, bandW * 0.55)); }
+        vctx.globalCompositeOperation = 'source-over';
+        // the shadow
+        vctx.fillStyle = '#000'; vctx.beginPath(); vctx.arc(cx, cy, sr, 0, Math.PI * 2); vctx.fill();
+        // the photon ring: a hairline of light hugging the shadow, beamed
+        // bright on the approaching side, flaring as each pulse is swallowed
+        const pr = sr * (1.04 + swallow * 0.04);
+        const photon = vctx.createLinearGradient(cx - pr, cy, cx + pr, cy);
+        photon.addColorStop(0, `hsla(40,90%,85%,${(0.6 + swallow * 0.4).toFixed(2)})`);
+        photon.addColorStop(1, `hsla(20,95%,55%,${(0.25 + swallow * 0.45).toFixed(2)})`);
+        vctx.save();
+        vctx.shadowColor = `hsla(35,95%,70%,${(0.4 + swallow * 0.6).toFixed(2)})`; vctx.shadowBlur = sr * (0.15 + swallow * 0.6);
+        vctx.strokeStyle = photon; vctx.lineWidth = Math.max(1, sr * (0.03 + swallow * 0.05));
+        vctx.beginPath(); vctx.arc(cx, cy, pr, 0, Math.PI * 2); vctx.stroke();
+        vctx.restore();
+        // the near half of the flat disc, across the front of the shadow
+        vctx.globalCompositeOperation = 'lighter';
+        for (const b of band) strokeBand(b, b.r * flatK, b.r * flatK * flatE, 0, Math.PI, 1.4, Math.max(1, bandW * 0.35));
+        vctx.globalCompositeOperation = 'source-over';
+        drawWaves(true);
+        drawSmoke(true); drawGlitter(true);
+        for (const b of bodies) if (b.depth >= 0) drawBody(b);
       },
     });
   })();
