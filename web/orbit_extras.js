@@ -9,7 +9,7 @@
 //
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
-//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery
+//              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -3314,6 +3314,793 @@
         drawWaves(true);
         drawSmoke(true); drawGlitter(true);
         for (const b of bodies) if (b.depth >= 0) drawBody(b);
+      },
+    });
+  })();
+
+  // Doom95: the Win95 port of Doom, as a visualizer. A raycaster drawn
+  // at the original's 320-pixel width and scaled up blocky walks itself
+  // through a maze dug fresh each time the dialog opens -- brown brick,
+  // computer panels whose screens are a live spectrum analyser, and
+  // monitors showing the video. The shotgun fires on every bass hit
+  // (muzzle flash, recoil, the whole sector lights up), and anything
+  // in the crosshair column when it does goes down. The halls are
+  // haunted: cacodemons drift and spit fireballs, imps stalk and throw
+  // them, pinky demons charge in to bite, lost souls hang about until
+  // you come near and then fly straight at you. Some brick is a secret
+  // door that rises into the ceiling as the walker goes for it -- two
+  // are shortcuts, two hide a sealed room with a powerup in it -- and
+  // pairs of teleporter pads glow on the floor; step on one and you come
+  // out of its twin in a burst of green. The status bar is the music:
+  // HEALTH is loudness, ARMOR the bass, AMMO counts the beats down and
+  // picks up another box when it runs dry, and the face looks around,
+  // winces on the big hits and hits taken, grins at a kill. Now and then a pickup
+  // message and the gold bonus flash. Zoom narrows the field of view;
+  // Speed and the music's energy set the walking pace. Pair it with the
+  // Melt transition.
+  (function () {
+    const RW = 320, BAR = 32, TEX = 64, N = 21;
+    const DX = [1, 0, -1, 0], DY = [0, 1, 0, -1];
+    const pack = (r, g, b) => (0xff000000 | (b << 16) | (g << 8) | r) >>> 0;
+    const byte = (v) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
+    const noise = (x, y, k) => hash(x * 12.9898 + y * 78.233 + k * 37.719);
+    function hslPack(h, s, l) {
+      h = (((h % 360) + 360) % 360) / 360;
+      const q = l < 0.5 ? l * (1 + s) : l + s - l * s, p = 2 * l - q;
+      const f = (t) => { t = (t + 1) % 1; return t < 1 / 6 ? p + (q - p) * 6 * t : t < 0.5 ? q : t < 2 / 3 ? p + (q - p) * (2 / 3 - t) * 6 : p; };
+      return pack(byte(f(h + 1 / 3) * 255), byte(f(h) * 255), byte(f(h - 1 / 3) * 255));
+    }
+    function shadePx(c, L) {
+      const r = (c & 255) * L, g = ((c >> 8) & 255) * L, b = ((c >> 16) & 255) * L;
+      return (0xff000000 | (byte(b) << 16) | (byte(g) << 8) | byte(r)) >>> 0;
+    }
+    function makeTex(fn) {
+      const t = new Uint32Array(TEX * TEX);
+      for (let y = 0; y < TEX; y++) for (let x = 0; x < TEX; x++) t[y * TEX + x] = fn(x, y);
+      return t;
+    }
+
+    // ── a 3x5 bitmap font: the status bar and messages stay crisp
+    // pixels at 320 wide, where canvas text would smear
+    const GLYPHS = {
+      A: '010101111101101', B: '110101110101110', C: '011100100100011', D: '110101101101110',
+      E: '111100110100111', F: '111100110100100', G: '011100101101011', H: '101101111101101',
+      I: '111010010010111', J: '001001001101010', K: '101101110101101', L: '100100100100111',
+      M: '101111111101101', N: '110101101101101', O: '010101101101010', P: '110101110100100',
+      Q: '010101101110011', R: '110101110101101', S: '011100010001110', T: '111010010010010',
+      U: '101101101101111', V: '101101101101010', W: '101101111111101', X: '101101010101101',
+      Y: '101101010010010', Z: '111001010100111',
+      0: '111101101101111', 1: '010110010010111', 2: '110001010100111', 3: '110001010001110',
+      4: '101101111001001', 5: '111100110001110', 6: '011100111101111', 7: '111001010010010',
+      8: '111101111101111', 9: '111101111001110',
+      '%': '101001010100101', '!': '010010010000010', '.': '000000000000010', ',': '000000000010100',
+      "'": '010010000000000', '-': '000000111000000', '?': '110001010000010', '/': '001001010100100',
+      ':': '000010000010000',
+    };
+    function text(g, str, x, y, sc, col, shadow) {
+      for (const pass of shadow ? [shadow, col] : [col]) {
+        const o = pass === col ? 0 : sc;
+        g.fillStyle = pass;
+        let cx = x;
+        for (const ch of str.toUpperCase()) {
+          const bits = GLYPHS[ch];
+          if (bits) for (let i = 0; i < 15; i++) if (bits[i] === '1') g.fillRect(cx + (i % 3) * sc + o, y + ((i / 3) | 0) * sc + o, sc, sc);
+          cx += 4 * sc;
+        }
+      }
+    }
+    const textW = (str, sc) => str.length * 4 * sc - sc;
+
+    // ── textures ─────────────────────────────────────────────────────
+    const STONE = makeTex((x, y) => {
+      const row = y >> 3, sx = x + (row & 1) * 8, bx = sx & 15, by = y & 7;
+      if (by === 7 || bx === 15) return pack(46, 34, 22);
+      const n = noise(x, y, 1) * 30 - 15 + hash((sx >> 4) * 7.1 + row * 3.3) * 24 - 12;
+      const hi = by === 0 || bx === 0 ? 22 : 0;
+      return pack(byte(112 + n + hi), byte(80 + n * 0.8 + hi), byte(52 + n * 0.6 + hi * 0.6));
+    });
+    const TECH = makeTex((x, y) => {
+      const n = noise(x, y, 2) * 16 - 8;
+      if (x >= 10 && x < 54 && y >= 8 && y < 40) return pack(8, 12, 8);
+      if (x >= 9 && x <= 54 && y >= 7 && y <= 40) return pack(38, 38, 42);
+      if (x >= 10 && x < 54 && y >= 45 && y < 50) return pack(24, 24, 26);
+      if ((x === 4 || x === 59) && (y === 4 || y === 59)) return pack(190, 190, 176);
+      if (x === 0 || y === 0) return pack(150, 150, 156);
+      if (x === 63 || y === 63) return pack(48, 48, 52);
+      if (y === 55) return pack(60, 60, 64);
+      return pack(byte(92 + n), byte(94 + n), byte(100 + n));
+    });
+    const techTex = new Uint32Array(TEX * TEX);
+    const BAR_GREEN = pack(40, 220, 60), BAR_YELLOW = pack(230, 210, 40), BAR_RED = pack(230, 40, 30), LED_OFF = pack(40, 40, 40);
+    function paintTech(freq, hue, t) {
+      techTex.set(TECH);
+      const bins = 11, maxBin = Math.max(1, Math.floor(freq.length * 0.6));
+      for (let b = 0; b < bins; b++) {
+        const h = Math.round((freq[Math.floor((b / bins) * maxBin)] / 255) * 30);
+        for (let k = 0; k < h; k++) {
+          const col = k > 23 ? BAR_RED : k > 15 ? BAR_YELLOW : BAR_GREEN, o = (38 - k) * TEX + 11 + b * 4;
+          techTex[o] = techTex[o + 1] = techTex[o + 2] = col;
+        }
+      }
+      for (let i = 0; i < 6; i++) {
+        const col = hash(i * 9.1 + Math.floor(t * 4 + i * 0.37)) > 0.5 ? hslPack(hue + i * 50, 1, 0.55) : LED_OFF;
+        for (let dy = 0; dy < 3; dy++) for (let dx = 0; dx < 4; dx++) techTex[(46 + dy) * TEX + 12 + i * 7 + dx] = col;
+      }
+    }
+    const MONITOR = pack(70, 70, 78), MONITOR_HI = pack(130, 130, 140), MONITOR_LO = pack(34, 34, 40);
+    const FLOOR = makeTex((x, y) => {
+      const tx = x & 31, ty = y & 31, n = noise(x, y, 3) * 18 - 9;
+      if (tx === 0 || ty === 0) return pack(40, 38, 34);
+      if (tx === 1 || ty === 1) return pack(byte(120 + n), byte(112 + n), byte(98 + n));
+      return pack(byte(88 + n), byte(82 + n), byte(72 + n));
+    });
+    const CEIL = makeTex((x, y) => {
+      const n = noise(x, y, 4) * 14 - 7;
+      if ((x & 15) === 0 || (y & 15) === 0) return pack(34, 34, 36);
+      return pack(byte(62 + n), byte(62 + n), byte(66 + n));
+    });
+
+    // ── sprites: every monster frame and pickup is drawn once with
+    // ordinary canvas calls, then read back as pixels for the billboard loop
+    function spriteOf(w, h, paint) {
+      const c = document.createElement('canvas'); c.width = w; c.height = h;
+      const g = c.getContext('2d'); paint(g);
+      const d = g.getImageData(0, 0, w, h).data;
+      return { w, h, px: new Uint32Array(d.buffer.slice(d.byteOffset, d.byteOffset + d.byteLength)) };
+    }
+    function fireGlow(g, x, y, r) {
+      const fb = g.createRadialGradient(x, y, 0, x, y, r);
+      fb.addColorStop(0, '#fff8c0'); fb.addColorStop(0.45, '#ff9020'); fb.addColorStop(1, 'rgba(255,60,0,0)');
+      g.fillStyle = fb; g.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    function paintCaco(g, open) {
+      g.fillStyle = '#e0c080';
+      g.beginPath(); g.moveTo(8, 8); g.lineTo(5, 1); g.lineTo(12, 6); g.fill();
+      g.beginPath(); g.moveTo(24, 8); g.lineTo(27, 1); g.lineTo(20, 6); g.fill();
+      const body = g.createRadialGradient(12, 12, 2, 16, 17, 15);
+      body.addColorStop(0, '#ff7060'); body.addColorStop(0.6, '#d02818'); body.addColorStop(1, '#601008');
+      g.fillStyle = body; g.beginPath(); g.arc(16, 17, 14, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#f0f0d0'; g.beginPath(); g.arc(16, 12, 5.5, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#30c030'; g.beginPath(); g.arc(16, 12, 4, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#000'; g.beginPath(); g.arc(16, 12, 2, 0, Math.PI * 2); g.fill();
+      const mh = open ? 7 : 5;
+      g.fillStyle = '#300'; g.beginPath(); g.ellipse(16, 24, 9, mh, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#3050d0'; g.beginPath(); g.ellipse(16, 25, 5, mh / 2, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#fff';
+      for (let i = 0; i < 5; i++) { g.fillRect(9 + i * 3, 24 - mh + 1, 2, 2); g.fillRect(10 + i * 3, 24 + mh - 3, 2, 2); }
+      if (open) fireGlow(g, 16, 25, 5);
+    }
+    function paintImp(g, step, attack) {
+      const l = step ? 3 : -1;
+      g.fillStyle = '#5e4024'; g.fillRect(10 + l, 30, 5, 16); g.fillRect(18 - l, 30, 5, 16);
+      g.fillStyle = '#3a2814'; g.fillRect(9 + l, 45, 7, 3); g.fillRect(17 - l, 45, 7, 3);
+      g.fillStyle = '#8a6038'; g.fillRect(9, 14, 15, 18);
+      g.fillStyle = '#a87850'; g.fillRect(11, 16, 11, 7);
+      g.fillStyle = '#6a4828'; g.fillRect(9, 28, 15, 4);
+      g.fillStyle = '#e8e0d0'; for (const [x, y] of [[8, 13], [23, 13], [12, 19], [19, 19], [15, 24]]) g.fillRect(x, y, 2, 2);
+      g.fillStyle = '#8a6038';
+      if (attack) { g.fillRect(22, 4, 4, 12); g.fillRect(5, 16, 4, 12); fireGlow(g, 24, 4, 5); }
+      else {
+        g.fillRect(5, 16, 4, 13); g.fillRect(24, 16, 4, 13);
+        g.fillStyle = '#e8e0d0'; for (const x of [5, 8, 24, 27]) g.fillRect(x, 29, 1, 2);
+      }
+      g.fillStyle = '#7a5230'; g.fillRect(11, 4, 11, 11);
+      g.fillStyle = '#e8e0d0'; g.fillRect(10, 2, 2, 4); g.fillRect(21, 2, 2, 4);
+      g.fillStyle = '#ff3010'; g.fillRect(13, 8, 2, 2); g.fillRect(18, 8, 2, 2);
+      g.fillStyle = '#300'; g.fillRect(13, 12, 7, 2);
+      g.fillStyle = '#fff'; for (const x of [14, 16, 18]) g.fillRect(x, 12, 1, 1);
+    }
+    function paintDemon(g, step, bite) {
+      const l = step ? 2 : -2;
+      g.fillStyle = '#9a4a5a'; g.fillRect(8 + l, 22, 6, 8); g.fillRect(26 - l, 22, 6, 8);
+      g.fillStyle = '#6a2a38'; g.fillRect(7 + l, 29, 8, 3); g.fillRect(25 - l, 29, 8, 3);
+      const body = g.createRadialGradient(16, 9, 2, 20, 14, 17);
+      body.addColorStop(0, '#f4a8b8'); body.addColorStop(0.7, '#d06878'); body.addColorStop(1, '#80303e');
+      g.fillStyle = body; g.beginPath(); g.ellipse(20, 14, 16, 10, 0, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#b05868'; g.fillRect(2, 12, 5, 10); g.fillRect(33, 12, 5, 10);
+      g.fillStyle = '#e0d0b0'; g.fillRect(11, 2, 2, 4); g.fillRect(27, 2, 2, 4);
+      g.fillStyle = '#ffe040'; g.fillRect(14, 7, 3, 2); g.fillRect(23, 7, 3, 2);
+      const jh = bite ? 10 : 5;
+      g.fillStyle = '#400'; g.fillRect(12, 12, 16, jh);
+      g.fillStyle = '#fff'; for (let i = 0; i < 6; i++) { g.fillRect(13 + i * 3, 12, 1, 2); g.fillRect(13 + i * 3, 12 + jh - 2, 1, 2); }
+    }
+    function paintSoul(g, flick) {
+      for (let i = 0; i < 14; i++) {
+        const x = 4 + hash(i * 3.7 + flick * 11) * 24, h = 8 + hash(i * 5.1 + flick * 7) * 14;
+        const fl = g.createLinearGradient(x, 26, x, 18 - h);
+        fl.addColorStop(0, '#ff6010'); fl.addColorStop(0.6, '#ffc040'); fl.addColorStop(1, 'rgba(255,240,160,0)');
+        g.fillStyle = fl; g.beginPath(); g.moveTo(x - 3, 26); g.lineTo(x, 18 - h); g.lineTo(x + 3, 26); g.fill();
+      }
+      g.fillStyle = '#e8e0c8'; g.beginPath(); g.arc(16, 17, 8, 0, Math.PI * 2); g.fill(); g.fillRect(11, 21, 10, 7);
+      g.fillStyle = '#000'; g.fillRect(11, 15, 4, 4); g.fillRect(17, 15, 4, 4); g.fillRect(15, 21, 2, 2);
+      g.fillStyle = '#ff4020'; g.fillRect(12, 16, 2, 2); g.fillRect(18, 16, 2, 2);
+      g.fillStyle = '#000'; for (let i = 0; i < 5; i++) g.fillRect(11 + i * 2, 25, 1, 3);
+    }
+    let SPR = null;
+    function makeSprites() {
+      return {
+        caco: [spriteOf(32, 32, (g) => paintCaco(g, false)), spriteOf(32, 32, (g) => paintCaco(g, true))],
+        imp: [0, 1].map((s) => spriteOf(32, 48, (g) => paintImp(g, s, false))).concat([spriteOf(32, 48, (g) => paintImp(g, 0, true))]),
+        demon: [0, 1].map((s) => spriteOf(40, 32, (g) => paintDemon(g, s, false))).concat([spriteOf(40, 32, (g) => paintDemon(g, 0, true))]),
+        soul: [0, 1].map((f) => spriteOf(32, 32, (g) => paintSoul(g, f))),
+        fireball: spriteOf(16, 16, (g) => fireGlow(g, 8, 8, 8)),
+        sphere: spriteOf(16, 16, (g) => {
+          const b = g.createRadialGradient(6, 6, 1, 8, 8, 8);
+          b.addColorStop(0, '#e0f0ff'); b.addColorStop(0.4, '#6090ff'); b.addColorStop(0.85, '#1030b0'); b.addColorStop(1, 'rgba(16,48,176,0)');
+          g.fillStyle = b; g.fillRect(0, 0, 16, 16);
+        }),
+        medikit: spriteOf(16, 12, (g) => {
+          g.fillStyle = '#606060'; g.fillRect(0, 0, 16, 12); g.fillStyle = '#e8e8e8'; g.fillRect(1, 1, 14, 10);
+          g.fillStyle = '#d01010'; g.fillRect(6, 2, 4, 8); g.fillRect(4, 4, 8, 4);
+        }),
+      };
+    }
+    // world size (w, h), how high off the floor (z) and how each kind moves:
+    // chase is how hard it steers at you once you're within 7 cells,
+    // shoots its average seconds between fireballs
+    const TYPES = {
+      caco: { w: 0.75, h: 0.75, z: 0.2, bob: 0.06, speed: 0.35, chase: 0.2, shoots: 6, weight: 3 },
+      imp: { w: 0.55, h: 0.82, z: 0, speed: 0.7, chase: 0.6, shoots: 3.5, weight: 4 },
+      demon: { w: 0.8, h: 0.64, z: 0, speed: 1.2, chase: 1, bites: true, weight: 2 },
+      soul: { w: 0.42, h: 0.42, z: 0.3, bob: 0.08, speed: 0.4, chase: 0, charges: true, bright: true, weight: 2 },
+    };
+    const MOBS = 11, TYPE_IDS = Object.keys(TYPES), TYPE_SUM = TYPE_IDS.reduce((a, k) => a + TYPES[k].weight, 0);
+    function frameOf(e) {
+      const f = SPR[e.type];
+      if (e.type === 'soul') return f[((st.t * 8) | 0) & 1];
+      if (e.type === 'caco') return f[e.attackT > 0 ? 1 : 0];
+      return f[e.attackT > 0 ? 2 : (e.anim | 0) & 1];
+    }
+
+    // ── the maze ─────────────────────────────────────────────────────
+    // 0 open, 1 brick, 2 computer panel, 3 monitor, 4 secret door (brick
+    // that rises into the ceiling), 5 held back for a secret room while
+    // the maze is dug
+    let map = null, doorO = null, doorT = null, doorAt = null, portalOf = null, secretOf = null;
+    let doors = [], portals = [], secrets = [];
+    const rnd = (n) => (Math.random() * n) | 0;
+    function dig() {
+      map = new Uint8Array(N * N).fill(1);
+      doorO = new Float32Array(N * N); doorT = new Float32Array(N * N); doorAt = new Float32Array(N * N);
+      portalOf = new Int16Array(N * N).fill(-1); secretOf = new Uint8Array(N * N);
+      doors = []; portals = []; secrets = [];
+      // fence off two 5x5 blocks -- a 3x3 room and its walls -- so the
+      // digger goes round them
+      for (let tries = 0; tries < 40 && secrets.length < 2; tries++) {
+        const x = 3 + 2 * rnd(7), y = 3 + 2 * rnd(7);
+        let free = true;
+        for (let j = -1; j <= 3; j++) for (let k = -1; k <= 3; k++) if (map[(y + j) * N + x + k] !== 1) free = false;
+        if (!free) continue;
+        for (let j = -1; j <= 3; j++) for (let k = -1; k <= 3; k++) map[(y + j) * N + x + k] = 5;
+        secrets.push([x, y]);
+      }
+      const stack = [[1, 1]]; map[N + 1] = 0;
+      while (stack.length) {
+        const [x, y] = stack[stack.length - 1];
+        const opts = [[2, 0], [-2, 0], [0, 2], [0, -2]].filter(([dx, dy]) => {
+          const nx = x + dx, ny = y + dy;
+          return nx > 0 && ny > 0 && nx < N - 1 && ny < N - 1 && map[ny * N + nx] === 1 && map[(y + dy / 2) * N + x + dx / 2] === 1;
+        });
+        if (!opts.length) { stack.pop(); continue; }
+        const [dx, dy] = opts[rnd(opts.length)];
+        map[(y + dy / 2) * N + x + dx / 2] = 0; map[(y + dy) * N + x + dx] = 0;
+        stack.push([x + dx, y + dy]);
+      }
+      // a perfect maze is all dead ends -- knock through for loops, and
+      // clear a few rooms for the monsters to roam
+      for (let i = 0; i < 60; i++) {
+        const x = 1 + rnd(N - 2), y = 1 + rnd(N - 2);
+        if ((x & 1) !== (y & 1) && map[y * N + x] === 1) map[y * N + x] = 0;
+      }
+      for (let i = 0; i < 4; i++) {
+        const x = 1 + 2 * rnd((N - 5) / 2), y = 1 + 2 * rnd((N - 5) / 2);
+        for (let j = 0; j < 3; j++) for (let k = 0; k < 3; k++) if (map[(y + j) * N + x + k] !== 5) map[(y + j) * N + x + k] = 0;
+      }
+      // open the secret rooms, each behind one secret door onto a corridor
+      secrets.forEach(([x, y], n) => {
+        for (let j = -1; j <= 3; j++) for (let k = -1; k <= 3; k++) {
+          const i = (y + j) * N + x + k, inner = j >= 0 && j < 3 && k >= 0 && k < 3;
+          map[i] = inner ? 0 : 1; if (inner) secretOf[i] = n + 1;
+        }
+        const ways = [];
+        for (let k = 0; k < 3; k++) ways.push([x + k, y - 1, 0, -1], [x + k, y + 3, 0, 1], [x - 1, y + k, -1, 0], [x + 3, y + k, 1, 0]);
+        const ok = ways.filter(([wx, wy, dx, dy]) => map[(wy + dy) * N + wx + dx] === 0 && !secretOf[(wy + dy) * N + wx + dx]);
+        if (ok.length) { const [wx, wy] = ok[rnd(ok.length)]; map[wy * N + wx] = 4; doors.push(wy * N + wx); }
+      });
+      // and a couple of secret shortcuts: brick with a corridor either side
+      const cands = [];
+      for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) {
+        const i = y * N + x; if (map[i] !== 1 || secretOf[i - 1] || secretOf[i + 1] || secretOf[i - N] || secretOf[i + N]) continue;
+        const h = map[i - 1] === 0 && map[i + 1] === 0 && map[i - N] !== 0 && map[i + N] !== 0;
+        const v = map[i - N] === 0 && map[i + N] === 0 && map[i - 1] !== 0 && map[i + 1] !== 0;
+        if (h || v) cands.push(i);
+      }
+      for (let k = 0; k < 2 && cands.length; k++) { const i = cands.splice(rnd(cands.length), 1)[0]; map[i] = 4; doors.push(i); }
+      for (let i = 0; i < N * N; i++) if (map[i] === 1) { const r = Math.random(); map[i] = r < 0.05 ? 2 : r < 0.4 ? 3 : 1; }
+      // a wall at the end of a long straight run -- one you walk towards
+      // -- is nearly always a screen
+      const isWall = (i) => map[i] >= 1 && map[i] <= 3;
+      for (let i = 0; i < N * N; i++) {
+        if (!isWall(i)) continue;
+        for (let k = 0; k < 4; k++) {
+          let run = 0, cx = (i % N) + DX[k], cy = ((i / N) | 0) + DY[k];
+          while (inMap(cx, cy) && map[cy * N + cx] === 0) { run++; cx += DX[k]; cy += DY[k]; }
+          if (run >= 3 && Math.random() < 0.75) { map[i] = 3; break; }
+        }
+      }
+      // halls of video: a few straight stretches lined with screens on both sides
+      const halls = [];
+      for (let y = 1; y < N - 1; y++) for (let x = 1; x < N - 1; x++) for (const [dx, dy] of [[1, 0], [0, 1]]) {
+        const so = dx ? N : 1; let len = 0;
+        for (;;) {
+          const c = (y + dy * len) * N + x + dx * len;
+          if (x + dx * len >= N - 1 || y + dy * len >= N - 1 || map[c] !== 0 || secretOf[c] || !isWall(c - so) || !isWall(c + so)) break;
+          len++;
+        }
+        if (len >= 3) halls.push([x, y, dx, dy, len]);
+      }
+      for (let h = 0; h < 4 && halls.length; h++) {
+        const [x, y, dx, dy, len] = halls.splice(rnd(halls.length), 1)[0], so = dx ? N : 1;
+        for (let k = 0; k < len; k++) { const c = (y + dy * k) * N + x + dx * k; map[c - so] = 3; map[c + so] = 3; }
+      }
+      // two pairs of teleporters, well apart
+      const open = [];
+      for (let i = 0; i < N * N; i++) if (map[i] === 0 && !secretOf[i]) open.push(i);
+      for (let p = 0; p < 2; p++) {
+        for (let tries = 0; tries < 80; tries++) {
+          const a = open[rnd(open.length)], b = open[rnd(open.length)];
+          if (a === b || portalOf[a] >= 0 || portalOf[b] >= 0 || Math.hypot((a % N) - (b % N), ((a / N) | 0) - ((b / N) | 0)) < 7) continue;
+          portalOf[a] = b; portalOf[b] = a; portals.push(a, b); break;
+        }
+      }
+    }
+    const inMap = (x, y) => x >= 0 && y >= 0 && x < N && y < N;
+    // somewhere a monster (or a fireball) can be: a secret door only once it's all the way up
+    const isOpen = (x, y) => inMap(x, y) && (map[y * N + x] === 0 || (map[y * N + x] === 4 && doorO[y * N + x] > 0.95));
+    // somewhere the walker can head for: it opens secret doors on its way
+    const walkable = (x, y) => inMap(x, y) && (map[y * N + x] === 0 || map[y * N + x] === 4);
+    function openDoor(i) { if (doorT[i] !== 1) { doorT[i] = 1; doorAt[i] = st.t + 3; } }
+
+    // ── state ────────────────────────────────────────────────────────
+    const MESSAGES = [
+      ['PICKED UP A SHOTGUN.', null], ['PICKED UP A STIMPACK.', null], ['PICKED UP A MEDIKIT.', null],
+      ['PICKED UP AN ARMOR BONUS.', null], ['PICKED UP A HEALTH BONUS.', null], ['SUPERCHARGE!', null],
+      ['PICKED UP THE BLUE KEYCARD.', 'key0'], ['PICKED UP THE YELLOW KEYCARD.', 'key1'], ['PICKED UP THE RED KEYCARD.', 'key2'],
+      ['YOU GOT THE ROCKET LAUNCHER!', 'arm5'], ['YOU GOT THE PLASMA GUN!', 'arm6'], ['YOU GOT THE BFG9000! OH, YES.', 'arm7'],
+    ];
+    const KEY_COLS = ['#2040ff', '#e0d020', '#e02020'];
+    let st = null;
+    let lo = null, img = null, buf = null, zbuf = null, doorZ = null, doorBot = null, barCanvas = null;
+    function reset() {
+      dig();
+      let cx = 1, cy = 1;
+      for (let i = 0; i < 400; i++) {
+        const x = 1 + rnd(N - 2), y = 1 + rnd(N - 2), c = y * N + x;
+        if (map[c] === 0 && portalOf[c] < 0 && !secretOf[c]) { cx = x; cy = y; break; }
+      }
+      let d = 0; while (d < 3 && !walkable(cx + DX[d], cy + DY[d])) d++;
+      st = {
+        // one cell at a time: in through one edge, out through another
+        walk: { cx, cy, din: d, dout: d, s: 0.5 },
+        cam: { x: cx + 0.5, y: cy + 0.5, a: d * Math.PI / 2 },
+        mobs: [], shots: [], respawn: [], lastNow: 0, t: 0, bobPh: 0,
+        items: secrets.map(([x, y], n) => ({ x: x + 1.5, y: y + 1.5, kind: n === 0 ? 'sphere' : 'medikit' })),
+        found: new Set(), tele: 0, teleCool: 0, visits: new Uint16Array(N * N),
+        avgBass: 0, avgE: 0, fireCool: 0, flash: 0, recoil: 0, pain: 0, bonus: 0,
+        grin: 0, ouch: 0, look: 0, lookAt: 0, ammo: 50, kills: 0,
+        owned: new Set(['arm2', 'arm3']),
+        msg: `E1M${1 + rnd(9)}: ENTERING.`, msgT: 3, nextMsg: 10 + Math.random() * 10,
+      };
+      for (let i = 0; i < MOBS; i++) spawnMob();
+    }
+    function spawnMob() {
+      const { cam, mobs } = st;
+      let r = Math.random() * TYPE_SUM, type = TYPE_IDS[0];
+      for (const k of TYPE_IDS) { r -= TYPES[k].weight; if (r <= 0) { type = k; break; } }
+      for (let tries = 0; tries < 60; tries++) {
+        const x = 1 + rnd(N - 2), y = 1 + rnd(N - 2);
+        if (!isOpen(x, y) || Math.hypot(x + 0.5 - cam.x, y + 0.5 - cam.y) < 4) continue;
+        const a = Math.random() * Math.PI * 2;
+        mobs.push({ type, x: x + 0.5, y: y + 0.5, vx: Math.cos(a), vy: Math.sin(a), ph: Math.random() * 6, anim: 0,
+          dying: 0, hurt: 0, attackT: 0, biteCool: 0, shootAt: 2 + Math.random() * 4 });
+        return;
+      }
+    }
+    function hurtPlayer() { st.pain = 1; st.ouch = 0.6; }
+    function pickDir(cx, cy, d) {
+      const back = (d + 2) % 4, open = [], wts = [];
+      for (let k = 0; k < 4; k++) {
+        const nx = cx + DX[k], ny = cy + DY[k];
+        if (k === back || !walkable(nx, ny)) continue;
+        const i = ny * N + nx;
+        // secret doors and teleporters are irresistible, and it would
+        // rather explore than retrace its steps
+        open.push(k); wts.push((map[i] === 4 || portalOf[i] >= 0 ? 4 : k === d ? 2.5 : 1) / (1 + st.visits[i] * 2));
+      }
+      if (!open.length) return back;
+      let r = Math.random() * wts.reduce((a, b) => a + b, 0);
+      for (let i = 0; i < open.length; i++) { r -= wts[i]; if (r <= 0) return open[i]; }
+      return open[0];
+    }
+    // where the walker is s (0..1) of the way through its cell. Straight
+    // through is a line; a turn cuts the corner on a quarter circle
+    // about the cell's inside corner, heading along the tangent, so the
+    // view always looks down the corridor instead of stopping to stare
+    // at a wall; a dead end walks in, about-faces, walks back out.
+    function place(w, cam) {
+      const ix = DX[w.din], iy = DY[w.din], ox = DX[w.dout], oy = DY[w.dout], Cx = w.cx + 0.5, Cy = w.cy + 0.5, s = w.s;
+      if (w.din === w.dout) { cam.x = Cx + ix * (s - 0.5); cam.y = Cy + iy * (s - 0.5); cam.a = w.din * Math.PI / 2; return true; }
+      if ((w.din + 2) % 4 === w.dout) {
+        if (s < 0.3) { const k = 1 - s / 0.3; cam.x = Cx - ix * 0.5 * k; cam.y = Cy - iy * 0.5 * k; cam.a = w.din * Math.PI / 2; return true; }
+        if (s < 0.7) { const k = (s - 0.3) / 0.4; cam.x = Cx; cam.y = Cy; cam.a = w.din * Math.PI / 2 + Math.PI * k * k * (3 - 2 * k); return false; }
+        const k = (s - 0.7) / 0.3; cam.x = Cx + ox * 0.5 * k; cam.y = Cy + oy * 0.5 * k; cam.a = w.dout * Math.PI / 2; return true;
+      }
+      const Ox = Cx - ix * 0.5 + ox * 0.5, Oy = Cy - iy * 0.5 + oy * 0.5, th = s * Math.PI / 2, c = Math.cos(th), sn = Math.sin(th);
+      cam.x = Ox + 0.5 * (-ox * c + ix * sn); cam.y = Oy + 0.5 * (-oy * c + iy * sn);
+      cam.a = Math.atan2(oy * sn + iy * c, ox * sn + ix * c);
+      return true;
+    }
+    function showMsg(m) { st.msg = m[0]; st.msgT = 3; st.bonus = 1; if (m[1]) st.owned.add(m[1]); }
+
+    // project a world point: [screen x, depth] -- depth <= 0 is behind
+    function project(px, py, cam, dirX, dirY, plX, plY) {
+      const sx = px - cam.x, sy = py - cam.y, inv = 1 / (plX * dirY - dirX * plY);
+      const tx = inv * (dirY * sx - dirX * sy), ty = inv * (-plY * sx + plX * sy);
+      return [(RW / 2) * (1 + tx / ty), ty];
+    }
+
+    function drawBarBg() {
+      barCanvas = document.createElement('canvas'); barCanvas.width = RW; barCanvas.height = BAR;
+      const g = barCanvas.getContext('2d'), id = g.createImageData(RW, BAR), p = new Uint32Array(id.data.buffer);
+      for (let y = 0; y < BAR; y++) for (let x = 0; x < RW; x++) { const n = noise(x, y, 5) * 26 - 13; p[y * RW + x] = pack(byte(92 + n), byte(88 + n), byte(78 + n)); }
+      g.putImageData(id, 0, 0);
+      g.fillStyle = '#2c2a24'; g.fillRect(0, 0, RW, 1);
+      for (const [x0, x1] of [[2, 47], [49, 103], [105, 138], [143, 177], [179, 235], [237, 249], [251, 318]]) {
+        g.fillStyle = '#3a372f'; g.fillRect(x0, 2, x1 - x0, 1); g.fillRect(x0, 2, 1, BAR - 4);
+        g.fillStyle = '#9a9484'; g.fillRect(x0, BAR - 2, x1 - x0, 1); g.fillRect(x1, 2, 1, BAR - 3);
+      }
+      for (const [label, cx] of [['AMMO', 24], ['HEALTH', 76], ['ARMS', 121], ['ARMOR', 207]]) text(g, label, cx - textW(label, 1) / 2, 25, 1, '#d8d8d8', '#302c24');
+    }
+    function drawFace(g, cx, top, health) {
+      const look = st.look * 2, pain = st.ouch > 0, grin = st.grin > 0;
+      g.fillStyle = '#5a3a1a'; g.fillRect(cx - 11, top, 22, 7);
+      g.fillStyle = '#c89060'; g.fillRect(cx - 10, top + 4, 20, 19); g.fillRect(cx - 8, top + 23, 16, 5);
+      g.fillStyle = '#9a6840'; g.fillRect(cx - 10, top + 4, 2, 19); g.fillRect(cx + 8, top + 4, 2, 19); g.fillRect(cx - 1, top + 14, 2, 5);
+      g.fillStyle = '#5a3a1a'; g.fillRect(cx - 8, top + (pain ? 10 : 9), 6, 2); g.fillRect(cx + 2, top + (pain ? 10 : 9), 6, 2);
+      g.fillStyle = '#fff'; g.fillRect(cx - 8, top + 12, 5, pain ? 1 : 3); g.fillRect(cx + 3, top + 12, 5, pain ? 1 : 3);
+      g.fillStyle = '#203050'; g.fillRect(cx - 7 + look, top + 12, 2, pain ? 1 : 2); g.fillRect(cx + 4 + look, top + 12, 2, pain ? 1 : 2);
+      if (grin) { g.fillStyle = '#4a2010'; g.fillRect(cx - 7, top + 20, 14, 4); g.fillStyle = '#fff'; g.fillRect(cx - 6, top + 21, 12, 2); }
+      else if (pain) { g.fillStyle = '#300'; g.fillRect(cx - 3, top + 19, 6, 5); }
+      else { g.fillStyle = '#6a3020'; g.fillRect(cx - 4, top + 22, 8, 1); }
+      if (health < 60) {
+        g.fillStyle = '#a00'; g.fillRect(cx - 9, top + 6, 3, 2); g.fillRect(cx + 5, top + 17, 2, 4);
+        if (health < 35) { g.fillRect(cx - 6, top + 17, 2, 5); g.fillRect(cx + 1, top + 4, 4, 2); }
+      }
+    }
+
+    viz.registerMode({
+      id: 'doom95', label: 'Doom95',
+      init() { reset(); },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        if (!st) reset();
+        if (!SPR) SPR = makeSprites();
+        if (!barCanvas) drawBarBg();
+        const now = performance.now(), dt = st.lastNow ? Math.min(0.1, (now - st.lastNow) / 1000) : 0.016;
+        st.lastNow = now; st.t += dt;
+
+        // ── audio ──
+        const energy = energyOf(freqData), bass = bassOf(freqData);
+        st.avgBass = st.avgBass * 0.9 + bass * 0.1; st.avgE = st.avgE * 0.94 + energy * 0.06;
+        st.fireCool -= dt; st.flash = Math.max(0, st.flash - dt * 6); st.recoil = Math.max(0, st.recoil - dt * 4);
+        st.pain = Math.max(0, st.pain - dt * 2.5); st.bonus = Math.max(0, st.bonus - dt * 2); st.tele = Math.max(0, st.tele - dt * 1.8);
+        st.grin -= dt; st.ouch -= dt; st.msgT -= dt;
+        if (st.t > st.lookAt) { st.look = rnd(3) - 1; st.lookAt = st.t + 0.8 + Math.random() * 1.2; }
+        if (st.t > st.nextMsg) { showMsg(MESSAGES[rnd(MESSAGES.length)]); st.nextMsg = st.t + 12 + Math.random() * 14; }
+
+        // ── walk ──
+        const w = st.walk, cam = st.cam, pace = speed * (0.7 + energy * 1.6);
+        const len = w.din === w.dout ? 1 : (w.din + 2) % 4 === w.dout ? 1.6 : Math.PI / 4;
+        let prevS = w.s;
+        w.s += (dt * 2.2 * pace) / len;
+        // a secret door in the way goes up as the walker comes for it; it
+        // waits short of the door until there's headroom
+        const next = (w.cy + DY[w.dout]) * N + w.cx + DX[w.dout];
+        let blocked = false;
+        if (map[next] === 4) { openDoor(next); if (doorO[next] < 0.95) { blocked = w.s > 0.55; w.s = Math.min(w.s, Math.max(prevS, 0.55)); } }
+        if (w.s >= 1) {
+          w.cx += DX[w.dout]; w.cy += DY[w.dout]; w.din = w.dout; w.s = Math.min(0.5, w.s - 1); prevS = 0;
+          const ci = w.cy * N + w.cx, sid = secretOf[ci];
+          st.visits[ci]++;
+          w.dout = pickDir(w.cx, w.cy, w.din);
+          // about to turn: whatever wall ends the way ahead becomes a
+          // screen before it swings into view
+          if (w.dout !== w.din) {
+            let x = w.cx, y = w.cy;
+            do { x += DX[w.dout]; y += DY[w.dout]; } while (map[y * N + x] === 0);
+            if (map[y * N + x] === 1 || map[y * N + x] === 2) map[y * N + x] = 3;
+          }
+          if ((sid && !st.found.has(sid)) || (map[ci] === 4 && !st.found.has(-ci))) {
+            st.found.add(sid || -ci); showMsg(['A SECRET IS REVEALED!', null]);
+          }
+        }
+        // a teleporter pad: out of its twin, facing any way that's open
+        const here = w.cy * N + w.cx;
+        if (prevS < 0.5 && w.s >= 0.5 && portalOf[here] >= 0 && st.t > st.teleCool) {
+          const to = portalOf[here];
+          w.cx = to % N; w.cy = (to / N) | 0; w.s = 0.5;
+          const ways = [0, 1, 2, 3].filter((k) => walkable(w.cx + DX[k], w.cy + DY[k]));
+          w.din = w.dout = ways.length ? ways[rnd(ways.length)] : w.din;
+          st.tele = 1; st.teleCool = st.t + 1.5;
+        }
+        const walking = place(w, cam) && !blocked;
+        if (walking) st.bobPh += dt * 9 * pace;
+
+        // ── doors: up at 1.5 cells a second, back down once nobody's under them ──
+        for (const i of doors) {
+          const tgt = doorT[i], o = doorO[i];
+          doorO[i] = o + Math.sign(tgt - o) * Math.min(Math.abs(tgt - o), dt * 1.5);
+          if (tgt === 1 && doorO[i] >= 1 && st.t > doorAt[i]) {
+            const busy = here === i || next === i || Math.hypot(cam.x - (i % N) - 0.5, cam.y - ((i / N) | 0) - 0.5) < 1.4 ||
+              st.mobs.some((e) => Math.floor(e.y) * N + Math.floor(e.x) === i);
+            if (!busy) doorT[i] = 0;
+          }
+        }
+
+        const planeLen = (0.66 / Math.max(0.35, Math.min(3, vizUserScale))) * (1 + st.tele * st.tele * 1.2);
+        const dirX = Math.cos(cam.a), dirY = Math.sin(cam.a), plX = -dirY * planeLen, plY = dirX * planeLen;
+        const F = RW / 2 / planeLen;
+
+        // ── render size: 320 wide, the window's own aspect ──
+        const RH = Math.max(120, Math.min(480, Math.round((RW * VH) / VW))), viewH = RH - BAR;
+        if (!lo) lo = offscreen();
+        const { c: can, ctx: g } = lo(RW, RH);
+        if (!img || img.height !== viewH) {
+          img = g.createImageData(RW, viewH); buf = new Uint32Array(img.data.buffer);
+          zbuf = new Float32Array(RW); doorZ = new Float32Array(RW); doorBot = new Float32Array(RW);
+        }
+
+        // ── monsters: wander, close in, attack, die, come back ──
+        const visible = (x, y) => { const [sx, d] = project(x, y, cam, dirX, dirY, plX, plY); return d > 0.3 && sx >= 0 && sx < RW && d < zbuf[sx | 0]; };
+        for (let i = st.mobs.length - 1; i >= 0; i--) {
+          const e = st.mobs[i], T = TYPES[e.type];
+          e.ph += dt * 2; e.hurt = Math.max(0, e.hurt - dt * 5); e.attackT -= dt; e.biteCool -= dt;
+          if (e.dying) { e.dying += dt * 1.6; if (e.dying >= 1) { st.mobs.splice(i, 1); st.respawn.push(st.t + 3 + Math.random() * 4); } continue; }
+          const dx = cam.x - e.x, dy = cam.y - e.y, dist = Math.hypot(dx, dy) || 1;
+          if (Math.random() < dt * 0.3) { const a = Math.random() * Math.PI * 2; e.vx = Math.cos(a); e.vy = Math.sin(a); }
+          let vx = e.vx, vy = e.vy, sp = T.speed;
+          if (T.charges && dist < 5) { vx = dx / dist; vy = dy / dist; sp = 2.6; }
+          else if (T.chase && dist < 7) {
+            vx = vx * (1 - T.chase) + (dx / dist) * T.chase; vy = vy * (1 - T.chase) + (dy / dist) * T.chase;
+            const m = Math.hypot(vx, vy) || 1; vx /= m; vy /= m;
+          }
+          if (dist < 0.6) {
+            sp = 0;
+            if (T.charges) { hurtPlayer(); e.dying = 0.001; continue; }
+            if (T.bites && e.biteCool <= 0) { hurtPlayer(); e.attackT = 0.35; e.biteCool = 1.2; }
+          }
+          const step = sp * dt * speed;
+          const nx = e.x + vx * step, ny = e.y + vy * step;
+          if (isOpen(Math.floor(nx + Math.sign(vx) * 0.3), Math.floor(e.y))) e.x = nx; else e.vx = -e.vx;
+          if (isOpen(Math.floor(e.x), Math.floor(ny + Math.sign(vy) * 0.3))) e.y = ny; else e.vy = -e.vy;
+          e.anim += step * 6;
+          if (T.shoots && st.t > e.shootAt) {
+            if (dist < 8 && dist > 1.2 && visible(e.x, e.y)) {
+              st.shots.push({ x: e.x, y: e.y, vx: (dx / dist) * 3, vy: (dy / dist) * 3, z: T.z + T.h * 0.55, life: 4 });
+              e.attackT = 0.4; e.shootAt = st.t + T.shoots * (0.6 + Math.random() * 0.8);
+            } else e.shootAt = st.t + 0.5;
+          }
+        }
+        st.respawn = st.respawn.filter((at) => (at < st.t ? (spawnMob(), false) : true));
+        while (st.mobs.length + st.respawn.length < MOBS) st.respawn.push(st.t + 2 + Math.random() * 4);
+        for (let i = st.shots.length - 1; i >= 0; i--) {
+          const b = st.shots[i], k = dt * Math.max(0.6, speed);
+          b.x += b.vx * k; b.y += b.vy * k; b.life -= dt;
+          if (b.life <= 0 || !isOpen(Math.floor(b.x), Math.floor(b.y))) { st.shots.splice(i, 1); continue; }
+          if (Math.hypot(b.x - cam.x, b.y - cam.y) < 0.35) { hurtPlayer(); st.shots.splice(i, 1); }
+        }
+        for (let i = st.items.length - 1; i >= 0; i--) {
+          const it = st.items[i];
+          if (Math.hypot(it.x - cam.x, it.y - cam.y) < 0.7) {
+            showMsg(it.kind === 'sphere' ? ['SUPERCHARGE!', null] : ['PICKED UP A MEDIKIT.', null]); st.items.splice(i, 1);
+          }
+        }
+
+        // ── fire on a kick ──
+        if (bass > st.avgBass * 1.35 + 0.06 && st.fireCool <= 0) {
+          st.fireCool = 0.22; st.flash = 1; st.recoil = 1;
+          if (--st.ammo <= 0) { st.ammo = 50; showMsg(['PICKED UP A BOX OF SHELLS.', null]); }
+          let best = null, bestD = 1e9;
+          for (const e of st.mobs) {
+            if (e.dying) continue;
+            const [sx, d] = project(e.x, e.y, cam, dirX, dirY, plX, plY);
+            if (d < 0.3 || d > 10 || d >= zbuf[RW >> 1] || Math.abs(sx - RW / 2) > ((F * TYPES[e.type].w) / d) * 0.5 + 20) continue;
+            if (d < bestD) { best = e; bestD = d; }
+          }
+          if (best) { best.dying = 0.001; best.hurt = 1; st.kills++; st.grin = 1.2; }
+          if (bass > st.avgBass * 1.8 + 0.15) hurtPlayer();
+        }
+
+        const light = 0.72 + st.avgE * 0.35 + st.flash * 0.45;
+        const shade = (d) => { const L = Math.max(0.08, Math.min(1.5, light * (1.25 - d * 0.1))); return Math.round(L * 16) / 16; };
+        const bobX = walking ? Math.cos(st.bobPh * 0.5) * 7 : 0, bobY = walking ? Math.abs(Math.sin(st.bobPh * 0.5)) * 5 : 0;
+        const hor = viewH / 2 + bobY * 0.4 + st.recoil * 3;
+        paintTech(freqData, hueBase, st.t);
+        // the teleporters' own palette, dark to white-hot, in the viz hue
+        const gate = new Uint32Array(64);
+        for (let k = 0; k < 64; k++) gate[k] = hslPack(hueBase + 150 + k * 2, 1, 0.12 + (k / 63) * 0.7);
+        const gateL = 0.8 + bass * 0.7;
+
+        // ── floor and ceiling, one row at a time ──
+        const rX0 = dirX - plX, rY0 = dirY - plY, rX1 = dirX + plX, rY1 = dirY + plY;
+        const lamp = 0.55 + bass * 0.9 + st.flash * 0.5;
+        for (let y = 0; y < viewH; y++) {
+          const p = y - hor + 0.5, floor = p > 0, rowD = (0.5 * F) / Math.max(0.5, Math.abs(p));
+          let fx = cam.x + rowD * rX0, fy = cam.y + rowD * rY0;
+          const sx = (rowD * (rX1 - rX0)) / RW, sy = (rowD * (rY1 - rY0)) / RW, L = shade(rowD), row = y * RW;
+          for (let x = 0; x < RW; x++) {
+            const ix = Math.floor(fx), iy = Math.floor(fy), tx = ((fx - ix) * TEX) | 0, ty = ((fy - iy) * TEX) | 0;
+            if (floor) {
+              if (ix >= 0 && iy >= 0 && ix < N && iy < N && portalOf[iy * N + ix] >= 0) {
+                // a teleporter pad: rings spiralling in, a steel rim
+                const lx = fx - ix - 0.5, ly = fy - iy - 0.5, r = Math.hypot(lx, ly);
+                if (r < 0.4) {
+                  const ring = 0.5 + 0.5 * Math.sin(r * 40 - st.t * 8 + Math.atan2(ly, lx) * 3);
+                  buf[row + x] = shadePx(gate[(ring * (1 - r * 1.5) * 63) | 0], gateL);
+                } else buf[row + x] = shadePx(r < 0.46 ? MONITOR_HI : FLOOR[ty * TEX + tx], L);
+              } else buf[row + x] = shadePx(FLOOR[ty * TEX + tx], L);
+            } else if (tx >= 24 && tx < 40 && ty >= 24 && ty < 40) buf[row + x] = shadePx(pack(255, 236, 190), Math.min(1.3, lamp * (tx === 24 || ty === 24 || tx === 39 || ty === 39 ? 0.6 : 1)));
+            else buf[row + x] = shadePx(CEIL[ty * TEX + tx], L);
+            fx += sx; fy += sy;
+          }
+        }
+
+        // ── walls: a DDA ray per column. A secret door part-way up is
+        // remembered and the ray carries on under it; the door is drawn
+        // over whatever the ray found behind ──
+        let vpx = null;
+        if (videoFrame) { const d = videoFrame.imageData.data; vpx = new Uint32Array(d.buffer, d.byteOffset, d.length >> 2); }
+        for (let x = 0; x < RW; x++) {
+          const camX = (2 * x) / RW - 1, rdx = dirX + plX * camX, rdy = dirY + plY * camX;
+          let mx = Math.floor(cam.x), my = Math.floor(cam.y);
+          const ddx = rdx === 0 ? 1e30 : Math.abs(1 / rdx), ddy = rdy === 0 ? 1e30 : Math.abs(1 / rdy);
+          const stepX = rdx < 0 ? -1 : 1, stepY = rdy < 0 ? -1 : 1;
+          let sdx = rdx < 0 ? (cam.x - mx) * ddx : (mx + 1 - cam.x) * ddx;
+          let sdy = rdy < 0 ? (cam.y - my) * ddy : (my + 1 - cam.y) * ddy;
+          let side = 0, hit = 1, dPerp = 0, dSide = 0, dO = 0;
+          for (let guard = 0; guard < 64; guard++) {
+            if (sdx < sdy) { sdx += ddx; mx += stepX; side = 0; } else { sdy += ddy; my += stepY; side = 1; }
+            if (mx < 0 || my < 0 || mx >= N || my >= N) { hit = 1; break; }
+            hit = map[my * N + mx];
+            if (hit === 4) {
+              const o = doorO[my * N + mx];
+              if (o <= 0.001) break;
+              if (o < 0.999 && !dPerp) { dPerp = side === 0 ? sdx - ddx : sdy - ddy; dSide = side; dO = o; }
+              hit = 0;
+            }
+            if (hit) break;
+          }
+          const perp = Math.max(0.01, side === 0 ? sdx - ddx : sdy - ddy);
+          zbuf[x] = perp;
+          let u = side === 0 ? cam.y + perp * rdy : cam.x + perp * rdx; u -= Math.floor(u);
+          if ((side === 0 && rdx < 0) || (side === 1 && rdy > 0)) u = 1 - u;
+          const lh = F / perp, top = hor - lh / 2, y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(viewH, Math.ceil(hor + lh / 2));
+          const L = shade(perp) * (side ? 0.8 : 1), tx = Math.min(TEX - 1, (u * TEX) | 0);
+          for (let y = y0; y < y1; y++) {
+            const v = (y - top) / lh, ty = Math.min(TEX - 1, (v * TEX) | 0);
+            let c;
+            if (hit === 2) c = techTex[ty * TEX + tx];
+            else if (hit === 3) {
+              if (u < 0.08 || u > 0.92 || v < 0.1 || v > 0.9) c = u < 0.04 || v < 0.05 ? MONITOR_HI : u > 0.96 || v > 0.95 ? MONITOR_LO : MONITOR;
+              else if (vpx) {
+                const px = Math.min(videoFrame.w - 1, (((u - 0.08) / 0.84) * videoFrame.w) | 0), py = Math.min(videoFrame.h - 1, (((v - 0.1) / 0.8) * videoFrame.h) | 0);
+                c = vpx[py * videoFrame.w + px] | 0xff000000;
+              } else { const n = (Math.random() * 200) | 0; c = pack(n, n, n); }
+            } else c = STONE[ty * TEX + tx];
+            // the screens glow: they only dim half as much with distance
+            buf[y * RW + x] = shadePx(c, hit === 2 || hit === 3 ? Math.max(L, 0.5 + L * 0.5) : L);
+          }
+          doorZ[x] = Infinity; doorBot[x] = 0;
+          if (dPerp) {
+            const pp = Math.max(0.01, dPerp);
+            let du = dSide === 0 ? cam.y + pp * rdy : cam.x + pp * rdx; du -= Math.floor(du);
+            if ((dSide === 0 && rdx < 0) || (dSide === 1 && rdy > 0)) du = 1 - du;
+            const dlh = F / pp, dtop = hor - dlh / 2, dbot = dtop + dlh * (1 - dO);
+            const Ld = shade(pp) * (dSide ? 0.8 : 1), dtx = Math.min(TEX - 1, (du * TEX) | 0);
+            for (let y = Math.max(0, Math.ceil(dtop)), ye = Math.min(viewH, Math.ceil(dbot)); y < ye; y++) {
+              buf[y * RW + x] = shadePx(STONE[Math.min(TEX - 1, (((y - dtop) / dlh + dO) * TEX) | 0) * TEX + dtx], Ld);
+            }
+            doorZ[x] = pp; doorBot[x] = dbot;
+          }
+        }
+
+        // ── sprites, far to near, clipped against walls and half-open doors ──
+        const spr = [];
+        for (const e of st.mobs) {
+          const T = TYPES[e.type], k = 1 - e.dying * 0.75;
+          spr.push({ x: e.x, y: e.y, w: T.w, h: T.h * k, z: T.z * k + (T.bob ? Math.sin(e.ph) * T.bob : 0), s: frameOf(e),
+            L: T.bright ? 1.1 : null, dim: 1 - e.dying * 0.6, hurt: e.hurt });
+        }
+        for (const b of st.shots) spr.push({ x: b.x, y: b.y, w: 0.3, h: 0.3, z: b.z - 0.15, s: SPR.fireball, L: 1.2 });
+        for (const it of st.items) {
+          spr.push(it.kind === 'sphere'
+            ? { x: it.x, y: it.y, w: 0.36, h: 0.36, z: 0.2 + Math.sin(st.t * 3) * 0.05, s: SPR.sphere, L: 1.1 + bass * 0.4 }
+            : { x: it.x, y: it.y, w: 0.4, h: 0.3, z: 0, s: SPR.medikit });
+        }
+        for (const p of portals) spr.push({ x: (p % N) + 0.5, y: ((p / N) | 0) + 0.5, w: 0.8, h: 1, z: 0, glow: true });
+        for (const o of spr) { const [sx, d] = project(o.x, o.y, cam, dirX, dirY, plX, plY); o.sx = sx; o.d = d; }
+        spr.sort((a, b) => b.d - a.d);
+        for (const o of spr) {
+          const d = o.d; if (d < 0.2) continue;
+          const pw = (F * o.w) / d, ph = (F * o.h) / d, left = o.sx - pw / 2, topY = hor - (F * (o.z + o.h - 0.5)) / d;
+          const x0 = Math.max(0, Math.ceil(left)), x1 = Math.min(RW, Math.ceil(left + pw));
+          const y0 = Math.max(0, Math.ceil(topY)), y1 = Math.min(viewH, Math.ceil(topY + ph));
+          const L = o.L || shade(d) * (o.dim || 1);
+          for (let x = x0; x < x1; x++) {
+            if (d >= zbuf[x]) continue;
+            const u = (x - left) / pw, behindDoor = d > doorZ[x], db = doorBot[x];
+            // the teleporter's shimmer: light streaming up off the pad,
+            // added over what's behind it rather than covering it
+            const streak = o.glow ? (1 - (2 * u - 1) ** 2) * (0.35 + 0.65 * hash(Math.floor(u * 14) + 0.5)) : 0;
+            for (let y = y0; y < y1; y++) {
+              if (behindDoor && y < db) continue;
+              const v = (y - topY) / ph;
+              if (o.glow) {
+                const k = streak * v * v * (0.5 + 0.5 * Math.sin(v * 24 + st.t * 9 + u * 5)) * gateL * 0.7;
+                if (k < 0.02) continue;
+                const c = gate[40 + ((k * 23) | 0) % 24], bc = buf[y * RW + x];
+                buf[y * RW + x] = (0xff000000 | (byte(((bc >> 16) & 255) + ((c >> 16) & 255) * k) << 16) |
+                  (byte(((bc >> 8) & 255) + ((c >> 8) & 255) * k) << 8) | byte((bc & 255) + (c & 255) * k)) >>> 0;
+                continue;
+              }
+              const s = o.s, col = s.px[Math.min(s.h - 1, (v * s.h) | 0) * s.w + Math.min(s.w - 1, (u * s.w) | 0)];
+              if (col >>> 24 < 128) continue;
+              buf[y * RW + x] = shadePx(col, o.hurt > 0.5 ? 2.2 : L);
+            }
+          }
+        }
+        g.putImageData(img, 0, 0);
+
+        // ── the shotgun ──
+        const wx = Math.round(RW / 2 + bobX), wy = Math.round(viewH - 46 + bobY + st.recoil * 9);
+        if (st.flash > 0.45) {
+          g.fillStyle = `rgba(255,170,30,${(st.flash * 0.8).toFixed(2)})`; g.beginPath(); g.arc(wx, wy - 4, 14 * st.flash, 0, Math.PI * 2); g.fill();
+          g.fillStyle = '#fff4a0'; g.beginPath(); g.arc(wx, wy - 2, 7 * st.flash, 0, Math.PI * 2); g.fill();
+        }
+        g.fillStyle = '#242424'; g.fillRect(wx - 6, wy, 12, 48);
+        g.fillStyle = '#505050'; g.fillRect(wx - 5, wy, 4, 48); g.fillRect(wx + 1, wy, 4, 48);
+        g.fillStyle = '#8a8a8a'; g.fillRect(wx - 4, wy + 2, 1, 46); g.fillRect(wx + 2, wy + 2, 1, 46);
+        g.fillStyle = '#000'; g.fillRect(wx - 4, wy, 2, 2); g.fillRect(wx + 2, wy, 2, 2);
+        // the pump: a long wooden forestock running from partway up the
+        // barrels down off the bottom of the view, flaring as it nears you
+        g.fillStyle = '#5a3a1e'; g.fillRect(wx - 8, wy + 12, 16, 12); g.fillRect(wx - 10, wy + 24, 20, 30);
+        g.fillStyle = '#7a5230'; g.fillRect(wx - 7, wy + 13, 3, 11); g.fillRect(wx - 9, wy + 24, 3, 30);
+        g.fillStyle = '#3e2812'; for (let i = 0; i < 8; i++) g.fillRect(wx - (i < 3 ? 7 : 9), wy + 16 + i * 4, i < 3 ? 14 : 18, 1);
+        g.fillStyle = '#b07050'; g.fillRect(wx - 14, wy + 32, 6, 16); g.fillRect(wx + 8, wy + 32, 6, 16);
+        g.fillStyle = '#8a5038'; for (const k of [35, 39, 43]) { g.fillRect(wx - 14, wy + k, 6, 1); g.fillRect(wx + 8, wy + k, 6, 1); }
+
+        // ── palette flashes: red for pain, gold for a pickup, green telefog ──
+        if (st.pain > 0) { g.fillStyle = `rgba(255,0,0,${(st.pain * 0.35).toFixed(3)})`; g.fillRect(0, 0, RW, viewH); }
+        if (st.tele > 0) { g.fillStyle = `rgba(60,255,110,${(st.tele * 0.5).toFixed(3)})`; g.fillRect(0, 0, RW, viewH); }
+        if (st.bonus > 0) { g.fillStyle = `rgba(215,186,69,${(st.bonus * 0.25).toFixed(3)})`; g.fillRect(0, 0, RW, viewH); }
+        if (st.msgT > 0) text(g, st.msg, 2, 2, 1, '#e02020', '#300');
+
+        // ── status bar ──
+        const health = Math.min(200, Math.round(15 + st.avgE * 230)), armor = Math.min(200, Math.round(st.avgBass * 200));
+        g.drawImage(barCanvas, 0, viewH);
+        const by = viewH + 4, big = (s, right) => text(g, s, right - textW(s, 3), by, 3, '#c81010', '#380000');
+        big(String(st.ammo), 45); big(health + '%', 102); big(armor + '%', 234);
+        [2, 3, 4, 5, 6, 7].forEach((n, i) => text(g, String(n), 110 + (i % 3) * 10, viewH + 5 + ((i / 3) | 0) * 9, 1, st.owned.has('arm' + n) ? '#f0d020' : '#606060'));
+        KEY_COLS.forEach((col, i) => { if (st.owned.has('key' + i)) { g.fillStyle = col; g.fillRect(240, viewH + 4 + i * 9, 7, 6); } });
+        [['BULL', 50, 200], ['SHEL', st.ammo, 50], ['RCKT', st.owned.has('arm5') ? 20 : 0, 50], ['CELL', st.owned.has('arm6') ? 120 : 0, 300]]
+          .forEach(([k, n, max], i) => { const yy = viewH + 4 + i * 6; text(g, k, 254, yy, 1, '#d8d8d8'); text(g, `${n}/${max}`, 316 - textW(`${n}/${max}`, 1), yy, 1, '#f0d020'); });
+        drawFace(g, 160, viewH + 2, health);
+
+        // ── scale it up, square pixels ──
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        vctx.save(); vctx.imageSmoothingEnabled = false;
+        vctx.drawImage(can, 0, 0, VW, VH);
+        vctx.restore();
       },
     });
   })();
