@@ -694,12 +694,17 @@ def test_stream_frames_fill_the_frame_at_the_stream_aspect(page, golden_path_ser
     /api/orbit-view is filled edge to edge, and released when it stops."""
     import base64, http.client
     from urllib.parse import urlparse
-    page.set_viewport_size({'width': 600, 'height': 1100})  # a narrow window: the canvas would end up nearly square (the dialog's height is capped, and the mode row wraps this narrow)
+    page.set_viewport_size({'width': 600, 'height': 1100})  # a narrow window
     _download_and_play(page, golden_path_server)
     vm = _vm(page)
     page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
     page.wait_for_selector('#vizModes')
     page.click('[data-viz="plasma"]')                         # fills the whole canvas with colour
+    # pin the element nearly square: left to flex it's whatever the mode
+    # row's wrapping leaves (a new mode button once wrapped it close
+    # enough to 16:9 to make this precondition fail)
+    page.evaluate("() => { const c = document.getElementById('vizCanvas'); c.style.flex = 'none'; c.style.height = '480px'; }")
+    page.wait_for_function("() => { const c = document.getElementById('vizCanvas'); return c.height > 400; }")
     before = page.evaluate("() => { const c = document.getElementById('vizCanvas'); return [c.width, c.height]; }")
     assert abs(before[0] / before[1] - 16 / 9) > 0.2, before   # genuinely not 16:9 on its own
     page.evaluate("vm => vm.toggleOrbitStream()", vm)
