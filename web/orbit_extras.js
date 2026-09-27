@@ -2973,7 +2973,10 @@
   // with the bass; a beat sends a bright pulse falling inward through
   // the disc until the hole swallows it and the photon ring flashes,
   // and a bass hit blasts an ejection wave back out across the system.
-  // Planets behind the hole pass behind it.
+  // Planets behind the hole pass behind it. Out past the last planet,
+  // Milliways, the Restaurant at the End of the Universe, makes its own
+  // slow lap: a domed saucer whose windows flicker with the treble, a
+  // beacon on its spire, and a neon sign that stutters on the beat.
   (function () {
     // smoke puffs are one soft blob per 10-degree hue bucket, drawn once
     // and stamped with drawImage -- a radial gradient per puff, a
@@ -3000,6 +3003,10 @@
       { r: 0.70, size: 0.028, hue: 50,  inc: 0.35, node: 3.3, ring: true },
       { r: 0.83, size: 0.021, hue: 180, inc: 0.09, node: 0.9 },
       { r: 0.95, size: 0.020, hue: 225, inc: 0.27, node: 4.7 },
+      // Milliways, the Restaurant at the End of the Universe, out past
+      // the last planet where the view of the end of everything (the
+      // hole) is best
+      { r: 1.04, size: 0.036, hue: 290, inc: 0.04, node: 2.6, restaurant: true },
     ];
     let flares = [], prevFreq = null, fluxAvg = 0, cooldown = 0, orbitT = 0, smoke = [], lastPos = [], glitter = [], swallow = 0, waves = [], bassAvg = 0, bassCool = 0, prevBass = 0, bassRiseAvg = 0;
     viz.registerMode({
@@ -3146,7 +3153,60 @@
           vctx.strokeStyle = `hsla(${(h + 15) % 360},50%,85%,${front ? 0.5 : 0.25})`; vctx.lineWidth = Math.max(0.5, s * 0.03);
           vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 2.46, s * 2.46 * flat, rot, a0, a1); vctx.stroke();
         };
+        // Milliways: a saucer-shaped platform under a glass dome, a ring of
+        // warm windows round its rim that flicker with its band, a spire
+        // with a blinking beacon, and a neon sign that stutters on the beat
+        const drawRestaurant = (b) => {
+          const h = hue(b), s = b.s, flat = 0.28 + tilt * 0.3, lvl = b.band;
+          vctx.save();
+          vctx.shadowColor = `hsla(${h},100%,65%,${(0.3 + lvl * 0.6).toFixed(2)})`; vctx.shadowBlur = s * (1 + lvl * 2);
+          // the dome, behind the platform's near rim
+          const dg = vctx.createRadialGradient(b.x - s * 0.3, b.y - s * 0.9, s * 0.05, b.x, b.y - s * 0.3, s * 1.1);
+          dg.addColorStop(0, `hsla(${h},60%,92%,0.75)`); dg.addColorStop(0.5, `hsla(${(h + 30) % 360},70%,60%,0.35)`); dg.addColorStop(1, `hsla(${h},70%,35%,0.25)`);
+          vctx.fillStyle = dg;
+          vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 0.95, s * 1.05, 0, Math.PI, Math.PI * 2); vctx.fill();
+          vctx.restore();
+          // the platform: a flat saucer seen at the camera's tilt
+          const pg = vctx.createLinearGradient(b.x, b.y - s * flat, b.x, b.y + s * flat);
+          pg.addColorStop(0, `hsl(${h},25%,${(55 + lvl * 20) | 0}%)`); pg.addColorStop(1, `hsl(${h},30%,14%)`);
+          vctx.fillStyle = pg;
+          vctx.beginPath(); vctx.ellipse(b.x, b.y, s * 1.6, s * 1.6 * flat, 0, 0, Math.PI * 2); vctx.fill();
+          // underbelly
+          vctx.fillStyle = `hsl(${h},20%,10%)`;
+          vctx.beginPath(); vctx.ellipse(b.x, b.y + s * 0.1, s * 1.1, s * 0.55, 0, 0, Math.PI); vctx.fill();
+          // windows along the near rim, each its own slice of the treble
+          const WIN = 12;
+          for (let k = 0; k < WIN; k++) {
+            const a = Math.PI * (k + 0.5) / WIN;
+            const lit = freqData[Math.floor((0.55 + 0.4 * k / WIN) * maxBin)] / 255;
+            const on = 0.35 + lit * 0.65 * (0.7 + 0.3 * Math.sin(orbitT * 40 + k * 2.3));
+            vctx.fillStyle = `hsla(${38 + lit * 12 | 0},100%,${(55 + lit * 30) | 0}%,${on.toFixed(2)})`;
+            const w = Math.max(1, s * 0.13 * Math.sin(a) + s * 0.03);
+            vctx.fillRect(b.x + Math.cos(a) * s * 1.45 - w / 2, b.y + Math.sin(a) * s * 1.45 * flat - w * 0.4, w, w * 0.8);
+          }
+          // spire and beacon
+          vctx.strokeStyle = `hsla(${h},20%,75%,0.8)`; vctx.lineWidth = Math.max(0.6, s * 0.06);
+          vctx.beginPath(); vctx.moveTo(b.x, b.y - s * 1.0); vctx.lineTo(b.x, b.y - s * 1.7); vctx.stroke();
+          const blink = Math.sin(orbitT * 25) > 0.6 || burst;
+          if (blink) {
+            vctx.save(); vctx.shadowColor = 'hsla(0,100%,60%,1)'; vctx.shadowBlur = s * 1.2;
+            vctx.fillStyle = 'hsl(0,100%,70%)'; vctx.beginPath(); vctx.arc(b.x, b.y - s * 1.75, Math.max(1, s * 0.12), 0, Math.PI * 2); vctx.fill();
+            vctx.restore();
+          }
+          // the neon sign, only once it's big enough to read; it stutters
+          // off for a frame or two on a beat, like a tube on its last legs
+          if (s > 7 && !(burst && Math.random() < 0.6)) {
+            const fs = Math.max(8, s * 0.55) | 0;
+            vctx.save();
+            vctx.font = `italic bold ${fs}px Georgia, serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'top';
+            vctx.shadowColor = `hsla(${(h + 20) % 360},100%,60%,0.9)`; vctx.shadowBlur = fs * (0.4 + lvl);
+            vctx.fillStyle = `hsl(${(h + 20) % 360},100%,${(72 + lvl * 20) | 0}%)`;
+            vctx.fillText('Milliways', b.x, b.y + s * (1.6 * flat + 0.35));
+            vctx.restore();
+          }
+        };
         const drawBody = (b) => {
+          if (b.p.restaurant) { drawRestaurant(b); return; }
           const h = hue(b), s = b.s;
           if (b.p.ring) drawRing(b, false);
           // lit from the sun: the highlight sits on the sun-facing side
