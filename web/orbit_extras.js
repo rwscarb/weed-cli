@@ -4930,12 +4930,15 @@
     for (let k = 0; k < 16; k++) PUFFS.push({ x: (hash(k * 4.7 + 1) - 0.5) * 4, z: (hash(k * 9.1 + 2) - 0.5) * 4, y: 0.15 + hash(k * 2.3 + 3) * 1.3, r: 0.6 + hash(k * 6.1 + 4) * 0.7, ph: hash(k * 1.9 + 5) * 6.3 });
     let last = 0, t = 0, beat = 0, period = 0.5, prevBass = 0, fluxAvg = 0.02, cool = 0, lastOnset = -1e9;
     let ivals = [], flash = 0, orbit = 0, ringRot = 0, shout = 0, lastShout = -1e9, level = 0, crowd = 0, crowdBar = 0, spin = 0;
-    let keyHue = 200, keyTarget = 200;
+    let keyHue = 200, keyTarget = 200, pivX = 0, pivZ = 0;
     const joined = new Float32Array(RING);
     viz.registerMode({
       id: 'dancingbaby', label: 'Dancing baby',
+      // Rotate swings the camera round the star's vertical axis, the way
+      // the ring and the lights go round it, instead of rolling the picture
+      ownsRotation: true,
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale, vizUserRot = 0 } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; t += dt;
         const bass = bassOf(freqData), energy = energyOf(freqData);
 
@@ -4978,11 +4981,15 @@
         for (let k = 0; k < RING; k++) joined[k] = clamp01(joined[k] + (k < crowd ? 1 : -1) * dt * 0.6);
 
         // ── camera: swinging round the baby, looking a little down ──
-        const cam = Math.sin(orbit) * 0.95, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
+        // the pivot is the star's own vertical axis, following it as the
+        // triple steps carry it sideways (eased, so the hip sway doesn't jiggle the view)
+        const { prims: body, root } = pose(beat);
+        pivX += (root[0] - pivX) * Math.min(1, dt * 3); pivZ += (root[1] - pivZ) * Math.min(1, dt * 3);
+        const cam = Math.sin(orbit) * 0.95 + vizUserRot, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
         const cc = Math.cos(cam), cs = Math.sin(cam), pc = Math.cos(pitch), ps = Math.sin(pitch);
         const D = 3.2, f = Math.min(VW, VH) * 1.55 * vizUserScale, oy = cy + VH * 0.02;
         const toCam = (p) => {
-          const x = p[0] * cc + p[2] * cs, z = -p[0] * cs + p[2] * cc, y = p[1] - 0.45;
+          const px = p[0] - pivX, pz = p[2] - pivZ, x = px * cc + pz * cs, z = -px * cs + pz * cc, y = p[1] - 0.45;
           return [x, y * pc - z * ps, y * ps + z * pc];
         };
         const proj = (p) => { const q = toCam(p), d = Math.max(0.2, D - q[2]); return [cx + q[0] * f / d, oy - q[1] * f / d, d]; };
@@ -4992,7 +4999,7 @@
         bg.addColorStop(0, `hsl(${(hueBase + 250) % 360 | 0},55%,12%)`);
         bg.addColorStop(1, `hsl(${(hueBase + 190) % 360 | 0},60%,22%)`);
         vctx.fillStyle = bg; vctx.fillRect(0, 0, VW, VH);
-        const sp = proj([0, 0.5, 0]), sr = Math.min(VW, VH) * 0.5;
+        const sp = proj([pivX, 0.5, pivZ]), sr = Math.min(VW, VH) * 0.5;
         const sg = vctx.createRadialGradient(sp[0], sp[1], 0, sp[0], sp[1], sr);
         sg.addColorStop(0, `rgba(255,240,210,${(0.18 + flash * 0.18).toFixed(3)})`); sg.addColorStop(1, 'rgba(255,240,210,0)');
         vctx.fillStyle = sg; vctx.fillRect(0, 0, VW, VH);
@@ -5086,7 +5093,7 @@
           const a = ringRot + k * Math.PI * 2 / RING, e = smooth(0, 1, joined[k]), r = 1.25 + (1 - e) * 0.8;
           dancers.push({ x: Math.sin(a) * r, z: Math.cos(a) * r, yaw: a, s: 0.55, alpha: e });
         }
-        const { prims: body, root } = pose(beat), prims = [];
+        const prims = [];
         const dirOf = (d) => { const x = d[0] * cc + d[2] * cs, z = -d[0] * cs + d[2] * cc; return [x, d[1] * pc - z * ps, d[1] * ps + z * pc]; };
         const scr = (q) => { const d = Math.max(0.2, D - q[2]); return [cx + q[0] * f / d, oy - q[1] * f / d, d]; };
         for (const dn of dancers) {

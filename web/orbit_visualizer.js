@@ -87,6 +87,10 @@ window.orbitViz = (function () {
   //   false turns the scale-up off for that mode; it then owns the
   //   uncovered corners itself (e.g. clearing/fading the whole canvas
   //   in screen space rather than through the rotated transform).
+  // - ownsRotation?: defaults to false. true means the host doesn't turn
+  //   the canvas under the Rotate control at all; the mode reads the
+  //   angle from ctx.vizUserRot and applies it itself -- for a 3D scene
+  //   that would rather swing its camera round than roll the picture.
   //
   // Every call into a plugin's own draw/init/teardown is wrapped in
   // try/catch (see callPlugin inside init() below): third-party code is
@@ -115,6 +119,7 @@ window.orbitViz = (function () {
       init: typeof def.init === 'function' ? def.init : null,
       teardown: typeof def.teardown === 'function' ? def.teardown : null,
       rotationCover: def.rotationCover !== false,
+      ownsRotation: def.ownsRotation === true,
       broken: false,
     };
     pluginModes.set(mode.id, mode);
@@ -553,7 +558,7 @@ window.orbitViz = (function () {
       return {
         vctx, VW: s.VW, VH: s.VH,
         cx: s.VW / 2 + s.vizPanX, cy: s.VH / 2 + s.vizPanY,
-        hueBase: s.c60Hue * 360, vizRot: s.vizRot, vizUserScale: s.vizUserScale,
+        hueBase: s.c60Hue * 360, vizRot: s.vizRot, vizUserScale: s.vizUserScale, vizUserRot: s.vizUserRot,
         freqData: s.freqData, waveData: s.waveData, videoFrame: s.videoFrame,
         speed: s.speed, reactivity: s.reactivity,
       };
@@ -1639,17 +1644,18 @@ window.orbitViz = (function () {
       if (!externalClock) scheduleDraw();
       if (!s.VW || !s.VH) return;
       if (s.autopilot && !s.restoring) autopilotTick();
-      if (s.vizUserRot) {
+      const rotPm = !s.vizOff && pluginModes.get(s.vizMode);
+      if (s.vizUserRot && !(rotPm && rotPm.ownsRotation)) {
         // the whole scene turned about the centre, scaled up just enough
         // that a rotated frame still covers the corners (no wedges of
         // last frame peeking through). Feedback modes read the canvas
         // back each frame, so under a rotation their trails spiral --
         // that's the fun of it. A plugin mode registered with
         // rotationCover: false opts out of the scale-up (see the
-        // registry's own comment).
+        // registry's own comment); one with ownsRotation: true isn't
+        // turned at all, it applies ctx.vizUserRot itself.
         const W = s.VW, H = s.VH, c = Math.abs(Math.cos(s.vizUserRot)), sn = Math.abs(Math.sin(s.vizUserRot));
-        const pm = !s.vizOff && pluginModes.get(s.vizMode);
-        const cover = pm && !pm.rotationCover ? 1 : Math.max((W * c + H * sn) / W, (W * sn + H * c) / H);
+        const cover = rotPm && !rotPm.rotationCover ? 1 : Math.max((W * c + H * sn) / W, (W * sn + H * c) / H);
         vctx.save();
         vctx.translate(W / 2, H / 2); vctx.rotate(s.vizUserRot); vctx.scale(cover, cover); vctx.translate(-W / 2, -H / 2);
         drawScene();

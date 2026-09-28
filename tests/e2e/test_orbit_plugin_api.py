@@ -397,3 +397,36 @@ def test_plugin_modes_and_transitions_get_learnable_midi_rows(page, golden_path_
     page.wait_for_timeout(200)
     saved = page.evaluate("() => JSON.parse(localStorage.getItem('weed.orbit.midi'))")
     assert any(r['id'] == 'mode:halftone' and r['key'] == 'n9:60' for r in saved)
+
+
+def test_a_mode_that_owns_rotation_gets_the_angle_instead_of_a_turned_canvas(page, golden_path_server):
+    """Ryan, on Dancing baby: Rotate should swing round the baby's
+    y-axis like the ring and the lights do, not roll the picture about
+    the screen's z. A mode registered with ownsRotation: true is drawn
+    on an unturned canvas and reads the angle from ctx.vizUserRot; any
+    other mode still gets the whole canvas turned."""
+    _download_and_play(page, golden_path_server)
+    page.evaluate("""() => {
+        window.__rot = {};
+        for (const [id, owns] of [['stub-owns-rot', true], ['stub-rolled', false]]) {
+            window.orbitViz.registerMode({
+                id, ownsRotation: owns,
+                draw: (ctx) => {
+                    const m = ctx.vctx.getTransform();
+                    window.__rot[id] = { angle: ctx.vizUserRot, b: m.b };
+                    ctx.vctx.fillStyle = '#123456';
+                    ctx.vctx.fillRect(0, 0, ctx.VW, ctx.VH);
+                },
+            });
+        }
+    }""")
+    _open_orbit_viz(page)
+    page.evaluate("() => window.orbitViz.control('rotate', 0.75)")
+
+    page.locator('[data-viz="stub-owns-rot"]').click()
+    page.wait_for_function("() => window.__rot['stub-owns-rot'] && window.__rot['stub-owns-rot'].angle > 0.5")
+    assert page.evaluate("() => window.__rot['stub-owns-rot'].b") == 0   # canvas not turned
+
+    page.locator('[data-viz="stub-rolled"]').click()
+    page.wait_for_function("() => window.__rot['stub-rolled'] && window.__rot['stub-rolled'].angle > 0.5")
+    assert page.evaluate("() => window.__rot['stub-rolled'].b") != 0    # canvas turned
