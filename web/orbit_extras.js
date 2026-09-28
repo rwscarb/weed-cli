@@ -4934,8 +4934,11 @@
     const joined = new Float32Array(RING);
     viz.registerMode({
       id: 'dancingbaby', label: 'Dancing baby',
+      // Rotate swings the camera round the star's vertical axis, the way
+      // the ring and the lights go round it, instead of rolling the picture
+      ownsRotation: true,
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale, vizUserRot = 0 } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; t += dt;
         const bass = bassOf(freqData), energy = energyOf(freqData);
 
@@ -4982,7 +4985,7 @@
         // triple steps carry it sideways (eased, so the hip sway doesn't jiggle the view)
         const { prims: body, root } = pose(beat);
         pivX += (root[0] - pivX) * Math.min(1, dt * 3); pivZ += (root[1] - pivZ) * Math.min(1, dt * 3);
-        const cam = Math.sin(orbit) * 0.95, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
+        const cam = Math.sin(orbit) * 0.95 + vizUserRot, pitch = 0.2 + Math.sin(orbit * 0.7) * 0.06;
         const cc = Math.cos(cam), cs = Math.sin(cam), pc = Math.cos(pitch), ps = Math.sin(pitch);
         const D = 3.2, f = Math.min(VW, VH) * 1.55 * vizUserScale, oy = cy + VH * 0.02;
         const toCam = (p) => {
