@@ -343,9 +343,10 @@ reflects the sun, the mountains and the sky, rippling with the waveform,
 with Mirror's waveform trace running down the middle of the road -- and
 sends a bright rung racing toward the camera
 on every kick, palms swaying on the edges) and Fire (the old demoscene
-fire effect with the spectrum as its fuel bed -- bass on the left, treble
-on the right, each band growing its own flame, standing taller the louder
-it gets -- gusting in a wind, the bright parts of the video smouldering in
+fire effect fed by a row of burners that are the spectrum -- bass on the
+left, treble on the right, each burner's tongue as tall as its band is
+loud -- rising through a turbulence that makes the tongues lick, curl and
+taper to points, gusting in a wind, the bright parts of the video smouldering in
 outline, and every kick flaring the bed and throwing a shower of sparks),
 plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
