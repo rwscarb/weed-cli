@@ -2902,8 +2902,10 @@
         // shake: every grain takes a random step sized by how much the
         // plate moves under it, so grains wander off antinodes and come
         // to rest where the plate is still -- plus a little drift down
-        // the vibration's slope, which is what sharpens the lines
-        const shake = (0.012 + energy * 0.05) * speed * Math.min(3, dt * 60), E = 0.004, pull = shake * 0.01 / E;
+        // the vibration's slope, which is what sharpens the lines. Speed
+        // is scaled 3x here so the slider's 1x lands on lively motion
+        // (it used to take Speed 3 to get the sand walking)
+        const shake = (0.012 + energy * 0.05) * speed * 3 * Math.min(3, dt * 60), E = 0.004, pull = shake * 0.01 / E;
         for (let i = 0; i < N; i++) {
           const x = px[i], y = py[i], a0 = amp(x, y), a = a0 + 0.004;
           const gx = amp(x + E, y) - a0, gy = amp(x, y + E) - a0;
