@@ -194,7 +194,7 @@ The player's 🌀 button opens the **Orbit Visualizer**: a canvas driven by
 the track's audio (Web Audio analyser) and a low-res sample of its
 picture. Eleven built-in modes — Tunnel, Bars, Mirror, Scope, Spiral,
 Pixels, ASCII (six character sets, natural or neon), Plasma, Kaleido,
-Particles, Freefall — plus the thirty in `web/orbit_extras.js` (next
+Particles, Freefall — plus the thirty-three in `web/orbit_extras.js` (next
 section). Click the lit mode again for the plain video. Speed, React and
 Zoom retune every mode; every setting persists in the browser.
 
@@ -342,7 +342,12 @@ over a neon grid that scrolls at Speed -- the floor is a mirror that
 reflects the sun, the mountains and the sky, rippling with the waveform,
 with Mirror's waveform trace running down the middle of the road -- and
 sends a bright rung racing toward the camera
-on every kick, palms swaying on the edges), plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
+on every kick, palms swaying on the edges) and Fire (the old demoscene
+fire effect with the spectrum as its fuel bed -- bass on the left, treble
+on the right, each band growing its own flame, standing taller the louder
+it gets -- gusting in a wind, the bright parts of the video smouldering in
+outline, and every kick flaring the bed and throwing a shower of sparks),
+plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
 draw perspective faces as runs of affine strips, since Canvas 2D has no

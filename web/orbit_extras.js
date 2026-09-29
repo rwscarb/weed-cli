@@ -10,7 +10,7 @@
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
 //              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
-//              Synthwave
+//              Synthwave, Fire
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -5475,6 +5475,134 @@
         palm(vctx, VW * 0.07, VH * 1.02, VH * 0.62 * zoom, 0.18, sway, 1);
         palm(vctx, VW * 0.93, VH * 1.02, VH * 0.5 * zoom, -0.22, sway * 0.8, -1);
         vctx.lineCap = 'butt'; vctx.lineJoin = 'miter';
+      },
+    });
+  })();
+
+  // ── Fire (mode): the old demoscene fire effect, played to the music.
+  // A grid of heat where every cell takes the heat of a cell below it,
+  // nudged sideways by a gusting wind, minus a little -- the familiar
+  // flickering tongues. The bottom row is the fuel, and it's the
+  // spectrum: bass on the left, treble on the right, so each band grows
+  // its own flame, and the louder it gets the less the heat decays and
+  // the higher the whole fire climbs. The bright parts of the picture
+  // catch too, so the video burns in outline. A kick flares the fuel
+  // bed and throws a shower of sparks up out of the flames. The palette
+  // runs black, through the drifting hue, to white-hot.
+  (function () {
+    const grid = offscreen();
+    let GW = 0, GH = 0, heat = null, next = null, sparks = [];
+    let acc = 0, bassAvg = 0, cooldown = 0, flare = 0, gust = 0, lutHue = -1, LUT = null;
+    function reset(w, h) { GW = w; GH = h; heat = new Float32Array(w * h); next = new Float32Array(w * h); }
+    // heat 0..1 -> rgb, 256 steps: black, a deep ember of the hue, the
+    // hue at full, a yellower shift of it, then white
+    function buildLut(h0) {
+      LUT = new Uint8ClampedArray(256 * 3);
+      const hsl = (hh, ss, ll) => {
+        const a = ss * Math.min(ll, 1 - ll), f = (m) => { const k = (m + hh / 30) % 12; return ll - a * Math.max(-1, Math.min(k - 3, 9 - k, 1)); };
+        return [f(0) * 255, f(8) * 255, f(4) * 255];
+      };
+      for (let i = 0; i < 256; i++) {
+        const t = i / 255;
+        const c = hsl((h0 + t * 55) % 360, 1, Math.min(1, t * 0.7 + t * t * 0.4));
+        LUT[i * 3] = c[0]; LUT[i * 3 + 1] = c[1]; LUT[i * 3 + 2] = c[2];
+      }
+      lutHue = h0;
+    }
+    function step(freqData, videoFrame, VW, VH, energy, react, wind) {
+      // fuel: the bottom two rows, one band per column on a log scale.
+      // Each cell is either burning or not, the louder its band the more
+      // often -- the averaging below turns that flicker into tongues
+      const maxBin = Math.floor(freqData.length * 0.7);
+      for (let x = 0; x < GW; x++) {
+        const b = Math.min(maxBin - 1, Math.floor(Math.pow(x / GW, 1.7) * maxBin));
+        const lvl = freqData[b] / 255;
+        const p = 0.3 + clamp01(lvl * react) * 0.6 + flare * 0.3;   // an idle flame even in silence
+        const v = Math.random() < p ? 1 : Math.random() * 0.2;
+        heat[(GH - 1) * GW + x] = v; heat[(GH - 2) * GW + x] = v;
+      }
+      // the picture's bright parts smoulder in place
+      if (videoFrame) {
+        const burn = 0.4 + energy * react;
+        for (let k = 0; k < GW * GH * 0.03; k++) {
+          const x = (Math.random() * GW) | 0, y = (Math.random() * (GH - 2)) | 0;
+          const l = lumAt(videoFrame, (x + 0.5) * VW / GW, (y + 0.5) * VH / GH, VW, VH);
+          if (l > 0.6) { const i = y * GW + x; heat[i] = Math.max(heat[i], (l - 0.6) * 2.5 * burn); }
+        }
+      }
+      // loud: the heat decays slower, so the flames stand taller
+      const decay = (1.2 / GH) * (1.3 - clamp01(energy * react * 1.8) * 0.75);
+      for (let y = 0; y < GH - 2; y++) {
+        const row = y * GW, b1 = (y + 1) * GW, b2 = (y + 2) * GW;
+        for (let x = 0; x < GW; x++) {
+          // the three cells below and the one below those; the wind
+          // leans it by sometimes reading a column upwind
+          let sx = x + (Math.random() < Math.abs(wind) ? -Math.sign(wind) : 0);
+          if (sx < 0) sx += GW; else if (sx >= GW) sx -= GW;
+          const l = sx === 0 ? GW - 1 : sx - 1, r = sx === GW - 1 ? 0 : sx + 1;
+          const v = (heat[b1 + l] + heat[b1 + sx] + heat[b1 + r] + heat[b2 + sx]) * 0.25 - decay * (0.5 + Math.random());
+          next[row + x] = v > 0 ? v : 0;
+        }
+      }
+      for (let i = (GH - 2) * GW; i < GH * GW; i++) next[i] = heat[i];
+      const t = heat; heat = next; next = t;
+    }
+    viz.registerMode({
+      id: 'fire', label: 'Fire',
+      init() { GW = 0; sparks = []; acc = 0; bassAvg = 0; cooldown = 0; flare = 0; gust = 0; lutHue = -1; },
+      draw(ctx) {
+        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, reactivity, vizRot, vizUserScale } = ctx;
+        const w = Math.max(48, Math.round(200 / vizUserScale)), h = Math.max(30, Math.round(w * VH / VW));
+        if (w !== GW || h !== GH) reset(w, h);
+        const bass = bassOf(freqData), energy = energyOf(freqData), react = 0.5 + reactivity * 0.5;
+        bassAvg = bassAvg * 0.92 + bass * 0.08; cooldown = Math.max(0, cooldown - 1);
+        flare *= 0.85;
+        const S = Math.min(VW, VH);
+        if (cooldown === 0 && bass > bassAvg * (1.35 - Math.min(1, react) * 0.15) + 0.05) {
+          cooldown = 8; flare = 1;
+          // sparks from where the fire's hottest along the bottom third
+          const n = 12 + (bass * 40) | 0;
+          for (let i = 0; i < n; i++) {
+            const x = Math.random() * VW;
+            sparks.push({ x, y: VH * (0.75 + Math.random() * 0.25), vx: (Math.random() - 0.5) * S * 0.004, vy: -S * (0.006 + Math.random() * 0.012) * (0.6 + bass), life: 1, fade: 0.008 + Math.random() * 0.015 });
+          }
+          if (sparks.length > 600) sparks.splice(0, sparks.length - 600);
+        }
+        // the wind: a slow sway plus gusts on the energy
+        gust = gust * 0.97 + (Math.random() - 0.5) * energy * 0.2;
+        const wind = Math.max(-0.6, Math.min(0.6, Math.sin(vizRot * 0.7) * 0.25 + gust));
+        acc += speed * 2;
+        let n = 0;
+        while (acc >= 1 && n < 6) { acc -= 1; n++; step(freqData, videoFrame, VW, VH, energy, react, wind); }
+        const h0 = Math.round(hueBase) % 360;
+        if (h0 !== lutHue) buildLut(h0);
+        const { c, ctx: gc } = grid(GW, GH);
+        const img = gc.createImageData(GW, GH), d = img.data;
+        for (let i = 0; i < heat.length; i++) {
+          const li = Math.min(255, heat[i] * 255 | 0) * 3, o = i * 4;
+          d[o] = LUT[li]; d[o + 1] = LUT[li + 1]; d[o + 2] = LUT[li + 2]; d[o + 3] = 255;
+        }
+        gc.putImageData(img, 0, 0);
+        vctx.imageSmoothingEnabled = true;
+        vctx.drawImage(c, 0, 0, GW, GH - 3, 0, 0, VW, VH);   // the speckled fuel rows stay just off the bottom edge
+        // the glow over the top of it on a flare
+        if (flare > 0.05) {
+          const g = vctx.createLinearGradient(0, VH, 0, VH * 0.3);
+          g.addColorStop(0, `hsla(${(h0 + 30) % 360},100%,60%,${(flare * 0.25).toFixed(3)})`);
+          g.addColorStop(1, `hsla(${(h0 + 30) % 360},100%,60%,0)`);
+          vctx.fillStyle = g; vctx.fillRect(0, 0, VW, VH);
+        }
+        // sparks: rising, drifting on the wind, cooling as they go
+        vctx.save(); vctx.globalCompositeOperation = 'lighter';
+        const r = Math.max(1, S / 400);
+        sparks = sparks.filter(p => p.life > 0 && p.y > -10);
+        for (const p of sparks) {
+          p.vx += wind * S * 0.0004 + (Math.random() - 0.5) * S * 0.0006; p.vy *= 0.99;
+          p.x += p.vx * speed; p.y += p.vy * speed; p.life -= p.fade * speed;
+          vctx.fillStyle = `hsla(${(h0 + 20 + p.life * 35) % 360 | 0},100%,${(50 + p.life * 40) | 0}%,${clamp01(p.life).toFixed(3)})`;
+          vctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
+        }
+        vctx.restore();
       },
     });
   })();
