@@ -4297,7 +4297,7 @@
     viz.registerMode({
       id: 'hackers', label: 'Hackers',
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
         const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
         kick = Math.max(kick * 0.9, bass > 0.5 ? bass : 0);
@@ -4938,7 +4938,7 @@
       // the ring and the lights go round it, instead of rolling the picture
       ownsRotation: true,
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale, vizUserRot = 0 } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale, vizUserRot = 0 } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; t += dt;
         const bass = bassOf(freqData), energy = energyOf(freqData);
 
