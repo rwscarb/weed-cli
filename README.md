@@ -346,8 +346,9 @@ on every kick, palms swaying on the edges) and Fire (the old demoscene
 fire effect fed by a row of burners that are the spectrum -- bass on the
 left, treble on the right, each burner's tongue as tall as its band is
 loud -- rising through a turbulence that makes the tongues lick, curl and
-taper to points, gusting in a wind, the bright parts of the video smouldering in
-outline, and every kick flaring the bed and throwing a shower of sparks),
+taper to points, gusting in a wind, over the video -- at full resolution,
+dimmed, each flame shading it so the fire reads on a bright picture, Zoom
+and drag framing it -- and every kick flaring the bed and throwing a shower of sparks),
 plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
