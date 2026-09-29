@@ -4297,7 +4297,7 @@
     viz.registerMode({
       id: 'hackers', label: 'Hackers',
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
         const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
         kick = Math.max(kick * 0.9, bass > 0.5 ? bass : 0);
@@ -4938,7 +4938,7 @@
       // the ring and the lights go round it, instead of rolling the picture
       ownsRotation: true,
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, speed, vizUserScale, vizUserRot = 0 } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale, vizUserRot = 0 } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; t += dt;
         const bass = bassOf(freqData), energy = energyOf(freqData);
 
@@ -5487,14 +5487,23 @@
   // band is loud. The heat rises through a turbulent sway that grows
   // with height, so the tongues lick and curl and narrow to points,
   // leaning in a gusting wind. The louder it gets the less the heat decays and
-  // the higher the whole fire climbs. The bright parts of the picture
-  // catch too, so the video burns in outline. A kick flares the fuel
+  // the higher the whole fire climbs. A kick flares the fuel
   // bed and throws a shower of sparks up out of the flames. The palette
-  // runs black, through the drifting hue, to white-hot.
+  // runs black, through the drifting hue, to white-hot, and the video
+  // plays behind it all, dimmed, with each flame shading it.
   (function () {
-    const grid = offscreen();
+    const grid = offscreen(), shade = offscreen();
     let GW = 0, GH = 0, heat = null, next = null, sparks = [];
     let acc = 0, bassAvg = 0, cooldown = 0, flare = 0, gust = 0, lutHue = -1, LUT = null, tongues = [], clock = 0;
+    // the backdrop is the player's real <video> at full resolution, not
+    // the tiny sampled frame the modes get -- the borrowed footage when
+    // a video swap is loaded, the track's own picture otherwise
+    function picture() {
+      const sv = document.querySelector('#global-player video.swap-video');
+      if (sv && sv.getAttribute('src') && sv.readyState >= 2 && sv.videoWidth) return sv;
+      const v = document.querySelector('#global-player video:not(.swap-video)');
+      return v && v.readyState >= 2 && v.videoWidth ? v : null;
+    }
     function reset(w, h) { GW = w; GH = h; heat = new Float32Array(w * h); next = new Float32Array(w * h); makeTongues(); }
     // heat 0..1 -> rgb, 256 steps: black, a deep ember of the hue, the
     // hue at full, a yellower shift of it, then white
@@ -5520,7 +5529,7 @@
         ph: Math.random() * 100, f: 5 + Math.random() * 6, jit: 0, amp: 0.5,
       }));
     }
-    function step(freqData, videoFrame, VW, VH, energy, react, wind) {
+    function step(freqData, energy, react, wind) {
       clock += 1 / 60;
       const maxBin = Math.floor(freqData.length * 0.7);
       const bandAt = (fx) => freqData[Math.min(maxBin - 1, Math.floor(Math.pow(fx, 1.7) * maxBin))] / 255;
@@ -5540,15 +5549,6 @@
           const q = dx / t.w; if (q > -3 && q < 3) v += t.amp * Math.exp(-q * q);
         }
         v = Math.min(0.95, v); heat[base + x] = v; heat[base + GW + x] = v;
-      }
-      // the picture's bright parts smoulder in place
-      if (videoFrame) {
-        const burn = 0.4 + energy * react;
-        for (let k = 0; k < GW * GH * 0.03; k++) {
-          const x = (Math.random() * GW) | 0, y = (Math.random() * (GH - 2)) | 0;
-          const l = lumAt(videoFrame, (x + 0.5) * VW / GW, (y + 0.5) * VH / GH, VW, VH);
-          if (l > 0.6) { const i = y * GW + x; heat[i] = Math.max(heat[i], (l - 0.6) * 2.5 * burn); }
-        }
       }
       // loud: the heat decays slower, so the flames stand taller. It's
       // subtracted, not scaled, so a tongue's thin edges die first and
@@ -5582,8 +5582,8 @@
       id: 'fire', label: 'Fire',
       init() { GW = 0; sparks = []; clock = 0; acc = 0; bassAvg = 0; cooldown = 0; flare = 0; gust = 0; lutHue = -1; },
       draw(ctx) {
-        const { vctx, VW, VH, hueBase, freqData, videoFrame, speed, reactivity, vizRot, vizUserScale } = ctx;
-        const w = Math.max(48, Math.round(200 / vizUserScale)), h = Math.max(30, Math.round(w * VH / VW * 1.3));   // rows a little denser than columns: the flames stretch taller
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, reactivity, vizRot, vizUserScale } = ctx;
+        const w = 200, h = Math.max(30, Math.round(w * VH / VW * 1.3));   // rows a little denser than columns: the flames stretch taller
         if (w !== GW || h !== GH) reset(w, h);
         const bass = bassOf(freqData), energy = energyOf(freqData), react = 0.5 + reactivity * 0.5;
         bassAvg = bassAvg * 0.92 + bass * 0.08; cooldown = Math.max(0, cooldown - 1);
@@ -5604,18 +5604,37 @@
         const wind = Math.max(-0.6, Math.min(0.6, Math.sin(vizRot * 0.7) * 0.25 + gust));
         acc += speed * 2;
         let n = 0;
-        while (acc >= 1 && n < 6) { acc -= 1; n++; step(freqData, videoFrame, VW, VH, energy, react, wind); }
+        while (acc >= 1 && n < 6) { acc -= 1; n++; step(freqData, energy, react, wind); }
         const h0 = Math.round(hueBase) % 360;
         if (h0 !== lutHue) buildLut(h0);
-        const { c, ctx: gc } = grid(GW, GH);
-        const img = gc.createImageData(GW, GH), d = img.data;
+        const { c, ctx: gc } = grid(GW, GH), { c: mc, ctx: mx } = shade(GW, GH);
+        const img = gc.createImageData(GW, GH), d = img.data, sh = mx.createImageData(GW, GH), m = sh.data;
         for (let i = 0; i < heat.length; i++) {
           const li = Math.min(255, heat[i] * 255 | 0) * 3, o = i * 4;
           d[o] = LUT[li]; d[o + 1] = LUT[li + 1]; d[o + 2] = LUT[li + 2]; d[o + 3] = 255;
+          m[o + 3] = Math.min(190, Math.max(0, heat[i] - 0.1) * 560);    // black, as opaque as the flame is hot, no wider than it shows
         }
-        gc.putImageData(img, 0, 0);
+        gc.putImageData(img, 0, 0); mx.putImageData(sh, 0, 0);
+        // the video behind the flames: filling the frame, dimmed so the
+        // fire reads over it -- darkest at the bottom, where the flames are
+        vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
+        const v = picture();
+        if (v) {
+          const k = Math.max(VW / v.videoWidth, VH / v.videoHeight) * vizUserScale, dw = v.videoWidth * k, dh = v.videoHeight * k;
+          vctx.drawImage(v, cx - dw / 2, cy - dh / 2, dw, dh);
+          const dim = vctx.createLinearGradient(0, 0, 0, VH);
+          dim.addColorStop(0, 'rgba(0,0,0,0.25)'); dim.addColorStop(1, `rgba(0,0,0,${(0.55 - flare * 0.15).toFixed(3)})`);
+          vctx.fillStyle = dim; vctx.fillRect(0, 0, VW, VH);
+        }
+        // the fire: first a soft shadow of it darkens the video behind
+        // each flame, so a bright picture doesn't wash the flames out,
+        // then the flames are added on top -- their black lets the video
+        // through. The speckled fuel rows stay just off the bottom edge
         vctx.imageSmoothingEnabled = true;
-        vctx.drawImage(c, 0, 0, GW, GH - 3, 0, 0, VW, VH);   // the speckled fuel rows stay just off the bottom edge
+        if (v) vctx.drawImage(mc, 0, 0, GW, GH - 3, 0, 0, VW, VH);
+        vctx.save(); vctx.globalCompositeOperation = 'lighter';
+        vctx.drawImage(c, 0, 0, GW, GH - 3, 0, 0, VW, VH);
+        vctx.restore();
         // the glow over the top of it on a flare
         if (flare > 0.05) {
           const g = vctx.createLinearGradient(0, VH, 0, VH * 0.3);
