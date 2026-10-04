@@ -559,7 +559,7 @@ window.orbitViz = (function () {
         vctx, VW: s.VW, VH: s.VH,
         cx: s.VW / 2 + s.vizPanX, cy: s.VH / 2 + s.vizPanY,
         hueBase: s.c60Hue * 360, vizRot: s.vizRot, vizUserScale: s.vizUserScale, vizUserRot: s.vizUserRot,
-        freqData: s.freqData, waveData: s.waveData, videoFrame: s.videoFrame,
+        freqData: s.freqData, waveData: s.waveData, kickRaw: s.kickRaw || 0, videoFrame: s.videoFrame,
         speed: s.speed, reactivity: s.reactivity,
       };
     }
@@ -2438,6 +2438,14 @@ window.orbitViz = (function () {
       // center rather than from zero -- scaling from zero would just
       // brighten it toward 255 instead of amplifying the actual
       // waveform swing.
+      // ...except the kick band (~20-150Hz), averaged 0..1 *before*
+      // scaling: it's the hottest part of most mixes, so React > 1 pins
+      // it at 255 and a beat detector can no longer see the kick move.
+      // Modes that detect beats (Warp) read this and apply reactivity to
+      // their thresholds instead.
+      const kb = Math.max(2, Math.round(freq.length * 0.006));
+      let kick = 0; for (let i = 1; i <= kb; i++) kick += freq[i];
+      s.kickRaw = kick / (kb * 255);
       if (s.reactivity !== 1) {
         for (let i = 0; i < freq.length; i++) freq[i] = Math.min(255, freq[i] * s.reactivity);
         for (let i = 0; i < wave.length; i++) wave[i] = Math.min(255, Math.max(0, 128 + (wave[i] - 128) * s.reactivity));

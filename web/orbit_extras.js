@@ -2746,10 +2746,14 @@
   // walls of light above and below a thin horizontal slot, rushing past
   // toward the camera, each lane of the walls lit by its own band of
   // the spectrum. A big bass hit "engages" -- the streaks snap long and
-  // a warp flash bursts from the vanishing point.
+  // a warp flash bursts from the vanishing point; smaller kicks give
+  // the streaks a shorter jolt. Between hits the drive follows how loud
+  // the track is *for itself*, so a loud passage of a quiet recording
+  // still goes to warp speed.
   (function () {
     const N = 360, BANDS = 16, stars = [], gate = offscreen();
-    let last = 0, travel = 0, open = 0.2, flash = 0, stretch = 0, bassAvg = 0, cooldown = 0;
+    let last = 0, travel = 0, open = 0.2, flash = 0, stretch = 0, drive = 0;
+    let floor = 0, ceil = 0, hold = 0, armed = true, peakWin = 0, energyLong = 0.15, kickCool = 0, flashCool = 0;
     const spawn = (st, far) => {
       const a = Math.random() * Math.PI * 2, r = 0.04 + Math.random() * 1.2;
       st.x = Math.cos(a) * r; st.y = Math.sin(a) * r; st.z = far ? 1 : 0.05 + Math.random() * 0.95;
@@ -2758,19 +2762,52 @@
     for (let i = 0; i < N; i++) { const st = {}; spawn(st, false); stars.push(st); }
     viz.registerMode({
       id: 'warp', label: 'Warp',
-      init() { last = 0; open = 0.2; flash = 0; stretch = 0; bassAvg = 0; cooldown = 0; },
+      init() {
+        last = 0; open = 0.2; flash = 0; stretch = 0; drive = 0;
+        floor = 0; ceil = 0; hold = 0; armed = true; peakWin = 0; energyLong = 0.15; kickCool = 0; flashCool = 0;
+      },
       draw(ctx) {
-        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, vizUserScale } = ctx;
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, kickRaw, speed, reactivity, vizUserScale } = ctx;
         const now = performance.now(), dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now;
         const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.floor(freqData.length * 0.7);
+        // the kick drum alone (~20-150Hz at a 2048 FFT; bassOf spans up to
+        // ~1.3kHz, where bass lines, vocals and guitars bury the kick),
+        // taken before the React slider's scaling so React can't pin it
+        // at full and hide the beat -- React tunes the thresholds below
+        const kick = kickRaw;
+        const react = 0.5 + reactivity * 0.5, ease = (tau) => 1 - Math.exp(-dt / tau);
         const bands = new Float32Array(BANDS);
         for (let b = 0; b < BANDS; b++) bands[b] = freqData[Math.floor(Math.pow((b + 0.5) / BANDS, 1.6) * maxBin)] / 255;
-        // engage: a strong bass onset, and not too often, so it stays an event
-        bassAvg = bassAvg * 0.95 + bass * 0.05; cooldown = Math.max(0, cooldown - dt);
-        if (cooldown === 0 && bass > bassAvg * 1.3 + 0.08) { flash = 1; stretch = 1; cooldown = 2.5; }
-        flash = Math.max(0, flash - dt * 1.6); stretch = Math.max(0, stretch - dt * 0.8);
-        open += (Math.max(0.2, clamp01((energy - 0.1) * 3)) - open) * Math.min(1, dt * 1.5);
-        travel += dt * speed * (0.8 + energy * 6 + stretch * 4);
+        // engage: track the bass's own floor and ceiling, and call it a kick
+        // when it climbs most of the way from one to the other -- relative
+        // to this track's swing, so it works whether the bass sits low or
+        // high (a fixed "30% over average" can't be reached once it sits
+        // high). Every kick jolts the streaks; a kick that reaches the
+        // loudest bass in a while also fires the flash.
+        kickCool = Math.max(0, kickCool - dt); flashCool = Math.max(0, flashCool - dt); peakWin = Math.max(0, peakWin - dt);
+        floor += (kick - floor) * ease(kick < floor ? 0.12 : 0.8);
+        ceil = kick > ceil ? kick : ceil + (kick - ceil) * ease(1.2);
+        hold = kick > hold ? kick : hold + (kick - hold) * ease(3);
+        const swing = ceil - floor, pos = (kick - floor) / Math.max(swing, 0.035 / react);
+        if (pos < 0.45) armed = true;
+        if (armed && kickCool === 0 && pos > 0.7 - 0.1 * (react - 1) && swing > 0.012 / react) {
+          armed = false; kickCool = 0.12; peakWin = 0.2;
+          stretch = Math.max(stretch, 0.5 + 0.5 * clamp01(swing * react * 5));
+        }
+        // the flash is judged at the kick's peak, a moment after its onset:
+        // one of the hardest kicks lately, or just a big one
+        if (peakWin > 0 && flashCool === 0 && (kick >= hold - 0.05 / react || swing * react > 0.15)) {
+          flash = Math.max(flash, 0.6 + 0.4 * clamp01(swing * react * 5)); stretch = 1;
+          flashCool = 0.8 / react; peakWin = 0;
+        }
+        flash = Math.max(0, flash - dt * 1.6); stretch = Math.max(0, stretch - dt * 1.2);
+        // drive: loudness relative to the track's own recent average, quick
+        // to spool up and slower to drop out of warp
+        energyLong += (energy - energyLong) * ease(6);
+        const driveTo = clamp01(((energy / Math.max(0.03, energyLong)) - 0.95) * 2.5 * react + energy * react * 0.5);
+        drive += (driveTo - drive) * ease(driveTo > drive ? 0.25 : 0.9);
+        open += (Math.max(0.2, clamp01((energy - 0.1) * 3 * react), drive) - open) * Math.min(1, dt * 1.5);
+        travel += dt * speed * (0.8 + energy * 4 + drive * 4 + stretch * 4);
 
         vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH);
 
@@ -2817,8 +2854,8 @@
         // the warp streaks: each star drawn from where it was a moment
         // ago to where it is now, so speed is literally streak length
         const f0 = Math.min(VW, VH) * 0.5 * vizUserScale;
-        const v = dt * (0.25 * speed + energy * 1.1 + stretch * 2.2);
-        const tail = 5 + stretch * 12;
+        const v = dt * speed * (0.25 + energy * 0.8 + drive * 1.4 + stretch * 2.2);
+        const tail = 5 + drive * 6 + stretch * 12;
         vctx.lineCap = 'round';
         for (const st of stars) {
           st.z -= v;
