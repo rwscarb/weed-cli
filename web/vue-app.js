@@ -241,6 +241,9 @@ const app = createApp({
         // a tap on the picture showed the transport (touch screens have no
         // hover to reveal it); hides again a few seconds after the last touch
         controlsShown: false,
+        // fullscreen and the mouse hasn't moved for a few seconds: the
+        // cursor is hidden so it isn't parked on the picture (Ryan)
+        cursorIdle: false,
         // set whenever playback started from a playlist (its "Play all",
         // or clicking any individual track in it -- see playPlaylist/
         // playPlaylistItem) -- { items: [...], index, playlistId } into
@@ -606,6 +609,8 @@ const app = createApp({
       if (this.tabs.some(t => t.id === id)) this.activeTab = id;
     });
     document.addEventListener('keydown', this.onGlobalKeydown);
+    document.addEventListener('fullscreenchange', this.onPlayerFullscreenChange);
+    document.addEventListener('webkitfullscreenchange', this.onPlayerFullscreenChange);
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
     window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = Math.min(10000, Math.max(0, e.detail | 0)); });
@@ -1129,6 +1134,25 @@ const app = createApp({
       this.player.controlsShown = true;
       clearTimeout(this._controlsTimer);
       this._controlsTimer = setTimeout(() => { this.player.controlsShown = false; }, 3500);
+    },
+    // fullscreen hides the cursor after a few seconds without the mouse
+    // moving; any movement (or a click) brings it back. Only while the
+    // player itself is the fullscreen element -- PIP/theater never hide it.
+    onPlayerFullscreenChange() {
+      if (this.isPlayerFullscreen()) this.wakePlayerCursor();
+      else { clearTimeout(this._cursorIdleTimer); this.player.cursorIdle = false; }
+    },
+    isPlayerFullscreen() {
+      const el = this.$refs.globalPlayer;
+      return !!el && (document.fullscreenElement || document.webkitFullscreenElement) === el;
+    },
+    wakePlayerCursor() {
+      if (!this.isPlayerFullscreen()) return;
+      this.player.cursorIdle = false;
+      clearTimeout(this._cursorIdleTimer);
+      this._cursorIdleTimer = setTimeout(() => {
+        if (this.isPlayerFullscreen()) this.player.cursorIdle = true;
+      }, 3000);
     },
     // PIP → Theater → Fullscreen → PIP → ... -- the `f` hotkey's one job,
     // so pressing it repeatedly walks every size the player actually has
