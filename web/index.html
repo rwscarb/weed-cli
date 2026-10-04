@@ -635,7 +635,7 @@
      current fullscreen element also makes the browser auto-exit
      fullscreen (spec behavior, not something this needs to do by hand),
      so hiding it here doubles as leaving Fullscreen cleanly as well. -->
-<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio && !player.swap, 'swap-audio': player.isAudio && !!player.swap, paused: !player.isPlaying, 'controls-shown': player.controlsShown}]">
+<div id="global-player" ref="globalPlayer" :class="['mode-' + player.mode, {hidden: !player.visible || easterEggVisible, 'audio-mode': player.isAudio && !player.swap, 'swap-audio': player.isAudio && !!player.swap, paused: !player.isPlaying, 'controls-shown': player.controlsShown, 'cursor-idle': player.cursorIdle}]" @mousemove="wakePlayerCursor" @pointerdown="wakePlayerCursor">
   <div class="player-header" @pointerdown="onPlayerHeaderPointerDown" @click="onPlayerHeaderClick">
     <span class="player-title" v-marquee><span>{{ player.title }}</span></span>
     <span class="player-queue-pos" v-if="player.queue" title="Playlist position">{{ player.queue.index + 1 }} / {{ player.queue.items.length }}</span>

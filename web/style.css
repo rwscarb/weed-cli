@@ -913,6 +913,13 @@ td button {
   transform: none;
   resize: none;       /* PIP/theater's drag-resize corner means nothing here */
 }
+/* no mouse movement for a few seconds in fullscreen (vue-app.js
+   wakePlayerCursor); every descendant too, since the video and buttons
+   set their own cursors */
+#global-player:fullscreen.cursor-idle,
+#global-player:fullscreen.cursor-idle * { cursor: none !important; }
+#global-player:-webkit-full-screen.cursor-idle,
+#global-player:-webkit-full-screen.cursor-idle * { cursor: none !important; }
 
 /* Prev/Next as an overlay on the video itself, not the header -- works
    identically at every player size (PIP included, where the header has
@@ -1484,7 +1491,11 @@ td button {
 #orbit-egg-dialog:fullscreen.ui-idle header,
 #orbit-egg-dialog:fullscreen.ui-idle .viz-controls,
 #orbit-egg-dialog:fullscreen.ui-idle .hint { opacity: 0; pointer-events: none; }
-#orbit-egg-dialog:fullscreen.ui-idle { cursor: none; }
+/* !important and every descendant: the canvas sets its own grab cursor
+   inline, which otherwise beat the dialog's cursor: none and left the
+   pointer showing over the picture */
+#orbit-egg-dialog:fullscreen.ui-idle,
+#orbit-egg-dialog:fullscreen.ui-idle * { cursor: none !important; }
 /* the visualizer's copy of the transport: a row under the canvas, and in
    fullscreen a strip floating just above the hint that fades with the
    rest of the chrome */
