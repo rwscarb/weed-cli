@@ -10,7 +10,7 @@
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
 //              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
-//              Synthwave, Fire
+//              Synthwave, Fire, Lawnmower Man
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -5692,6 +5692,201 @@
           vctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
         }
         vctx.restore();
+      },
+    });
+  })();
+
+  // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
+  // drew it on an SGI. The camera flies down a twisting wireframe tunnel
+  // whose rings bulge with the spectrum, its panels a dim neon
+  // checkerboard, past spinning wireframe shards. Hanging in the middle
+  // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
+  // between a head, a ball, a crystal and a spiked star, every vertex
+  // pushed out by its own band, the playing video lighting its faces.
+  // Each kick flashes the tunnel and bursts the head outward; a big hit
+  // puts "I AM GOD HERE" up in chrome. Rotate swings the head round its
+  // own axis rather than rolling the picture (ownsRotation).
+  (function () {
+    const RINGS = 26, SIDES = 16, SP = 1.1, FAR = RINGS * SP, R0 = 4, ZF = 6.2, SHARDS = 9;
+    const rotY = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+    const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+    const norm = (p) => { const l = Math.hypot(p[0], p[1], p[2]) || 1; return [p[0] / l, p[1] / l, p[2] / l]; };
+    const smooth = (v) => v * v * (3 - 2 * v);
+    // an icosahedron subdivided once: 42 vertices, 80 faces -- the
+    // polygon budget of a 1992 Reality Engine head
+    const ico = (function () {
+      const t = (1 + Math.sqrt(5)) / 2;
+      let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(norm);
+      let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+      const mid = new Map();
+      const midpoint = (a, b) => {
+        const k = a < b ? a + ',' + b : b + ',' + a;
+        if (!mid.has(k)) { const p = V[a], q = V[b]; V.push(norm([p[0] + q[0], p[1] + q[1], p[2] + q[2]])); mid.set(k, V.length - 1); }
+        return mid.get(k);
+      };
+      F = F.flatMap(([a, b, c]) => { const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a); return [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]; });
+      return { V, F };
+    })();
+    // the four shapes the head morphs between, as a radius per vertex
+    // direction: a head (taller than wide, a brow, a nose, a chin), a
+    // ball, an octahedral crystal, a spiked star
+    const SHAPES = [
+      (d) => Math.hypot(d[0] * 0.82, d[1] * 1.18, d[2] * 0.95) + (d[2] > 0.6 && Math.abs(d[0]) < 0.35 && d[1] < 0.1 && d[1] > -0.5 ? 0.28 : 0)
+        + (d[1] > 0.25 && d[1] < 0.6 && d[2] > 0.5 ? 0.1 : 0) - (d[1] < -0.85 ? 0.12 : 0),
+      () => 1,
+      (d) => 1.3 / (Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2])),
+      (d, i) => hash(i * 7.1 + 2) > 0.55 ? 1.6 : 0.8,
+    ];
+    const BINS = ico.V.map((_, i) => hash(i * 3.17 + 0.5));   // which part of the spectrum moves each vertex
+    const PHRASE = 'I AM GOD HERE';
+    let amps = null, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
+    // the tunnel's centre line wanders, so the flight banks and climbs
+    const path = (w) => [Math.sin(w * 0.11) * 2.4 + Math.sin(w * 0.047) * 1.6, Math.cos(w * 0.083) * 1.5];
+    function newShard(z) {
+      return { x: (Math.random() - 0.5) * R0 * 1.3, y: (Math.random() - 0.5) * R0 * 1.3, z, s: 0.25 + Math.random() * 0.35, a: Math.random() * 6.28, sp: 0.5 + Math.random() * 2, h: Math.random() * 360 };
+    }
+    viz.registerMode({
+      id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
+      init() { amps = null; lastRot = null; kick = flash = burst = god = 0; shards = null; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;
+        if (!amps) amps = new Float32Array(ico.V.length);
+        if (lastRot === null) lastRot = vizRot;
+        const dRot = Math.max(0, Math.min(0.5, vizRot - lastRot)); lastRot = vizRot;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.max(1, Math.floor(freqData.length * 0.7));
+        bassAvg += (bass - bassAvg) * 0.12;
+        if (bass - bassAvg > 0.05 && kick < 0.5) { kick = 1; flash = 1; burst = 1; }
+        kick *= 0.9; flash *= 0.86; burst *= 0.9;
+        const now = performance.now();
+        if (kick > 0.95 && energy > 0.45 && now - lastGod > 9000) { god = 1; lastGod = now; }
+        god = Math.max(0, god - 0.008);
+        dist += dRot * (14 + energy * 10 + kick * 12);
+        const S = Math.min(VW, VH), f = S * 0.9 * vizUserScale, t = vizRot;
+        const H = (hueBase + t * 40) % 360;
+        const camP = path(dist);
+
+        vctx.setTransform(1, 0, 0, 1, 0, 0);
+        vctx.fillStyle = '#020008'; vctx.fillRect(0, 0, VW, VH);
+        const P = (x, y, z) => [cx + x * f / z, cy + y * f / z];
+
+        // ── the tunnel ──
+        const k0 = Math.floor(dist / SP) + 1, rings = [];
+        for (let k = 0; k < RINGS; k++) {
+          const kw = k0 + k, z = kw * SP - dist; if (z < 0.25) continue;
+          const c = path(kw * SP), ox = c[0] - camP[0], oy = c[1] - camP[1], tw = kw * 0.09 + t * 0.4, pts = [];
+          for (let m = 0; m < SIDES; m++) {
+            const b = Math.min(m, SIDES - m) / (SIDES / 2);   // mirrored: bass at the top, treble at the bottom
+            const v = freqData[Math.min(freqData.length - 1, (b * maxBin * 0.6) | 0)] / 255;
+            const a = m / SIDES * Math.PI * 2 + tw, r = R0 * (1 + v * 0.35 * (1 - z / FAR));
+            pts.push(P(ox + Math.cos(a) * r, oy + Math.sin(a) * r, z));
+          }
+          rings.push({ kw, z, pts });
+        }
+        // the checkerboard panels, far to near
+        for (let n = rings.length - 1; n > 0; n--) {
+          const A = rings[n], B = rings[n - 1], fog = Math.pow(clamp01(1 - A.z / FAR), 1.4);
+          for (let m = 0; m < SIDES; m++) {
+            if ((m + A.kw) % 2) continue;
+            const m1 = (m + 1) % SIDES;
+            vctx.fillStyle = `hsla(${(H + 200 + m * 6) % 360 | 0},90%,${(14 + flash * 25) | 0}%,${(fog * (0.55 + energy * 0.3)).toFixed(3)})`;
+            vctx.beginPath(); vctx.moveTo(A.pts[m][0], A.pts[m][1]); vctx.lineTo(A.pts[m1][0], A.pts[m1][1]);
+            vctx.lineTo(B.pts[m1][0], B.pts[m1][1]); vctx.lineTo(B.pts[m][0], B.pts[m][1]); vctx.closePath(); vctx.fill();
+          }
+        }
+        // the wireframe on top: a wide faint pass then a thin bright one, for glow
+        vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineJoin = 'round';
+        for (const [lw, la] of [[S / 160, 0.18], [Math.max(1, S / 700), 0.9]]) {
+          vctx.lineWidth = lw;
+          for (let n = rings.length - 1; n >= 0; n--) {
+            const A = rings[n], B = rings[n - 1], fog = Math.pow(clamp01(1 - A.z / FAR), 1.2);
+            vctx.strokeStyle = `hsla(${(H + 300 + A.kw * 9) % 360 | 0},100%,${(55 + flash * 35) | 0}%,${(fog * la).toFixed(3)})`;
+            vctx.beginPath();
+            vctx.moveTo(A.pts[0][0], A.pts[0][1]); for (let m = 1; m <= SIDES; m++) vctx.lineTo(A.pts[m % SIDES][0], A.pts[m % SIDES][1]);
+            if (B) for (let m = 0; m < SIDES; m++) { vctx.moveTo(A.pts[m][0], A.pts[m][1]); vctx.lineTo(B.pts[m][0], B.pts[m][1]); }
+            vctx.stroke();
+          }
+        }
+
+        // ── shards: wireframe octahedra drifting past ──
+        if (!shards) shards = Array.from({ length: SHARDS }, (_, i) => newShard(2 + i * FAR / SHARDS));
+        const OCT = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+        const OCT_E = [[0, 2], [0, 3], [0, 4], [0, 5], [1, 2], [1, 3], [1, 4], [1, 5], [2, 4], [4, 3], [3, 5], [5, 2]];
+        for (const sh of shards) {
+          sh.z -= dRot * (14 + energy * 10 + kick * 12); sh.a += dRot * sh.sp * 3;
+          if (sh.z < 0.4) Object.assign(sh, newShard(FAR));
+          const fog = clamp01(1 - sh.z / FAR), pts = OCT.map(p => {
+            const q = rotX(rotY(p, sh.a), sh.a * 0.7);
+            return P(sh.x + q[0] * sh.s, sh.y + q[1] * sh.s * 1.5, sh.z + q[2] * sh.s);
+          });
+          vctx.strokeStyle = `hsla(${(sh.h + H) % 360 | 0},100%,65%,${(fog * 0.9).toFixed(3)})`; vctx.lineWidth = Math.max(1, S / 600);
+          vctx.beginPath(); for (const [a, b] of OCT_E) { vctx.moveTo(pts[a][0], pts[a][1]); vctx.lineTo(pts[b][0], pts[b][1]); } vctx.stroke();
+        }
+
+        // ── the head ──
+        // an aura behind it, swelling with the music
+        const hp = P(0, 0, ZF), hr = 1.75 * f / ZF;
+        const au = vctx.createRadialGradient(hp[0], hp[1], hr * 0.3, hp[0], hp[1], hr * (1.6 + energy + burst * 0.6));
+        au.addColorStop(0, `hsla(${(H + 40) % 360 | 0},100%,60%,${(0.25 + energy * 0.35).toFixed(3)})`); au.addColorStop(1, 'hsla(0,0%,0%,0)');
+        vctx.fillStyle = au; vctx.fillRect(0, 0, VW, VH);
+        vctx.restore();
+
+        const ph = t * 0.12, si = Math.floor(ph), u = smooth(clamp01((ph - si) * 2.5 - 1.5));   // hold a shape, then morph
+        const sA = SHAPES[si % SHAPES.length], sB = SHAPES[(si + 1) % SHAPES.length];
+        const yaw = t * 0.9 + vizUserRot, pitch = Math.sin(t * 0.35) * 0.35;
+        const W = ico.V.map((d, i) => {
+          const v = freqData[Math.min(freqData.length - 1, (BINS[i] * maxBin) | 0)] / 255;
+          amps[i] += (v - amps[i]) * 0.3;
+          let r = sA(d, i) * (1 - u) + sB(d, i) * u;
+          r *= 1 + amps[i] * 0.45 + burst * 0.3 + 0.05 * Math.sin(t * 6 + d[0] * 4 + d[1] * 3);
+          const q = rotX(rotY([d[0] * r, d[1] * r, d[2] * r], yaw), pitch);
+          return [q[0] * 1.6, q[1] * 1.6, q[2] * 1.6 + ZF];
+        });
+        const L = norm([-0.4, -0.6, -0.7]), faces = [];
+        for (let n = 0; n < ico.F.length; n++) {
+          const [a, b, c] = ico.F[n], A = W[a], B = W[b], C = W[c];
+          const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+          const nn = norm([e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]);
+          const mz = (A[2] + B[2] + C[2]) / 3;
+          if (nn[0] * (A[0] + B[0] + C[0]) + nn[1] * (A[1] + B[1] + C[1]) + nn[2] * (A[2] + B[2] + C[2]) >= 0) continue;   // facing away
+          faces.push({ n, z: mz, light: Math.max(0, nn[0] * L[0] + nn[1] * L[1] + nn[2] * L[2]), p: [P(A[0], A[1], A[2]), P(B[0], B[1], B[2]), P(C[0], C[1], C[2])] });
+        }
+        faces.sort((p, q) => q.z - p.z);
+        vctx.lineJoin = 'round';
+        for (const fc of faces) {
+          const [p0, p1, p2] = fc.p;
+          let lum = 0;
+          if (videoFrame) lum = lumAt(videoFrame, (p0[0] + p1[0] + p2[0]) / 3, (p0[1] + p1[1] + p2[1]) / 3, VW, VH);
+          const hue = (H + 260 + fc.n * 4.5 + fc.light * 80) % 360;
+          vctx.fillStyle = `hsl(${hue | 0},100%,${(12 + fc.light * 42 + lum * 30 + flash * 10) | 0}%)`;
+          vctx.strokeStyle = `hsl(${(hue + 150) % 360 | 0},100%,${(60 + burst * 30) | 0}%)`;
+          vctx.lineWidth = Math.max(1, S / 500);
+          vctx.beginPath(); vctx.moveTo(p0[0], p0[1]); vctx.lineTo(p1[0], p1[1]); vctx.lineTo(p2[0], p2[1]); vctx.closePath();
+          vctx.fill(); vctx.stroke();
+        }
+
+        // ── I AM GOD HERE ──
+        if (god > 0) {
+          const a = clamp01(god * 3) * clamp01(god * 1.2), fs = S * 0.085 * (1 + (1 - god) * 0.25);
+          vctx.save();
+          vctx.font = `900 ${fs | 0}px Impact, "Arial Black", sans-serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+          const ty = cy + S * 0.36, gr = vctx.createLinearGradient(0, ty - fs / 2, 0, ty + fs / 2);
+          gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.45, `hsl(${(H + 180) % 360 | 0},100%,70%)`);
+          gr.addColorStop(0.5, '#1a0630'); gr.addColorStop(1, `hsl(${(H + 300) % 360 | 0},100%,65%)`);   // a chrome horizon line
+          vctx.globalAlpha = a;
+          vctx.lineWidth = fs * 0.08; vctx.strokeStyle = `hsl(${(H + 300) % 360 | 0},100%,55%)`;
+          vctx.strokeText(PHRASE, cx, ty);
+          vctx.fillStyle = gr; vctx.fillText(PHRASE, cx, ty);
+          vctx.restore();
+        }
+
+        // ── scanlines, for the CRT it was shown on ──
+        if (!scan || scan.ctx !== vctx) {
+          const c = document.createElement('canvas'); c.width = 1; c.height = 3;
+          const g = c.getContext('2d'); g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(0, 2, 1, 1);
+          scan = { ctx: vctx, pat: vctx.createPattern(c, 'repeat') };
+        }
+        vctx.fillStyle = scan.pat; vctx.fillRect(0, 0, VW, VH);
       },
     });
   })();
