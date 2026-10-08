@@ -5703,7 +5703,11 @@
   // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
   // between a head, a ball, a crystal and a spiked star, every vertex
   // pushed out by its own band, the playing video lighting its faces,
-  // and every so often collapsing into its centre like an hourglass.
+  // and every so often collapsing into its centre like an hourglass --
+  // the way a ball of water stretches into a bridge between two fingers
+  // on the space station: drawn out long, necking to a thread, wobbling,
+  // then gulping back into a ball. It's all on springs, so it moves like
+  // flubber: everything overshoots and jiggles.
   // Each kick flashes the tunnel and bursts the head outward; a big hit
   // puts "I AM GOD HERE" up in chrome. Rotate swings the head round its
   // own axis rather than rolling the picture (ownsRotation).
@@ -5713,20 +5717,37 @@
     const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
     const norm = (p) => { const l = Math.hypot(p[0], p[1], p[2]) || 1; return [p[0] / l, p[1] / l, p[2] / l]; };
     const smooth = (v) => v * v * (3 - 2 * v);
-    // an icosahedron subdivided once: 42 vertices, 80 faces -- the
-    // polygon budget of a 1992 Reality Engine head
+    // a low-poly ball in latitude rings, each ring turned half a step
+    // from the last so it triangulates like a geodesic: 14 rings of 16,
+    // about 420 faces -- still a 1992 Reality Engine budget. Rings rather
+    // than a subdivided icosahedron because the liquid neck below wraps
+    // round the middle, and only rings put a full row of vertices on the
+    // equator for it to pull in (an icosphere has faces straddling it
+    // that would stay wide, a slab standing in the neck)
     const ico = (function () {
-      const t = (1 + Math.sqrt(5)) / 2;
-      let V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(norm);
-      let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
-        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
-      const mid = new Map();
-      const midpoint = (a, b) => {
-        const k = a < b ? a + ',' + b : b + ',' + a;
-        if (!mid.has(k)) { const p = V[a], q = V[b]; V.push(norm([p[0] + q[0], p[1] + q[1], p[2] + q[2]])); mid.set(k, V.length - 1); }
-        return mid.get(k);
-      };
-      F = F.flatMap(([a, b, c]) => { const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a); return [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]; });
+      const LAT = 14, LON = 16, V = [[0, 1, 0]], F = [];
+      for (let j = 1; j < LAT; j++) {
+        const th = j / LAT * Math.PI, y = Math.cos(th), rr = Math.sin(th);
+        for (let m = 0; m < LON; m++) { const a = (m + (j % 2) * 0.5) / LON * Math.PI * 2; V.push([Math.cos(a) * rr, y, Math.sin(a) * rr]); }
+      }
+      V.push([0, -1, 0]);
+      const at = (j, m) => 1 + (j - 1) * LON + ((m % LON) + LON) % LON, S = V.length - 1;
+      for (let m = 0; m < LON; m++) { F.push([0, at(1, m), at(1, m + 1)]); F.push([S, at(LAT - 1, m + 1), at(LAT - 1, m)]); }
+      for (let j = 1; j < LAT - 1; j++) {
+        const sh = j % 2;   // which way the next ring is turned decides the diagonal
+        for (let m = 0; m < LON; m++) {
+          if (sh) { F.push([at(j, m), at(j + 1, m + 1), at(j, m + 1)]); F.push([at(j, m), at(j + 1, m), at(j + 1, m + 1)]); }
+          else { F.push([at(j, m), at(j + 1, m), at(j, m + 1)]); F.push([at(j, m + 1), at(j + 1, m), at(j + 1, m + 1)]); }
+        }
+      }
+      // wind every face the same way round (outward), whichever way it was
+      // pushed, since the draw culls faces by winding
+      for (const f of F) {
+        const [A, B, C] = f.map(k => V[k]);
+        const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+        const nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
+        if (nx * (A[0] + B[0] + C[0]) + ny * (A[1] + B[1] + C[1]) + nz * (A[2] + B[2] + C[2]) < 0) { const k = f[1]; f[1] = f[2]; f[2] = k; }
+      }
       return { V, F };
     })();
     // the four shapes the head morphs between, as a radius per vertex
@@ -5741,7 +5762,7 @@
     ];
     const BINS = ico.V.map((_, i) => hash(i * 3.17 + 0.5));   // which part of the spectrum moves each vertex
     const PHRASE = 'I AM GOD HERE';
-    let amps = null, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
+    let amps = null, pos = null, vel = null, pinch = 0, pinchV = 0, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
     // the tunnel's centre line wanders, so the flight banks and climbs
     const path = (w) => [Math.sin(w * 0.11) * 2.4 + Math.sin(w * 0.047) * 1.6, Math.cos(w * 0.083) * 1.5];
     function newShard(z) {
@@ -5749,7 +5770,7 @@
     }
     viz.registerMode({
       id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
-      init() { amps = null; lastRot = null; kick = flash = burst = god = 0; shards = null; },
+      init() { amps = pos = vel = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;
         if (!amps) amps = new Float32Array(ico.V.length);
@@ -5836,18 +5857,40 @@
         const sA = SHAPES[si % SHAPES.length], sB = SHAPES[(si + 1) % SHAPES.length];
         const yaw = t * 0.9 + vizUserRot, pitch = Math.sin(t * 0.35) * 0.35;
         // the hourglass: every so often, whatever shape it is, the head
-        // collapses into its centre -- the middle pinched to a thread,
-        // the two halves drawn in toward it -- holds, then springs back;
-        // a sustained heavy bass pinches it a little on its own
+        // is pulled out into a liquid bridge -- its two halves drawn
+        // apart and swelling, the middle necking down to a thread -- holds
+        // there, then gulps back. A sustained heavy bass necks it a little
+        // on its own. The pinch rides an underdamped spring, so it
+        // overshoots both ways and quivers before it settles.
         const pc = (t * 0.07) % 1, env = smooth(clamp01((pc - 0.55) / 0.15)) * (1 - smooth(clamp01((pc - 0.85) / 0.15)));
-        const pinch = clamp01(env + Math.max(0, bassAvg - 0.4) * 0.6);
+        const target = clamp01(env + Math.max(0, bassAvg - 0.4) * 0.6);
+        pinchV = (pinchV + (target - pinch) * 0.05) * 0.92; pinch += pinchV;
+        const pn = clamp01(pinch);
+        const sigma = 0.42 - pn * 0.12, neck = 1 - pn * 0.92;
+        // the slosh: a wave running up and down the bridge, fed by how
+        // fast it's necking, as the water sloshes between the halves
+        const slosh = Math.min(0.25, Math.abs(pinchV) * 6) + pn * 0.04;
+        if (!pos) { pos = new Float32Array(ico.V.length * 3); vel = new Float32Array(ico.V.length * 3); }
         const W = ico.V.map((d, i) => {
           const v = freqData[Math.min(freqData.length - 1, (BINS[i] * maxBin) | 0)] / 255;
           amps[i] += (v - amps[i]) * 0.3;
           let r = sA(d, i) * (1 - u) + sB(d, i) * u;
           r *= 1 + amps[i] * 0.45 + burst * 0.3 + 0.05 * Math.sin(t * 6 + d[0] * 4 + d[1] * 3);
-          const w = Math.max(0.04, 1 - pinch * (1 - Math.pow(Math.abs(d[1]), 0.8))), sq = 1 - pinch * 0.2;
-          const q = rotX(rotY([d[0] * r * w, d[1] * r * sq, d[2] * r * w], yaw), pitch);
+          // the neck: a smooth notch round the middle (no corners -- surface
+          // tension rounds everything), the halves swelling to keep the
+          // volume and stretching apart along the axis
+          const y = d[1], notch = Math.exp(-(y * y) / (sigma * sigma));
+          const wv = 1 + slosh * Math.sin(y * 7 - t * 14) * (1 - notch);
+          const w = (1 - (1 - neck) * notch) * (1 + pn * 0.18) * wv;
+          const ty = y * (1 + pn * 0.3) + Math.sign(y) * pn * 0.08;
+          // every vertex chases where it should be on its own spring --
+          // soft and bouncy, so kicks, morphs and the neck all jiggle
+          const o = i * 3, tg = [d[0] * r * w, ty * r, d[2] * r * w];
+          for (let k = 0; k < 3; k++) {
+            vel[o + k] = (vel[o + k] + (tg[k] - pos[o + k]) * 0.16) * 0.84;
+            pos[o + k] += vel[o + k];
+          }
+          const q = rotX(rotY([pos[o], pos[o + 1], pos[o + 2]], yaw), pitch);
           return [q[0] * 1.6, q[1] * 1.6, q[2] * 1.6 + ZF];
         });
         const L = norm([-0.4, -0.6, -0.7]), faces = [];
@@ -5865,7 +5908,7 @@
           const [p0, p1, p2] = fc.p;
           let lum = 0;
           if (videoFrame) lum = lumAt(videoFrame, (p0[0] + p1[0] + p2[0]) / 3, (p0[1] + p1[1] + p2[1]) / 3, VW, VH);
-          const hue = (H + 260 + fc.n * 4.5 + fc.light * 80) % 360;
+          const hue = (H + 260 + fc.n * 1.1 + fc.light * 80) % 360;
           vctx.fillStyle = `hsl(${hue | 0},100%,${(12 + fc.light * 42 + lum * 30 + flash * 10) | 0}%)`;
           vctx.strokeStyle = `hsl(${(hue + 150) % 360 | 0},100%,${(60 + burst * 30) | 0}%)`;
           vctx.lineWidth = Math.max(1, S / 500);
