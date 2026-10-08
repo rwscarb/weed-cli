@@ -5702,7 +5702,8 @@
   // checkerboard, past spinning wireframe shards. Hanging in the middle
   // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
   // between a head, a ball, a crystal and a spiked star, every vertex
-  // pushed out by its own band, the playing video lighting its faces.
+  // pushed out by its own band, the playing video lighting its faces,
+  // and every so often collapsing into its centre like an hourglass.
   // Each kick flashes the tunnel and bursts the head outward; a big hit
   // puts "I AM GOD HERE" up in chrome. Rotate swings the head round its
   // own axis rather than rolling the picture (ownsRotation).
@@ -5834,12 +5835,19 @@
         const ph = t * 0.12, si = Math.floor(ph), u = smooth(clamp01((ph - si) * 2.5 - 1.5));   // hold a shape, then morph
         const sA = SHAPES[si % SHAPES.length], sB = SHAPES[(si + 1) % SHAPES.length];
         const yaw = t * 0.9 + vizUserRot, pitch = Math.sin(t * 0.35) * 0.35;
+        // the hourglass: every so often, whatever shape it is, the head
+        // collapses into its centre -- the middle pinched to a thread,
+        // the two halves drawn in toward it -- holds, then springs back;
+        // a sustained heavy bass pinches it a little on its own
+        const pc = (t * 0.07) % 1, env = smooth(clamp01((pc - 0.55) / 0.15)) * (1 - smooth(clamp01((pc - 0.85) / 0.15)));
+        const pinch = clamp01(env + Math.max(0, bassAvg - 0.4) * 0.6);
         const W = ico.V.map((d, i) => {
           const v = freqData[Math.min(freqData.length - 1, (BINS[i] * maxBin) | 0)] / 255;
           amps[i] += (v - amps[i]) * 0.3;
           let r = sA(d, i) * (1 - u) + sB(d, i) * u;
           r *= 1 + amps[i] * 0.45 + burst * 0.3 + 0.05 * Math.sin(t * 6 + d[0] * 4 + d[1] * 3);
-          const q = rotX(rotY([d[0] * r, d[1] * r, d[2] * r], yaw), pitch);
+          const w = Math.max(0.04, 1 - pinch * (1 - Math.pow(Math.abs(d[1]), 0.8))), sq = 1 - pinch * 0.2;
+          const q = rotX(rotY([d[0] * r * w, d[1] * r * sq, d[2] * r * w], yaw), pitch);
           return [q[0] * 1.6, q[1] * 1.6, q[2] * 1.6 + ZF];
         });
         const L = norm([-0.4, -0.6, -0.7]), faces = [];

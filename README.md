@@ -353,7 +353,8 @@ Lawnmower Man (Jobe's 1992 cyberspace: a flight down a twisting neon
 wireframe tunnel whose rings bulge with the spectrum, past spinning
 wireframe shards, toward a flat-shaded low-poly head that morphs between
 a face, a ball, a crystal and a spiked star, each vertex pushed out by its
-own band and its faces lit by the video, every kick flashing the tunnel
+own band and its faces lit by the video, now and then collapsing into its
+centre like an hourglass and springing back, every kick flashing the tunnel
 and a big hit putting "I AM GOD HERE" up in chrome),
 plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
