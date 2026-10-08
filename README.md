@@ -351,7 +351,7 @@ dimmed, each flame shading it so the fire reads on a bright picture, Zoom
 and drag framing it -- and every kick flaring the bed and throwing a shower of sparks) and
 Lawnmower Man (Jobe's 1992 cyberspace: a flight down a twisting neon
 wireframe tunnel whose rings bulge with the spectrum, its panels a
-checkerboard of screens playing the video with chrome mirrors among them
+checkerboard of bright, glowing screens playing the video, with chrome mirrors among them
 reflecting the head, past spinning
 wireframe shards, toward a flat-shaded low-poly head that morphs between
 a face, a ball, a crystal and a spiked star, each vertex pushed out by its

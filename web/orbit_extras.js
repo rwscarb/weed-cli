@@ -5699,8 +5699,8 @@
   // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
   // drew it on an SGI. The camera flies down a twisting wireframe tunnel
   // whose rings bulge with the spectrum, past spinning wireframe shards.
-  // Its panels are a checkerboard of video screens, each showing the
-  // playing picture, and here and there a chrome mirror showing the head
+  // Its panels are a checkerboard of glowing video screens, each showing
+  // the playing picture and throwing its light, and here and there a chrome mirror showing the head
   // reflected in it. Hanging in the middle
   // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
   // between a head, a ball, a crystal and a spiked star, every vertex
@@ -5789,7 +5789,7 @@
       (d, i) => hash(i * 7.1 + 2) > 0.55 ? 1.6 : 0.8,
     ];
     const PHRASE = 'I AM GOD HERE';
-    const headBuf = offscreen(), vidBuf = offscreen();
+    const headBuf = offscreen(), vidBuf = offscreen(), glowBuf = offscreen();
     let head = null, pinch = 0, pinchV = 0, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
     // the tunnel's centre line wanders, so the flight banks and climbs
     const path = (w) => [Math.sin(w * 0.11) * 2.4 + Math.sin(w * 0.047) * 1.6, Math.cos(w * 0.083) * 1.5];
@@ -5869,11 +5869,19 @@
             if (on) {
               if (vid && big) {
                 vctx.save(); quad(A.pts, B.pts, m, m1); vctx.clip();
-                vctx.globalAlpha = fog * (0.55 + energy * 0.35 + flash * 0.1);
+                // lit screens: the picture at full strength (the fog thins it
+                // only far down the tunnel), then added over itself so it
+                // burns brighter with the music, then a soft wash of the
+                // tunnel's colour so the screens belong to it
+                const lit = Math.pow(fog, 0.5);
+                vctx.globalAlpha = lit;
                 lay(vid, vw, vh, A.pts[m1], b1, b0);
-                // tinted toward the tunnel's colour so the screens belong to it
-                vctx.globalAlpha = 0.22 + flash * 0.25;
-                vctx.fillStyle = `hsl(${(H + 200 + m * 6) % 360 | 0},100%,45%)`; quad(A.pts, B.pts, m, m1); vctx.fill();
+                vctx.globalCompositeOperation = 'lighter';
+                vctx.globalAlpha = lit * (0.35 + energy * 0.45 + flash * 0.3);
+                lay(vid, vw, vh, A.pts[m1], b1, b0);
+                vctx.globalCompositeOperation = 'soft-light';
+                vctx.globalAlpha = 0.35 + flash * 0.3;
+                vctx.fillStyle = `hsl(${(H + 200 + m * 6) % 360 | 0},100%,55%)`; quad(A.pts, B.pts, m, m1); vctx.fill();
                 vctx.restore();
               } else {
                 vctx.fillStyle = `hsla(${(H + 200 + m * 6) % 360 | 0},90%,${(14 + flash * 25) | 0}%,${(fog * (0.55 + energy * 0.3)).toFixed(3)})`;
@@ -5903,6 +5911,21 @@
             }
           }
         }
+        // the screens emit: everything drawn so far, shrunk to a quarter,
+        // blurred and added back over itself, so light spills off every
+        // panel onto the black around it, pulsing with the music
+        if (vid) {
+          const gw = Math.max(1, VW >> 2), gh = Math.max(1, VH >> 2), { c: gc, ctx: gx } = glowBuf(gw, gh);
+          gx.clearRect(0, 0, gw, gh);
+          gx.filter = `blur(${Math.max(2, S / 160).toFixed(1)}px)`;
+          gx.drawImage(vctx.canvas, 0, 0, gw, gh);
+          gx.filter = 'none';
+          vctx.save(); vctx.globalCompositeOperation = 'lighter';
+          vctx.globalAlpha = Math.min(1, 0.55 + energy * 0.5 + flash * 0.4);
+          vctx.drawImage(gc, 0, 0, VW, VH);
+          vctx.restore();
+        }
+
         // the wireframe on top: a wide faint pass then a thin bright one, for glow
         vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineJoin = 'round';
         for (const [lw, la] of [[S / 160, 0.18], [Math.max(1, S / 700), 0.9]]) {
