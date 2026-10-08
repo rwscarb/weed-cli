@@ -40,6 +40,15 @@
     const o = (py * vf.w + px) * 4, d = vf.imageData.data;
     return (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255;
   }
+  // the player's real <video> at full resolution, not the tiny sampled
+  // frame the modes get -- the borrowed footage when a video swap is
+  // loaded, the track's own picture otherwise; null when nothing's up
+  function picture() {
+    const sv = document.querySelector('#global-player video.swap-video');
+    if (sv && sv.getAttribute('src') && sv.readyState >= 2 && sv.videoWidth) return sv;
+    const v = document.querySelector('#global-player video:not(.swap-video)');
+    return v && v.readyState >= 2 && v.videoWidth ? v : null;
+  }
   // a plugin-owned offscreen canvas, resized on demand
   function offscreen() {
     const c = document.createElement('canvas'); const ctx = c.getContext('2d');
@@ -5534,15 +5543,6 @@
     const grid = offscreen(), shade = offscreen();
     let GW = 0, GH = 0, heat = null, next = null, sparks = [];
     let acc = 0, bassAvg = 0, cooldown = 0, flare = 0, gust = 0, lutHue = -1, LUT = null, tongues = [], clock = 0;
-    // the backdrop is the player's real <video> at full resolution, not
-    // the tiny sampled frame the modes get -- the borrowed footage when
-    // a video swap is loaded, the track's own picture otherwise
-    function picture() {
-      const sv = document.querySelector('#global-player video.swap-video');
-      if (sv && sv.getAttribute('src') && sv.readyState >= 2 && sv.videoWidth) return sv;
-      const v = document.querySelector('#global-player video:not(.swap-video)');
-      return v && v.readyState >= 2 && v.videoWidth ? v : null;
-    }
     function reset(w, h) { GW = w; GH = h; heat = new Float32Array(w * h); next = new Float32Array(w * h); makeTongues(); }
     // heat 0..1 -> rgb, 256 steps: black, a deep ember of the hue, the
     // hue at full, a yellower shift of it, then white
@@ -5698,8 +5698,10 @@
 
   // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
   // drew it on an SGI. The camera flies down a twisting wireframe tunnel
-  // whose rings bulge with the spectrum, its panels a dim neon
-  // checkerboard, past spinning wireframe shards. Hanging in the middle
+  // whose rings bulge with the spectrum, past spinning wireframe shards.
+  // Its panels are a checkerboard of video screens, each showing the
+  // playing picture, and here and there a chrome mirror showing the head
+  // reflected in it. Hanging in the middle
   // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
   // between a head, a ball, a crystal and a spiked star, every vertex
   // pushed out by its own band, the playing video lighting its faces.
@@ -5787,7 +5789,8 @@
       (d, i) => hash(i * 7.1 + 2) > 0.55 ? 1.6 : 0.8,
     ];
     const PHRASE = 'I AM GOD HERE';
-    let pinch = 0, pinchV = 0, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
+    const headBuf = offscreen(), vidBuf = offscreen();
+    let head = null, pinch = 0, pinchV = 0, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
     // the tunnel's centre line wanders, so the flight banks and climbs
     const path = (w) => [Math.sin(w * 0.11) * 2.4 + Math.sin(w * 0.047) * 1.6, Math.cos(w * 0.083) * 1.5];
     function newShard(z) {
@@ -5795,7 +5798,7 @@
     }
     viz.registerMode({
       id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
-      init() { for (const m of [FACET, LIQUID]) m.pos = m.vel = m.amps = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; },
+      init() { for (const m of [FACET, LIQUID]) m.pos = m.vel = m.amps = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; head = null; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;
         if (lastRot === null) lastRot = vizRot;
@@ -5829,15 +5832,75 @@
           }
           rings.push({ kw, z, pts });
         }
-        // the checkerboard panels, far to near
+        // the panels, far to near: a checkerboard of video screens (dim
+        // neon when there's no picture), and on about a quarter of the
+        // squares between them a chrome mirror with the head in it --
+        // last frame's head, which nobody can tell from this one's
+        // the picture is shrunk once a frame to a small copy every panel
+        // draws from: a few hundred panels each sampling a full-size
+        // video would cost far more, and the soft low-res look is right
+        let vid = null, vw = 0, vh = 0;
+        const src = picture();
+        if (src) {
+          vh = 108; vw = Math.max(1, Math.round(vh * src.videoWidth / src.videoHeight));
+          const { c, ctx: g } = vidBuf(vw, vh); g.drawImage(src, 0, 0, vw, vh); vid = c;
+        } else if (videoFrame) {
+          const { c, ctx: g } = vidBuf(videoFrame.w, videoFrame.h);
+          g.putImageData(videoFrame.imageData, 0, 0); vid = c; vw = videoFrame.w; vh = videoFrame.h;
+        }
+        // the video laid on a panel: its bottom edge along the near side
+        // (right to left, so it reads the right way round from inside the
+        // tunnel), its side up to the far edge, clipped to the panel. One affine map, no perspective -- at
+        // panel size, and in a 1992 renderer, nobody minds
+        const quad = (A, B, m, m1) => { vctx.beginPath(); vctx.moveTo(A[m][0], A[m][1]); vctx.lineTo(A[m1][0], A[m1][1]); vctx.lineTo(B[m1][0], B[m1][1]); vctx.lineTo(B[m][0], B[m][1]); vctx.closePath(); };
+        const lay = (img, iw, ih, far0, near0, near1) => {
+          vctx.setTransform((near1[0] - near0[0]) / iw, (near1[1] - near0[1]) / iw, (near0[0] - far0[0]) / ih, (near0[1] - far0[1]) / ih, far0[0], far0[1]);
+          vctx.drawImage(img, 0, 0, iw, ih);
+          vctx.setTransform(1, 0, 0, 1, 0, 0);
+        };
         for (let n = rings.length - 1; n > 0; n--) {
           const A = rings[n], B = rings[n - 1], fog = Math.pow(clamp01(1 - A.z / FAR), 1.4);
           for (let m = 0; m < SIDES; m++) {
-            if ((m + A.kw) % 2) continue;
-            const m1 = (m + 1) % SIDES;
-            vctx.fillStyle = `hsla(${(H + 200 + m * 6) % 360 | 0},90%,${(14 + flash * 25) | 0}%,${(fog * (0.55 + energy * 0.3)).toFixed(3)})`;
-            vctx.beginPath(); vctx.moveTo(A.pts[m][0], A.pts[m][1]); vctx.lineTo(A.pts[m1][0], A.pts[m1][1]);
-            vctx.lineTo(B.pts[m1][0], B.pts[m1][1]); vctx.lineTo(B.pts[m][0], B.pts[m][1]); vctx.closePath(); vctx.fill();
+            const on = (m + A.kw) % 2 === 0, mirror = !on && hash(A.kw * 7.31 + m * 1.97) < 0.27;
+            if (!on && !mirror) continue;
+            const m1 = (m + 1) % SIDES, a0 = A.pts[m], b0 = B.pts[m], b1 = B.pts[m1];
+            // a panel only a few pixels across (or lost in the fog) just gets its colour
+            const big = Math.abs((b1[0] - b0[0]) * (a0[1] - b0[1]) - (b1[1] - b0[1]) * (a0[0] - b0[0])) > 300 && fog > 0.08;
+            if (on) {
+              if (vid && big) {
+                vctx.save(); quad(A.pts, B.pts, m, m1); vctx.clip();
+                vctx.globalAlpha = fog * (0.55 + energy * 0.35 + flash * 0.1);
+                lay(vid, vw, vh, A.pts[m1], b1, b0);
+                // tinted toward the tunnel's colour so the screens belong to it
+                vctx.globalAlpha = 0.22 + flash * 0.25;
+                vctx.fillStyle = `hsl(${(H + 200 + m * 6) % 360 | 0},100%,45%)`; quad(A.pts, B.pts, m, m1); vctx.fill();
+                vctx.restore();
+              } else {
+                vctx.fillStyle = `hsla(${(H + 200 + m * 6) % 360 | 0},90%,${(14 + flash * 25) | 0}%,${(fog * (0.55 + energy * 0.3)).toFixed(3)})`;
+                quad(A.pts, B.pts, m, m1); vctx.fill();
+              }
+            } else {
+              // chrome: a hard horizon-line gradient, the head reflected in
+              // it (flipped), a white rim
+              vctx.save(); quad(A.pts, B.pts, m, m1); vctx.clip();
+              const gr = vctx.createLinearGradient(a0[0], a0[1], b0[0], b0[1]);
+              gr.addColorStop(0, `hsl(${(H + 180) % 360 | 0},30%,${(70 + flash * 25) | 0}%)`); gr.addColorStop(0.48, '#f4f4ff');
+              gr.addColorStop(0.52, `hsl(${(H + 260) % 360 | 0},60%,18%)`); gr.addColorStop(1, `hsl(${(H + 300) % 360 | 0},70%,40%)`);
+              vctx.globalAlpha = fog * 0.9; vctx.fillStyle = gr; vctx.fill();
+              if (head && big) {
+                // the reflection stays upright, the way a mirror on a wall
+                // shows you, just flipped left to right, filling the panel's height
+                const xs = [a0[0], A.pts[m1][0], b0[0], b1[0]], ys = [a0[1], A.pts[m1][1], b0[1], b1[1]];
+                const bx = Math.min(...xs), by = Math.min(...ys), bh = Math.max(...ys) - by, bw = Math.max(...xs) - bx;
+                const dh = bh * 1.1, dw = dh * head.w / head.h;
+                vctx.globalAlpha = fog;
+                vctx.translate(bx + bw / 2, by + bh / 2); vctx.scale(-1, 1);
+                vctx.drawImage(head.c, 0, 0, head.w, head.h, -dw / 2, -dh / 2, dw, dh);
+              }
+              vctx.restore();
+              vctx.strokeStyle = `rgba(255,255,255,${(fog * 0.7).toFixed(3)})`; vctx.lineWidth = Math.max(1, S / 700);
+              quad(A.pts, B.pts, m, m1); vctx.stroke();
+            }
           }
         }
         // the wireframe on top: a wide faint pass then a thin bright one, for glow
@@ -5972,7 +6035,15 @@
         collect(LIQUID, WL, liquidA, liqFly, 0.25, true);
         collect(FACET, WF, facetA, facFly, 4.5, false);
         faces.sort((p, q) => q.z - p.z);
-        vctx.save(); vctx.lineJoin = 'round';
+        // drawn into a buffer just big enough for it, then copied up -- so
+        // the next frame's mirrors have a picture of it to reflect
+        let x0 = VW, y0 = VH, x1 = 0, y1 = 0;
+        for (const fc of faces) for (const p of fc.p) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+        const pad = S / 200;
+        x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad)); x1 = Math.min(VW, Math.ceil(x1 + pad)); y1 = Math.min(VH, Math.ceil(y1 + pad));
+        const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0), { c: hb, ctx: hc } = headBuf(bw, bh);
+        hc.setTransform(1, 0, 0, 1, 0, 0); hc.clearRect(0, 0, bw, bh); hc.setTransform(1, 0, 0, 1, -x0, -y0);
+        hc.lineJoin = 'round';
         const lwF = Math.max(1, S / 500), lwL = Math.max(0.6, S / 1400);
         for (const fc of faces) {
           const [p0, p1, p2] = fc.p;
@@ -5981,16 +6052,17 @@
           const hue = (H + 260 + fc.hue + fc.light * 80) % 360;
           // the liquid gets a wet highlight on top of the flat shading
           const spec = fc.fine ? Math.pow(fc.light, 8) * 35 : 0;
-          vctx.globalAlpha = fc.alpha;
-          vctx.fillStyle = `hsl(${hue | 0},100%,${Math.min(95, 12 + fc.light * 42 + lum * 30 + flash * 10 + spec) | 0}%)`;
-          vctx.beginPath(); vctx.moveTo(p0[0], p0[1]); vctx.lineTo(p1[0], p1[1]); vctx.lineTo(p2[0], p2[1]); vctx.closePath();
-          vctx.fill();
-          vctx.strokeStyle = `hsl(${(hue + 150) % 360 | 0},100%,${(60 + burst * 30) | 0}%)`;
-          vctx.lineWidth = fc.fine ? lwL : lwF;
-          if (fc.fine) vctx.globalAlpha = fc.alpha * 0.45;
-          vctx.stroke();
+          hc.globalAlpha = fc.alpha;
+          hc.fillStyle = `hsl(${hue | 0},100%,${Math.min(95, 12 + fc.light * 42 + lum * 30 + flash * 10 + spec) | 0}%)`;
+          hc.beginPath(); hc.moveTo(p0[0], p0[1]); hc.lineTo(p1[0], p1[1]); hc.lineTo(p2[0], p2[1]); hc.closePath();
+          hc.fill();
+          hc.strokeStyle = `hsl(${(hue + 150) % 360 | 0},100%,${(60 + burst * 30) | 0}%)`;
+          hc.lineWidth = fc.fine ? lwL : lwF;
+          if (fc.fine) hc.globalAlpha = fc.alpha * 0.45;
+          hc.stroke();
         }
-        vctx.restore();
+        hc.globalAlpha = 1;
+        if (faces.length) { vctx.drawImage(hb, 0, 0, bw, bh, x0, y0, bw, bh); head = { c: hb, w: bw, h: bh }; } else head = null;
 
         // ── I AM GOD HERE ──
         if (god > 0) {
