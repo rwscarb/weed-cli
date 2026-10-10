@@ -193,6 +193,10 @@ const app = createApp({
       // go true native fullscreen. Never tied to whichever tab/row started
       // it, so switching tabs doesn't stop or hide playback.
       orbitStreaming: false,
+      // ⏱ audio sync, ms, -10000..10000 centred on 0: positive holds the
+      // local speakers back (a laggy viewer's picture), negative holds the
+      // streamed audio back instead (a viewer whose sound runs ahead of
+      // its picture). See _applyOrbitDelay.
       orbitDelay: 0,
       // the mix bus's filters, each as a 0..1 knob position (see
       // audioFxSet): low-pass open at 1, high-pass open at 0. Not
@@ -499,11 +503,7 @@ const app = createApp({
       immediate: true,
       handler(title) { document.title = title; },
     },
-    orbitDelay(ms) {
-      if (this._orbitAnalyser?.delay) {
-        this._orbitAnalyser.delay.delayTime.value = ms / 1000;
-      }
-    },
+    orbitDelay() { this._applyOrbitDelay(); },
     // replaceState, not pushState -- a tab switch isn't a "page" the
     // back button should step through one at a time (that would make
     // Back undo your last few tab clicks instead of leaving the site,
@@ -613,7 +613,7 @@ const app = createApp({
     document.addEventListener('webkitfullscreenchange', this.onPlayerFullscreenChange);
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
-    window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = Math.min(10000, Math.max(0, e.detail | 0)); });
+    window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = this.clampOrbitDelay(e.detail | 0); });
     // the MIDI panel's volume/filter rows (orbit_midi.js): the player's
     // level and the mix bus's filters are this component's state too
     window.orbitAudio = {
@@ -645,7 +645,7 @@ const app = createApp({
     try {
       const saved = JSON.parse(localStorage.getItem('weed.stream.settings') || 'null');
       if (saved && typeof saved === 'object') {
-        if (typeof saved.orbitDelay === 'number') this.orbitDelay = Math.min(10000, Math.max(0, saved.orbitDelay));
+        if (typeof saved.orbitDelay === 'number') this.orbitDelay = this.clampOrbitDelay(saved.orbitDelay);
         if (['360', '480', '720'].includes(saved.orbitRes)) this.orbitRes = saved.orbitRes;
         if (['0.4', '0.55', '0.7', '0.85'].includes(saved.orbitQuality)) this.orbitQuality = saved.orbitQuality;
         if (typeof saved.orbitAudio === 'boolean') this.orbitAudio = saved.orbitAudio;
@@ -1382,10 +1382,10 @@ const app = createApp({
       } catch (e) { /* private mode / quota */ }
     },
     // ── orbit audio (🔊): the player's sound, alongside the picture ──
-    // Taps the Web Audio graph _ensureOrbitAnalyser built -- at `source`,
-    // *before* the ⏱ delay node, so the stream gets the undelayed audio
-    // (the delay exists to hold the local speakers back to match a
-    // laggy viewer; sending delayed audio would defeat it) -- into a
+    // Taps the Web Audio graph _ensureOrbitAnalyser built -- at its
+    // streamDelay node, never the speakers' delay node, so a positive ⏱
+    // (holding the local speakers back to match a laggy viewer) leaves
+    // the stream undelayed and a negative one delays only the stream -- into a
     // MediaStreamAudioDestinationNode, records that with MediaRecorder
     // (Opus in WebM on Chromium, Opus in Ogg on Firefox), and sends each
     // ~250ms blob as one binary message on its own WebSocket to
@@ -1411,8 +1411,10 @@ const app = createApp({
       // renders nothing; the click that started playback lets this resume
       if (ctx.state === 'suspended') ctx.resume().catch(() => {});
       const dest = ctx.createMediaStreamDestination();
-      const tap = graph.out || graph.mix || source;
-      tap.connect(dest);   // both decks, as heard (filters included)
+      // both decks, as heard (filters included), after the stream's own
+      // half of the ⏱ delay (_applyOrbitDelay)
+      const tap = graph.streamDelay;
+      tap.connect(dest);
       let rec;
       try {
         rec = new MediaRecorder(dest.stream, { mimeType: mime, audioBitsPerSecond: 128000 });
@@ -1455,6 +1457,46 @@ const app = createApp({
       try { s.source.disconnect(s.dest); } catch (e) { /* already disconnected */ }
       try { s.ws.close(); } catch (e) { /* already closed */ }
       console.log(`[orbit] audio off (${(s.bytes / 1024).toFixed(0)} KB sent)`);
+    },
+    clampOrbitDelay(ms) { return Math.min(10000, Math.max(-10000, Math.round(ms / 100) * 100)); },
+    orbitDelayText(ms) {
+      return (ms > 0 ? '+' : ms < 0 ? '−' : '') + (Math.abs(ms) / 1000).toFixed(1) + 's';
+    },
+    orbitDelayTitle() {
+      const s = (Math.abs(this.orbitDelay) / 1000).toFixed(1) + 's';
+      const what = this.orbitDelay > 0 ? `local speakers ${s} behind the stream`
+        : this.orbitDelay < 0 ? `stream audio ${s} behind the local speakers` : 'no offset';
+      return `Audio sync: ${what}. Drag right if the viewer's picture lags the sound here, `
+        + 'left if its sound runs ahead of its picture; double-click to reset';
+    },
+    // ⏱ slider drag. A bare <input type=range> jumps the value to wherever
+    // the track is pressed, so a click meant to grab the thumb could throw
+    // the audio seconds out at once. Instead the press only anchors, and
+    // the value moves by how far the pointer travels from there (full
+    // track width = full range), with a small catch at 0 so the centre is
+    // easy to land back on. Keyboard arrows still work natively.
+    onOrbitDelayPointerDown(e) {
+      if (e.button !== 0) return;
+      e.preventDefault();
+      const el = e.currentTarget;
+      el.focus();
+      const width = el.getBoundingClientRect().width || 1;
+      const startX = e.clientX, startVal = this.orbitDelay;
+      try { el.setPointerCapture(e.pointerId); } catch (err) { /* synthetic event */ }
+      const move = (ev) => {
+        let v = startVal + (ev.clientX - startX) / width * 20000;
+        if (Math.abs(v) < 250) v = 0;
+        v = this.clampOrbitDelay(v);
+        if (v !== this.orbitDelay) this.orbitDelay = v;
+      };
+      const up = () => {
+        el.removeEventListener('pointermove', move);
+        el.removeEventListener('pointerup', up);
+        el.removeEventListener('pointercancel', up);
+      };
+      el.addEventListener('pointermove', move);
+      el.addEventListener('pointerup', up);
+      el.addEventListener('pointercancel', up);
     },
     copyOrbitViewUrl() {
       if (!this.orbitViewUrl) return;
@@ -2704,8 +2746,8 @@ const app = createApp({
       const analyser = ctx.createAnalyser();
       analyser.fftSize = 2048;
       analyser.smoothingTimeConstant = 0.82;
-      const delay = ctx.createDelay(11); // ceiling for the slider's 10s max (spec wants an integer)
-      delay.delayTime.value = this.orbitDelay / 1000;
+      // ceilings for the slider's ±10s (spec wants an integer)
+      const delay = ctx.createDelay(11), streamDelay = ctx.createDelay(11);
       // deck A through its own gain into a mix bus; deck B (the
       // crossfader's cued next track, _ensureDeckB) joins the bus with a
       // gain of its own, so analyser, speakers and the stream all hear
@@ -2726,14 +2768,24 @@ const app = createApp({
       out.connect(analyser);          // undelayed → visualizer data
       out.connect(delay);             // delayed → speakers
       delay.connect(ctx.destination);
+      out.connect(streamDelay);       // → the network stream (_startOrbitAudio)
       this._orbitAnalyser = {
         // source is kept so the network stream's audio sender
         // (_startOrbitAudio) can tap it ahead of the delay node
-        ctx, analyser, delay, source, gainA, mix, highpass, lowpass, out,
+        ctx, analyser, delay, streamDelay, source, gainA, mix, highpass, lowpass, out,
         freq: new Uint8Array(analyser.frequencyBinCount),
         wave: new Uint8Array(analyser.fftSize),
       };
+      this._applyOrbitDelay();
       return this._orbitAnalyser;
+    },
+    // only one side is ever delayed: whichever is ahead waits for the
+    // other, the other runs straight through (a 0s DelayNode adds nothing)
+    _applyOrbitDelay() {
+      const g = this._orbitAnalyser;
+      if (!g) return;
+      g.delay.delayTime.value = Math.max(0, this.orbitDelay) / 1000;
+      g.streamDelay.delayTime.value = Math.max(0, -this.orbitDelay) / 1000;
     },
     // Small offscreen sample of the actual video frame, cached like the
     // analyser above -- same-origin video (this app only ever streams

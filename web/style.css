@@ -1356,8 +1356,10 @@ td button {
    value on three rows */
 .orbit-delay-label { display: flex; flex-direction: row; align-items: center; gap: 0.3rem; margin: 0; font-size: 0.72rem; color: var(--muted); white-space: nowrap; }
 .orbit-delay-icon { font-size: 0.85rem; line-height: 1; }
-.orbit-delay-val { min-width: 4ch; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.orbit-delay-label input[type=range] { width: 72px; accent-color: var(--accent); cursor: pointer; }
+.orbit-delay-val { min-width: 5ch; text-align: right; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+/* kept in the layout at 0 so the slider doesn't shift under the pointer the moment a drag leaves 0 */
+.orbit-delay-val.zero { visibility: hidden; }
+.orbit-delay-label input[type=range] { width: 72px; accent-color: var(--accent); cursor: ew-resize; touch-action: none; }
 #orbit-egg-dialog .preset-row { display: flex; gap: 0.4rem; flex-wrap: wrap; align-items: center; }
 /* the mode buttons (Tunnel/Bars/.../ASCII) and ASCII's own Neon/Natural
    pair -- same segmented-toggle language .filter-toggle's Any/<label>/
