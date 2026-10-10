@@ -349,7 +349,20 @@ left, treble on the right, each burner's tongue as tall as its band is
 loud -- rising through a turbulence that makes the tongues lick, curl and
 taper to points, gusting in a wind, over the video -- at full resolution,
 dimmed, each flame shading it so the fire reads on a bright picture, Zoom
-and drag framing it -- and every kick flaring the bed and throwing a shower of sparks),
+and drag framing it -- and every kick flaring the bed and throwing a shower of sparks) and
+Lawnmower Man (Jobe's 1992 cyberspace: a flight down a twisting neon
+wireframe tunnel whose rings bulge with the spectrum, its panels a
+checkerboard of bright, glowing screens playing the video, with chrome mirrors among them
+reflecting the head, past spinning
+wireframe shards, toward a flat-shaded low-poly head that morphs between
+a face, a ball, a crystal and a spiked star, each vertex pushed out by its
+own band and its faces lit by the video, all on springs so it jiggles like
+flubber; now and then it melts into a far finer liquid ball that is drawn
+out into an hourglass the way a ball of water stretches between two fingers
+in zero g, necking to a thread, then swells back and explodes under control,
+the liquid's polygons flying out while the faceted head's fly back in and
+lock into place; every kick flashing the tunnel
+and a big hit putting "I AM GOD HERE" up in chrome),
 plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones

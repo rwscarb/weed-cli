@@ -10,7 +10,7 @@
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
 //              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
-//              Synthwave, Fire
+//              Synthwave, Fire, Lawnmower Man
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -39,6 +39,15 @@
     const py = Math.min(vf.h - 1, Math.max(0, (y / H * vf.h) | 0));
     const o = (py * vf.w + px) * 4, d = vf.imageData.data;
     return (d[o] * 0.299 + d[o + 1] * 0.587 + d[o + 2] * 0.114) / 255;
+  }
+  // the player's real <video> at full resolution, not the tiny sampled
+  // frame the modes get -- the borrowed footage when a video swap is
+  // loaded, the track's own picture otherwise; null when nothing's up
+  function picture() {
+    const sv = document.querySelector('#global-player video.swap-video');
+    if (sv && sv.getAttribute('src') && sv.readyState >= 2 && sv.videoWidth) return sv;
+    const v = document.querySelector('#global-player video:not(.swap-video)');
+    return v && v.readyState >= 2 && v.videoWidth ? v : null;
   }
   // a plugin-owned offscreen canvas, resized on demand
   function offscreen() {
@@ -5534,15 +5543,6 @@
     const grid = offscreen(), shade = offscreen();
     let GW = 0, GH = 0, heat = null, next = null, sparks = [];
     let acc = 0, bassAvg = 0, cooldown = 0, flare = 0, gust = 0, lutHue = -1, LUT = null, tongues = [], clock = 0;
-    // the backdrop is the player's real <video> at full resolution, not
-    // the tiny sampled frame the modes get -- the borrowed footage when
-    // a video swap is loaded, the track's own picture otherwise
-    function picture() {
-      const sv = document.querySelector('#global-player video.swap-video');
-      if (sv && sv.getAttribute('src') && sv.readyState >= 2 && sv.videoWidth) return sv;
-      const v = document.querySelector('#global-player video:not(.swap-video)');
-      return v && v.readyState >= 2 && v.videoWidth ? v : null;
-    }
     function reset(w, h) { GW = w; GH = h; heat = new Float32Array(w * h); next = new Float32Array(w * h); makeTongues(); }
     // heat 0..1 -> rgb, 256 steps: black, a deep ember of the hue, the
     // hue at full, a yellower shift of it, then white
@@ -5692,6 +5692,423 @@
           vctx.fillRect(p.x - r, p.y - r, r * 2, r * 2);
         }
         vctx.restore();
+      },
+    });
+  })();
+
+  // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
+  // drew it on an SGI. The camera flies down a twisting wireframe tunnel
+  // whose rings bulge with the spectrum, past spinning wireframe shards.
+  // Its panels are a checkerboard of glowing video screens, each showing
+  // the playing picture and throwing its light, and here and there a chrome mirror showing the head
+  // reflected in it. Hanging in the middle
+  // is Jobe's low-poly head: a flat-shaded icosphere that keeps morphing
+  // between a head, a ball, a crystal and a spiked star, every vertex
+  // pushed out by its own band, the playing video lighting its faces.
+  // Every so often it melts into a far finer liquid ball and collapses
+  // into its centre like an hourglass -- the way a ball of water
+  // stretches into a bridge between two fingers on the space station:
+  // drawn out long, necking to a thread, wobbling -- then swells back
+  // and explodes, under control: the liquid's hundreds of polygons fly
+  // outward, tumbling and fading, while the articulated head's facets
+  // fly back in from all round and lock into place. It's all on
+  // springs, so it moves like flubber: everything overshoots and jiggles.
+  // Each kick flashes the tunnel and bursts the head outward; a big hit
+  // puts "I AM GOD HERE" up in chrome. Rotate swings the head round its
+  // own axis rather than rolling the picture (ownsRotation).
+  (function () {
+    const RINGS = 26, SIDES = 16, SP = 1.1, FAR = RINGS * SP, R0 = 4, ZF = 6.2, SHARDS = 9;
+    const rotY = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0] * c + p[2] * s, p[1], -p[0] * s + p[2] * c]; };
+    const rotX = (p, a) => { const c = Math.cos(a), s = Math.sin(a); return [p[0], p[1] * c - p[2] * s, p[1] * s + p[2] * c]; };
+    const norm = (p) => { const l = Math.hypot(p[0], p[1], p[2]) || 1; return [p[0] / l, p[1] / l, p[2] / l]; };
+    const smooth = (v) => v * v * (3 - 2 * v);
+    // the head proper: an icosahedron subdivided once, 42 vertices and
+    // 80 faces -- the polygon budget of a 1992 Reality Engine head
+    function icosphere() {
+      const t = (1 + Math.sqrt(5)) / 2;
+      const V = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map(norm);
+      let F = [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8],
+        [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]];
+      const mid = new Map();
+      const midpoint = (a, b) => {
+        const k = a < b ? a + ',' + b : b + ',' + a;
+        if (!mid.has(k)) { const p = V[a], q = V[b]; V.push(norm([p[0] + q[0], p[1] + q[1], p[2] + q[2]])); mid.set(k, V.length - 1); }
+        return mid.get(k);
+      };
+      F = F.flatMap(([a, b, c]) => { const ab = midpoint(a, b), bc = midpoint(b, c), ca = midpoint(c, a); return [[a, ab, ca], [b, bc, ab], [c, ca, bc], [ab, bc, ca]]; });
+      return { V, F };
+    }
+    // the liquid: a far finer ball in latitude rings, each ring turned
+    // half a step from the last so it triangulates like a geodesic. Rings
+    // rather than another icosphere because the neck wraps round the
+    // middle, and only rings put a full row of vertices on the equator
+    // for it to pull in (an icosphere has faces straddling it that would
+    // stay wide, a slab standing in the neck)
+    function ringSphere(LAT, LON) {
+      const V = [[0, 1, 0]], F = [];
+      for (let j = 1; j < LAT; j++) {
+        const th = j / LAT * Math.PI, y = Math.cos(th), rr = Math.sin(th);
+        for (let m = 0; m < LON; m++) { const a = (m + (j % 2) * 0.5) / LON * Math.PI * 2; V.push([Math.cos(a) * rr, y, Math.sin(a) * rr]); }
+      }
+      V.push([0, -1, 0]);
+      const at = (j, m) => 1 + (j - 1) * LON + ((m % LON) + LON) % LON, S = V.length - 1;
+      for (let m = 0; m < LON; m++) { F.push([0, at(1, m), at(1, m + 1)]); F.push([S, at(LAT - 1, m + 1), at(LAT - 1, m)]); }
+      for (let j = 1; j < LAT - 1; j++) {
+        for (let m = 0; m < LON; m++) {
+          if (j % 2) { F.push([at(j, m), at(j + 1, m + 1), at(j, m + 1)]); F.push([at(j, m), at(j + 1, m), at(j + 1, m + 1)]); }
+          else { F.push([at(j, m), at(j + 1, m), at(j, m + 1)]); F.push([at(j, m + 1), at(j + 1, m), at(j + 1, m + 1)]); }
+        }
+      }
+      return { V, F };
+    }
+    // each mesh with its faces wound outward (the draw culls by winding),
+    // which band moves each vertex, and each face's own flight for the
+    // explosion: how far it goes and how fast it tumbles
+    function prep(mesh) {
+      const { V, F } = mesh;
+      for (const f of F) {
+        const [A, B, C] = f.map(k => V[k]);
+        const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+        const nx = e1[1] * e2[2] - e1[2] * e2[1], ny = e1[2] * e2[0] - e1[0] * e2[2], nz = e1[0] * e2[1] - e1[1] * e2[0];
+        if (nx * (A[0] + B[0] + C[0]) + ny * (A[1] + B[1] + C[1]) + nz * (A[2] + B[2] + C[2]) < 0) { const k = f[1]; f[1] = f[2]; f[2] = k; }
+      }
+      mesh.bins = V.map((_, i) => hash(i * 3.17 + 0.5));
+      mesh.fly = F.map((_, n) => ({ k: 0.6 + hash(n * 1.71) * 0.9, spin: (hash(n * 2.33) - 0.5) * 9, ax: hash(n * 4.1) > 0.5 }));
+      mesh.pos = null; mesh.vel = null; mesh.amps = null;
+      return mesh;
+    }
+    const FACET = prep(icosphere()), LIQUID = prep(ringSphere(24, 36));
+    // the four shapes the head morphs between, as a radius per vertex
+    // direction: a head (taller than wide, a brow, a nose, a chin), a
+    // ball, an octahedral crystal, a spiked star
+    const SHAPES = [
+      (d) => Math.hypot(d[0] * 0.82, d[1] * 1.18, d[2] * 0.95) + (d[2] > 0.6 && Math.abs(d[0]) < 0.35 && d[1] < 0.1 && d[1] > -0.5 ? 0.28 : 0)
+        + (d[1] > 0.25 && d[1] < 0.6 && d[2] > 0.5 ? 0.1 : 0) - (d[1] < -0.85 ? 0.12 : 0),
+      () => 1,
+      (d) => 1.3 / (Math.abs(d[0]) + Math.abs(d[1]) + Math.abs(d[2])),
+      (d, i) => hash(i * 7.1 + 2) > 0.55 ? 1.6 : 0.8,
+    ];
+    const PHRASE = 'I AM GOD HERE';
+    const headBuf = offscreen(), vidBuf = offscreen(), glowBuf = offscreen();
+    let head = null, pinch = 0, pinchV = 0, lastRot = null, dist = 0, bassAvg = 0, kick = 0, flash = 0, burst = 0, god = 0, lastGod = -1e9, shards = null, scan = null;
+    // the tunnel's centre line wanders, so the flight banks and climbs
+    const path = (w) => [Math.sin(w * 0.11) * 2.4 + Math.sin(w * 0.047) * 1.6, Math.cos(w * 0.083) * 1.5];
+    function newShard(z) {
+      return { x: (Math.random() - 0.5) * R0 * 1.3, y: (Math.random() - 0.5) * R0 * 1.3, z, s: 0.25 + Math.random() * 0.35, a: Math.random() * 6.28, sp: 0.5 + Math.random() * 2, h: Math.random() * 360 };
+    }
+    viz.registerMode({
+      id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
+      init() { for (const m of [FACET, LIQUID]) m.pos = m.vel = m.amps = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; head = null; },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;
+        if (lastRot === null) lastRot = vizRot;
+        const dRot = Math.max(0, Math.min(0.5, vizRot - lastRot)); lastRot = vizRot;
+        const bass = bassOf(freqData), energy = energyOf(freqData), maxBin = Math.max(1, Math.floor(freqData.length * 0.7));
+        bassAvg += (bass - bassAvg) * 0.12;
+        if (bass - bassAvg > 0.05 && kick < 0.5) { kick = 1; flash = 1; burst = 1; }
+        kick *= 0.9; flash *= 0.86; burst *= 0.9;
+        const now = performance.now();
+        if (kick > 0.95 && energy > 0.45 && now - lastGod > 9000) { god = 1; lastGod = now; }
+        god = Math.max(0, god - 0.008);
+        dist += dRot * (14 + energy * 10 + kick * 12);
+        const S = Math.min(VW, VH), f = S * 0.9 * vizUserScale, t = vizRot;
+        const H = (hueBase + t * 40) % 360;
+        const camP = path(dist);
+
+        vctx.setTransform(1, 0, 0, 1, 0, 0);
+        vctx.fillStyle = '#020008'; vctx.fillRect(0, 0, VW, VH);
+        const P = (x, y, z) => [cx + x * f / z, cy + y * f / z];
+
+        // ── the tunnel ──
+        const k0 = Math.floor(dist / SP) + 1, rings = [];
+        for (let k = 0; k < RINGS; k++) {
+          const kw = k0 + k, z = kw * SP - dist; if (z < 0.25) continue;
+          const c = path(kw * SP), ox = c[0] - camP[0], oy = c[1] - camP[1], tw = kw * 0.09 + t * 0.4, pts = [];
+          for (let m = 0; m < SIDES; m++) {
+            const b = Math.min(m, SIDES - m) / (SIDES / 2);   // mirrored: bass at the top, treble at the bottom
+            const v = freqData[Math.min(freqData.length - 1, (b * maxBin * 0.6) | 0)] / 255;
+            const a = m / SIDES * Math.PI * 2 + tw, r = R0 * (1 + v * 0.35 * (1 - z / FAR));
+            pts.push(P(ox + Math.cos(a) * r, oy + Math.sin(a) * r, z));
+          }
+          rings.push({ kw, z, pts });
+        }
+        // the panels, far to near: a checkerboard of video screens (dim
+        // neon when there's no picture), and on about a quarter of the
+        // squares between them a chrome mirror with the head in it --
+        // last frame's head, which nobody can tell from this one's
+        // the picture is shrunk once a frame to a small copy every panel
+        // draws from: a few hundred panels each sampling a full-size
+        // video would cost far more, and the soft low-res look is right
+        let vid = null, vw = 0, vh = 0;
+        const src = picture();
+        if (src) {
+          vh = 108; vw = Math.max(1, Math.round(vh * src.videoWidth / src.videoHeight));
+          const { c, ctx: g } = vidBuf(vw, vh); g.drawImage(src, 0, 0, vw, vh); vid = c;
+        } else if (videoFrame) {
+          const { c, ctx: g } = vidBuf(videoFrame.w, videoFrame.h);
+          g.putImageData(videoFrame.imageData, 0, 0); vid = c; vw = videoFrame.w; vh = videoFrame.h;
+        }
+        // the video laid on a panel: its bottom edge along the near side
+        // (right to left, so it reads the right way round from inside the
+        // tunnel), its side up to the far edge, clipped to the panel. One affine map, no perspective -- at
+        // panel size, and in a 1992 renderer, nobody minds
+        const quad = (A, B, m, m1) => { vctx.beginPath(); vctx.moveTo(A[m][0], A[m][1]); vctx.lineTo(A[m1][0], A[m1][1]); vctx.lineTo(B[m1][0], B[m1][1]); vctx.lineTo(B[m][0], B[m][1]); vctx.closePath(); };
+        const lay = (img, iw, ih, far0, near0, near1) => {
+          vctx.setTransform((near1[0] - near0[0]) / iw, (near1[1] - near0[1]) / iw, (near0[0] - far0[0]) / ih, (near0[1] - far0[1]) / ih, far0[0], far0[1]);
+          vctx.drawImage(img, 0, 0, iw, ih);
+          vctx.setTransform(1, 0, 0, 1, 0, 0);
+        };
+        for (let n = rings.length - 1; n > 0; n--) {
+          const A = rings[n], B = rings[n - 1], fog = Math.pow(clamp01(1 - A.z / FAR), 1.4);
+          for (let m = 0; m < SIDES; m++) {
+            const on = (m + A.kw) % 2 === 0, mirror = !on && hash(A.kw * 7.31 + m * 1.97) < 0.27;
+            if (!on && !mirror) continue;
+            const m1 = (m + 1) % SIDES, a0 = A.pts[m], b0 = B.pts[m], b1 = B.pts[m1];
+            // a panel only a few pixels across (or lost in the fog) just gets its colour
+            const big = Math.abs((b1[0] - b0[0]) * (a0[1] - b0[1]) - (b1[1] - b0[1]) * (a0[0] - b0[0])) > 300 && fog > 0.08;
+            if (on) {
+              if (vid && big) {
+                vctx.save(); quad(A.pts, B.pts, m, m1); vctx.clip();
+                // lit screens: the picture at full strength (the fog thins it
+                // only far down the tunnel), then added over itself so it
+                // burns brighter with the music, then a soft wash of the
+                // tunnel's colour so the screens belong to it
+                const lit = Math.pow(fog, 0.5);
+                vctx.globalAlpha = lit;
+                lay(vid, vw, vh, A.pts[m1], b1, b0);
+                vctx.globalCompositeOperation = 'lighter';
+                vctx.globalAlpha = lit * (0.35 + energy * 0.45 + flash * 0.3);
+                lay(vid, vw, vh, A.pts[m1], b1, b0);
+                vctx.globalCompositeOperation = 'soft-light';
+                vctx.globalAlpha = 0.35 + flash * 0.3;
+                vctx.fillStyle = `hsl(${(H + 200 + m * 6) % 360 | 0},100%,55%)`; quad(A.pts, B.pts, m, m1); vctx.fill();
+                vctx.restore();
+              } else {
+                vctx.fillStyle = `hsla(${(H + 200 + m * 6) % 360 | 0},90%,${(14 + flash * 25) | 0}%,${(fog * (0.55 + energy * 0.3)).toFixed(3)})`;
+                quad(A.pts, B.pts, m, m1); vctx.fill();
+              }
+            } else {
+              // chrome: a hard horizon-line gradient, the head reflected in
+              // it (flipped), a white rim
+              vctx.save(); quad(A.pts, B.pts, m, m1); vctx.clip();
+              const gr = vctx.createLinearGradient(a0[0], a0[1], b0[0], b0[1]);
+              gr.addColorStop(0, `hsl(${(H + 180) % 360 | 0},30%,${(70 + flash * 25) | 0}%)`); gr.addColorStop(0.48, '#f4f4ff');
+              gr.addColorStop(0.52, `hsl(${(H + 260) % 360 | 0},60%,18%)`); gr.addColorStop(1, `hsl(${(H + 300) % 360 | 0},70%,40%)`);
+              vctx.globalAlpha = fog * 0.9; vctx.fillStyle = gr; vctx.fill();
+              if (head && big) {
+                // the reflection stays upright, the way a mirror on a wall
+                // shows you, just flipped left to right, filling the panel's height
+                const xs = [a0[0], A.pts[m1][0], b0[0], b1[0]], ys = [a0[1], A.pts[m1][1], b0[1], b1[1]];
+                const bx = Math.min(...xs), by = Math.min(...ys), bh = Math.max(...ys) - by, bw = Math.max(...xs) - bx;
+                const dh = bh * 1.1, dw = dh * head.w / head.h;
+                vctx.globalAlpha = fog;
+                vctx.translate(bx + bw / 2, by + bh / 2); vctx.scale(-1, 1);
+                vctx.drawImage(head.c, 0, 0, head.w, head.h, -dw / 2, -dh / 2, dw, dh);
+              }
+              vctx.restore();
+              vctx.strokeStyle = `rgba(255,255,255,${(fog * 0.7).toFixed(3)})`; vctx.lineWidth = Math.max(1, S / 700);
+              quad(A.pts, B.pts, m, m1); vctx.stroke();
+            }
+          }
+        }
+        // the screens emit: everything drawn so far, shrunk to a quarter,
+        // blurred and added back over itself, so light spills off every
+        // panel onto the black around it, pulsing with the music
+        if (vid) {
+          const gw = Math.max(1, VW >> 2), gh = Math.max(1, VH >> 2), { c: gc, ctx: gx } = glowBuf(gw, gh);
+          gx.clearRect(0, 0, gw, gh);
+          gx.filter = `blur(${Math.max(2, S / 160).toFixed(1)}px)`;
+          gx.drawImage(vctx.canvas, 0, 0, gw, gh);
+          gx.filter = 'none';
+          vctx.save(); vctx.globalCompositeOperation = 'lighter';
+          vctx.globalAlpha = Math.min(1, 0.55 + energy * 0.5 + flash * 0.4);
+          vctx.drawImage(gc, 0, 0, VW, VH);
+          vctx.restore();
+        }
+
+        // the wireframe on top: a wide faint pass then a thin bright one, for glow
+        vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineJoin = 'round';
+        for (const [lw, la] of [[S / 160, 0.18], [Math.max(1, S / 700), 0.9]]) {
+          vctx.lineWidth = lw;
+          for (let n = rings.length - 1; n >= 0; n--) {
+            const A = rings[n], B = rings[n - 1], fog = Math.pow(clamp01(1 - A.z / FAR), 1.2);
+            vctx.strokeStyle = `hsla(${(H + 300 + A.kw * 9) % 360 | 0},100%,${(55 + flash * 35) | 0}%,${(fog * la).toFixed(3)})`;
+            vctx.beginPath();
+            vctx.moveTo(A.pts[0][0], A.pts[0][1]); for (let m = 1; m <= SIDES; m++) vctx.lineTo(A.pts[m % SIDES][0], A.pts[m % SIDES][1]);
+            if (B) for (let m = 0; m < SIDES; m++) { vctx.moveTo(A.pts[m][0], A.pts[m][1]); vctx.lineTo(B.pts[m][0], B.pts[m][1]); }
+            vctx.stroke();
+          }
+        }
+
+        // ── shards: wireframe octahedra drifting past ──
+        if (!shards) shards = Array.from({ length: SHARDS }, (_, i) => newShard(2 + i * FAR / SHARDS));
+        const OCT = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+        const OCT_E = [[0, 2], [0, 3], [0, 4], [0, 5], [1, 2], [1, 3], [1, 4], [1, 5], [2, 4], [4, 3], [3, 5], [5, 2]];
+        for (const sh of shards) {
+          sh.z -= dRot * (14 + energy * 10 + kick * 12); sh.a += dRot * sh.sp * 3;
+          if (sh.z < 0.4) Object.assign(sh, newShard(FAR));
+          const fog = clamp01(1 - sh.z / FAR), pts = OCT.map(p => {
+            const q = rotX(rotY(p, sh.a), sh.a * 0.7);
+            return P(sh.x + q[0] * sh.s, sh.y + q[1] * sh.s * 1.5, sh.z + q[2] * sh.s);
+          });
+          vctx.strokeStyle = `hsla(${(sh.h + H) % 360 | 0},100%,65%,${(fog * 0.9).toFixed(3)})`; vctx.lineWidth = Math.max(1, S / 600);
+          vctx.beginPath(); for (const [a, b] of OCT_E) { vctx.moveTo(pts[a][0], pts[a][1]); vctx.lineTo(pts[b][0], pts[b][1]); } vctx.stroke();
+        }
+
+        // ── the head ──
+        // an aura behind it, swelling with the music
+        const hp = P(0, 0, ZF), hr = 1.75 * f / ZF;
+        const au = vctx.createRadialGradient(hp[0], hp[1], hr * 0.3, hp[0], hp[1], hr * (1.6 + energy + burst * 0.6));
+        au.addColorStop(0, `hsla(${(H + 40) % 360 | 0},100%,60%,${(0.25 + energy * 0.35).toFixed(3)})`); au.addColorStop(1, 'hsla(0,0%,0%,0)');
+        vctx.fillStyle = au; vctx.fillRect(0, 0, VW, VH);
+        vctx.restore();
+
+        const ph = t * 0.12, si = Math.floor(ph), u = smooth(clamp01((ph - si) * 2.5 - 1.5));   // hold a shape, then morph
+        const sA = SHAPES[si % SHAPES.length], sB = SHAPES[(si + 1) % SHAPES.length];
+        const yaw = t * 0.9 + vizUserRot, pitch = Math.sin(t * 0.35) * 0.35;
+        // one cycle of the head's life, by how far through it we are:
+        //   0    - 0.50  the articulated head, morphing
+        //   0.50 - 0.56  it melts into the liquid
+        //   0.58 - 0.94  the hourglass: pulled out into a bridge, held, let go
+        //   0.94 - 1     it swells back and explodes into the head again
+        const pc = (t * 0.07) % 1;
+        const melt = clamp01((pc - 0.5) / 0.06), boom = clamp01((pc - 0.94) / 0.06);
+        const env = smooth(clamp01((pc - 0.58) / 0.14)) * (1 - smooth(clamp01((pc - 0.82) / 0.12)));
+        // the liquid bridge: its two halves drawn apart and swelling, the
+        // middle necking down to a thread. A sustained heavy bass necks
+        // it a little on its own. The pinch rides an underdamped spring,
+        // so it overshoots both ways and quivers before it settles.
+        const target = pc >= 0.5 && pc < 0.94 ? clamp01(env + Math.max(0, bassAvg - 0.4) * 0.6) : 0;
+        pinchV = (pinchV + (target - pinch) * 0.05) * 0.92; pinch += pinchV;
+        const pn = clamp01(pinch);
+        const sigma = 0.42 - pn * 0.12, neck = 1 - pn * 0.92;
+        // the slosh: a wave running up and down the bridge, fed by how
+        // fast it's necking, as the water sloshes between the halves
+        const slosh = Math.min(0.25, Math.abs(pinchV) * 6) + pn * 0.04;
+        const facetShape = (d, i, r) => {
+          r *= sA(d, i) * (1 - u) + sB(d, i) * u;
+          return [d[0] * r, d[1] * r, d[2] * r];
+        };
+        const liquidShape = (d, i, r) => {
+          // a smooth notch round the middle (no corners -- surface tension
+          // rounds everything), the halves swelling to keep the volume and
+          // stretching apart along the axis
+          const y = d[1], notch = Math.exp(-(y * y) / (sigma * sigma));
+          const wv = 1 + slosh * Math.sin(y * 7 - t * 14) * (1 - notch);
+          const w = (1 - (1 - neck) * notch) * (1 + pn * 0.18) * wv;
+          return [d[0] * r * w, (y * (1 + pn * 0.3) + Math.sign(y) * pn * 0.08) * r, d[2] * r * w];
+        };
+        // every vertex chases where its shape says it should be on its own
+        // spring -- soft and bouncy, so kicks, morphs and the neck all
+        // jiggle. Both meshes keep simulating while hidden, so each comes
+        // back in mid-wobble rather than from a standstill
+        function solve(mesh, shape, react) {
+          const n = mesh.V.length;
+          if (!mesh.pos) { mesh.pos = new Float32Array(n * 3); mesh.vel = new Float32Array(n * 3); mesh.amps = new Float32Array(n); }
+          const { pos, vel, amps } = mesh;
+          return mesh.V.map((d, i) => {
+            const v = freqData[Math.min(freqData.length - 1, (mesh.bins[i] * maxBin) | 0)] / 255;
+            amps[i] += (v - amps[i]) * 0.3;
+            const r = 1 + amps[i] * react + burst * 0.3 + 0.05 * Math.sin(t * 6 + d[0] * 4 + d[1] * 3);
+            const o = i * 3, tg = shape(d, i, r);
+            for (let k = 0; k < 3; k++) {
+              vel[o + k] = (vel[o + k] + (tg[k] - pos[o + k]) * 0.16) * 0.84;
+              pos[o + k] += vel[o + k];
+            }
+            const q = rotX(rotY([pos[o], pos[o + 1], pos[o + 2]], yaw), pitch);
+            return [q[0] * 1.6, q[1] * 1.6, q[2] * 1.6 + ZF];
+          });
+        }
+        const WF = solve(FACET, facetShape, 0.45), WL = solve(LIQUID, liquidShape, 0.3);
+        // the explosion: out (fast, then braking) and in (the head's facets
+        // homing in from the same kind of flight, braking as they land)
+        const easeOut = (v) => 1 - Math.pow(1 - v, 3);
+        let facetA, liquidA, liqFly = 0, facFly = 0;
+        if (pc < 0.5) { facetA = 1; liquidA = 0; }
+        else if (pc < 0.56) { facetA = 1 - melt; liquidA = melt; }
+        else if (pc < 0.94) { facetA = 0; liquidA = 1; }
+        else { liquidA = Math.pow(1 - boom, 1.5); facetA = Math.min(1, boom * 2); liqFly = easeOut(boom); facFly = 1 - easeOut(boom); }
+        const L = norm([-0.4, -0.6, -0.7]), faces = [];
+        function collect(mesh, W, alpha, fly, hueStep, fine) {
+          if (alpha <= 0.01) return;
+          const flying = fly > 0.001;
+          for (let n = 0; n < mesh.F.length; n++) {
+            const [a, b, c] = mesh.F[n];
+            let A = W[a], B = W[b], C = W[c];
+            if (flying) {
+              // each face flies out along the line from the head's centre
+              // through its own, tumbling about its centre and shrinking
+              const fl = mesh.fly[n], G = [(A[0] + B[0] + C[0]) / 3, (A[1] + B[1] + C[1]) / 3, (A[2] + B[2] + C[2]) / 3];
+              const dir = norm([G[0], G[1], G[2] - ZF]), out = fly * 5 * fl.k, ang = fly * fl.spin, sc = 1 - fly * 0.4;
+              const move = (p) => {
+                let q = [(p[0] - G[0]) * sc, (p[1] - G[1]) * sc, (p[2] - G[2]) * sc];
+                q = fl.ax ? rotX(q, ang) : rotY(q, ang);
+                return [G[0] + dir[0] * out + q[0], G[1] + dir[1] * out + q[1], Math.max(1.2, G[2] + dir[2] * out * 0.35 + q[2])];
+              };
+              A = move(A); B = move(B); C = move(C);
+            }
+            const e1 = [B[0] - A[0], B[1] - A[1], B[2] - A[2]], e2 = [C[0] - A[0], C[1] - A[1], C[2] - A[2]];
+            const nn = norm([e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]]);
+            const facing = nn[0] * (A[0] + B[0] + C[0]) + nn[1] * (A[1] + B[1] + C[1]) + nn[2] * (A[2] + B[2] + C[2]);
+            if (facing >= 0 && !flying) continue;   // facing away (a tumbling shard shows both sides)
+            const dl = nn[0] * L[0] + nn[1] * L[1] + nn[2] * L[2], light = Math.max(0, facing < 0 ? dl : -dl);
+            faces.push({ n, hue: n * hueStep, fine, alpha, z: (A[2] + B[2] + C[2]) / 3, light, p: [P(A[0], A[1], A[2]), P(B[0], B[1], B[2]), P(C[0], C[1], C[2])] });
+          }
+        }
+        collect(LIQUID, WL, liquidA, liqFly, 0.25, true);
+        collect(FACET, WF, facetA, facFly, 4.5, false);
+        faces.sort((p, q) => q.z - p.z);
+        // drawn into a buffer just big enough for it, then copied up -- so
+        // the next frame's mirrors have a picture of it to reflect
+        let x0 = VW, y0 = VH, x1 = 0, y1 = 0;
+        for (const fc of faces) for (const p of fc.p) { if (p[0] < x0) x0 = p[0]; if (p[0] > x1) x1 = p[0]; if (p[1] < y0) y0 = p[1]; if (p[1] > y1) y1 = p[1]; }
+        const pad = S / 200;
+        x0 = Math.max(0, Math.floor(x0 - pad)); y0 = Math.max(0, Math.floor(y0 - pad)); x1 = Math.min(VW, Math.ceil(x1 + pad)); y1 = Math.min(VH, Math.ceil(y1 + pad));
+        const bw = Math.max(1, x1 - x0), bh = Math.max(1, y1 - y0), { c: hb, ctx: hc } = headBuf(bw, bh);
+        hc.setTransform(1, 0, 0, 1, 0, 0); hc.clearRect(0, 0, bw, bh); hc.setTransform(1, 0, 0, 1, -x0, -y0);
+        hc.lineJoin = 'round';
+        const lwF = Math.max(1, S / 500), lwL = Math.max(0.6, S / 1400);
+        for (const fc of faces) {
+          const [p0, p1, p2] = fc.p;
+          let lum = 0;
+          if (videoFrame) lum = lumAt(videoFrame, (p0[0] + p1[0] + p2[0]) / 3, (p0[1] + p1[1] + p2[1]) / 3, VW, VH);
+          const hue = (H + 260 + fc.hue + fc.light * 80) % 360;
+          // the liquid gets a wet highlight on top of the flat shading
+          const spec = fc.fine ? Math.pow(fc.light, 8) * 35 : 0;
+          hc.globalAlpha = fc.alpha;
+          hc.fillStyle = `hsl(${hue | 0},100%,${Math.min(95, 12 + fc.light * 42 + lum * 30 + flash * 10 + spec) | 0}%)`;
+          hc.beginPath(); hc.moveTo(p0[0], p0[1]); hc.lineTo(p1[0], p1[1]); hc.lineTo(p2[0], p2[1]); hc.closePath();
+          hc.fill();
+          hc.strokeStyle = `hsl(${(hue + 150) % 360 | 0},100%,${(60 + burst * 30) | 0}%)`;
+          hc.lineWidth = fc.fine ? lwL : lwF;
+          if (fc.fine) hc.globalAlpha = fc.alpha * 0.45;
+          hc.stroke();
+        }
+        hc.globalAlpha = 1;
+        if (faces.length) { vctx.drawImage(hb, 0, 0, bw, bh, x0, y0, bw, bh); head = { c: hb, w: bw, h: bh }; } else head = null;
+
+        // ── I AM GOD HERE ──
+        if (god > 0) {
+          const a = clamp01(god * 3) * clamp01(god * 1.2), fs = S * 0.085 * (1 + (1 - god) * 0.25);
+          vctx.save();
+          vctx.font = `900 ${fs | 0}px Impact, "Arial Black", sans-serif`; vctx.textAlign = 'center'; vctx.textBaseline = 'middle';
+          const ty = cy + S * 0.36, gr = vctx.createLinearGradient(0, ty - fs / 2, 0, ty + fs / 2);
+          gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.45, `hsl(${(H + 180) % 360 | 0},100%,70%)`);
+          gr.addColorStop(0.5, '#1a0630'); gr.addColorStop(1, `hsl(${(H + 300) % 360 | 0},100%,65%)`);   // a chrome horizon line
+          vctx.globalAlpha = a;
+          vctx.lineWidth = fs * 0.08; vctx.strokeStyle = `hsl(${(H + 300) % 360 | 0},100%,55%)`;
+          vctx.strokeText(PHRASE, cx, ty);
+          vctx.fillStyle = gr; vctx.fillText(PHRASE, cx, ty);
+          vctx.restore();
+        }
+
+        // ── scanlines, for the CRT it was shown on ──
+        if (!scan || scan.ctx !== vctx) {
+          const c = document.createElement('canvas'); c.width = 1; c.height = 3;
+          const g = c.getContext('2d'); g.fillStyle = 'rgba(0,0,0,0.28)'; g.fillRect(0, 2, 1, 1);
+          scan = { ctx: vctx, pat: vctx.createPattern(c, 'repeat') };
+        }
+        vctx.fillStyle = scan.pat; vctx.fillRect(0, 0, VW, VH);
       },
     });
   })();
