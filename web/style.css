@@ -963,6 +963,7 @@ td button {
    are still comfortably reachable at that size. */
 /* video swap: the borrowed picture sits over the track's own video and
    passes clicks through to the real controls beneath */
+#global-player video.lag-video { position: absolute; inset: 0; pointer-events: none; }
 #global-player video.swap-video { position: absolute; inset: 0; pointer-events: none; }
 #global-player video.deck-b { position: absolute; inset: 0; pointer-events: none; background: transparent; z-index: 2; }
 .xfade-slider { width: 110px; flex-shrink: 0; accent-color: var(--accent); margin: 0; opacity: 0.35; }

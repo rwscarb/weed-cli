@@ -676,7 +676,7 @@
       <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
               :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
               @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
-      <label v-if="orbitStreaming" class="orbit-delay-label" :title="orbitDelayTitle()">
+      <label class="orbit-delay-label" :title="orbitDelayTitle()">
         <span class="orbit-delay-icon">⏱</span>
         <!-- pointerdown.stop: this header's own pointerdown is what starts a
              window drag (onPlayerHeaderPointerDown), so dragging the slider
@@ -703,6 +703,9 @@
            @timeupdate="player.audioCurrentTime = $refs.playerVideo.currentTime"
            @durationchange="player.audioDuration = $refs.playerVideo.duration || 0"
            @volumechange="player.audioMuted = $refs.playerVideo.muted; player.audioVolume = $refs.playerVideo.volume"></video>
+    <!-- the picture held back behind the sound (⏱ below 0, see
+         vue-app.js _syncLagVideo): a muted copy of the track trailing it -->
+    <video ref="lagVideo" class="lag-video" v-show="pictureLag" muted playsinline preload="auto"></video>
     <!-- the video swap's picture, muted and looping over the track's own
          (pointer-events: none -- the real controls underneath still work) -->
     <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
@@ -884,7 +887,7 @@
         <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
                 :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
                 @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
-        <label v-if="orbitStreaming" class="orbit-delay-label" :title="orbitDelayTitle()">
+        <label class="orbit-delay-label" :title="orbitDelayTitle()">
           <span class="orbit-delay-icon">⏱</span>
           <input type="range" min="-10000" max="10000" step="100" list="orbit-delay-zero" v-model.number="orbitDelay"
                @click.stop @pointerdown.stop="onOrbitDelayPointerDown" @dblclick.stop="orbitDelay = 0">
