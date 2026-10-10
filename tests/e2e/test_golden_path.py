@@ -1194,3 +1194,59 @@ def test_folders_show_as_crumbs_and_filters_in_discover_and_downloads(page, gold
     assert page.evaluate("vm => [vm.folderFilter, vm.jobsShown().length]", vm) == ['Live/Paris 1993', 1]
     page.evaluate("vm => { vm.folderFilter = 'Studio'; }", vm)
     assert page.evaluate("vm => vm.jobsShown().length", vm) == 0
+
+
+def test_stream_delay_slider_moves_by_drag_distance_and_goes_both_ways(page, golden_path_server):
+    """The ⏱ audio-sync slider: pressing anywhere on its track must not
+    jump the value there (a bare range input does, which could throw the
+    audio seconds out on a click meant to grab the thumb) -- it moves by
+    how far the pointer travels instead. It runs -10s..+10s around 0:
+    positive holds the local speakers back, negative the picture (and
+    the stream's audio with it, since the stream's picture is the
+    visualizer)."""
+    _download_and_play(page, golden_path_server)
+    vm = _vm(page)
+    page.click('#global-player .icon-btn[title="Orbit Visualizer"]')
+    page.wait_for_selector('#vizModes')
+    page.evaluate("vm => vm.toggleOrbitStream()", vm)
+    page.wait_for_function("vm => vm.orbitStreaming", arg=vm, timeout=10_000)
+    slider = page.locator('#orbit-egg-dialog .orbit-delay-label input[type=range]')
+    box = slider.bounding_box()
+    y = box['y'] + box['height'] / 2
+    # a plain click near the right end: no jump
+    page.mouse.click(box['x'] + box['width'] * 0.9, y)
+    assert page.evaluate("vm => vm.orbitDelay", vm) == 0
+    # drag a quarter of the track right from there: +5s
+    page.mouse.move(box['x'] + box['width'] * 0.5, y)
+    page.mouse.down()
+    page.mouse.move(box['x'] + box['width'] * 0.75, y, steps=5)
+    page.mouse.up()
+    assert page.evaluate("vm => vm.orbitDelay", vm) == 5000
+    # and past zero to the left: negative
+    page.mouse.move(box['x'] + box['width'] * 0.5, y)
+    page.mouse.down()
+    page.mouse.move(box['x'] + box['width'] * 0.1, y, steps=8)
+    page.mouse.up()
+    assert page.evaluate("vm => vm.orbitDelay", vm) == -3000
+    graph = page.evaluate("vm => [vm._orbitAnalyser.delay.delayTime.value, vm._orbitAnalyser.streamDelay.delayTime.value]", vm)
+    assert graph == [0, 3], graph            # only the stream is held back
+    assert page.locator('#orbit-egg-dialog .orbit-delay-val').inner_text() == '−3.0s'
+    # below 0 the picture waits instead: a muted copy of the track goes
+    # under the player's controls to trail the sound
+    page.wait_for_function("vm => vm.$refs.lagVideo.dataset.src === vm.$refs.playerVideo.currentSrc.split('#')[0]", arg=vm)
+    assert page.evaluate("vm => vm.$refs.lagVideo.muted", vm) is True
+    # and the visualizer reads the analyser as it was that long ago
+    late = page.evaluate("""vm => {
+        vm._audioLag = null;
+        const f = n => [new Uint8Array(4).fill(n), new Uint8Array(8).fill(n)];
+        const out = [];
+        for (const [n, t] of [[10, 0], [20, 1000], [30, 2000], [40, 3000], [50, 4000]]) {
+            out.push(vm._delayedAudio(...f(n), 3000, 1000000 + t).freq[0]);
+        }
+        vm._audioLag = null;
+        return out;
+    }""", vm)
+    assert late == [0, 0, 0, 10, 20], late   # silence until there's a reading 3s old
+    page.dblclick('#orbit-egg-dialog .orbit-delay-label input[type=range]')
+    assert page.evaluate("vm => vm.orbitDelay", vm) == 0
+    page.wait_for_function("vm => !vm.$refs.lagVideo.dataset.src && !vm.pictureLag", arg=vm)

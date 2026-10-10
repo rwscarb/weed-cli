@@ -676,13 +676,15 @@
       <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
               :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
               @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
-      <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
+      <label class="orbit-delay-label" :title="orbitDelayTitle()">
         <span class="orbit-delay-icon">⏱</span>
         <!-- pointerdown.stop: this header's own pointerdown is what starts a
              window drag (onPlayerHeaderPointerDown), so dragging the slider
              thumb used to drag the whole PIP along with it -->
-        <input type="range" min="0" max="10000" step="100" v-model.number="orbitDelay" @click.stop @pointerdown.stop>
-        <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
+        <input type="range" min="-10000" max="10000" step="100" list="orbit-delay-zero" v-model.number="orbitDelay"
+               @click.stop @pointerdown.stop="onOrbitDelayPointerDown" @dblclick.stop="orbitDelay = 0">
+        <span class="orbit-delay-val" :class="{zero: !orbitDelay}">{{ orbitDelayText(orbitDelay) }}</span>
+        <datalist id="orbit-delay-zero"><option value="0"></option></datalist>
       </label>
       <button type="button" class="icon-btn" title="Theater / PIP" @click.stop="togglePlayerMode">⤢</button>
       <button type="button" class="icon-btn" title="Orbit Visualizer"
@@ -701,6 +703,9 @@
            @timeupdate="player.audioCurrentTime = $refs.playerVideo.currentTime"
            @durationchange="player.audioDuration = $refs.playerVideo.duration || 0"
            @volumechange="player.audioMuted = $refs.playerVideo.muted; player.audioVolume = $refs.playerVideo.volume"></video>
+    <!-- the picture held back behind the sound (⏱ below 0, see
+         vue-app.js _syncLagVideo): a muted copy of the track trailing it -->
+    <video ref="lagVideo" class="lag-video" v-show="pictureLag" muted playsinline preload="auto"></video>
     <!-- the video swap's picture, muted and looping over the track's own
          (pointer-events: none -- the real controls underneath still work) -->
     <video ref="swapVideo" class="swap-video" v-show="player.swap" muted loop playsinline
@@ -882,10 +887,11 @@
         <button type="button" v-if="orbitStreaming && orbitViewUrl" class="icon-btn orbit-url-btn" :class="{copied: orbitUrlCopied}"
                 :title="orbitUrlCopied ? 'Copied' : 'Copy stream URL for VLC (Media → Open Network Stream): ' + orbitViewUrl"
                 @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
-        <label v-if="orbitStreaming" class="orbit-delay-label" :title="'Audio delay ' + (orbitDelay/1000).toFixed(1) + 's — drag to sync VLC with the audio'">
+        <label class="orbit-delay-label" :title="orbitDelayTitle()">
           <span class="orbit-delay-icon">⏱</span>
-          <input type="range" min="0" max="10000" step="100" v-model.number="orbitDelay" @click.stop @pointerdown.stop>
-          <span class="orbit-delay-val" v-if="orbitDelay">{{ (orbitDelay/1000).toFixed(1) }}s</span>
+          <input type="range" min="-10000" max="10000" step="100" list="orbit-delay-zero" v-model.number="orbitDelay"
+               @click.stop @pointerdown.stop="onOrbitDelayPointerDown" @dblclick.stop="orbitDelay = 0">
+          <span class="orbit-delay-val" :class="{zero: !orbitDelay}">{{ orbitDelayText(orbitDelay) }}</span>
         </label>
         <button id="vizLayoutBtn" class="icon-btn" title="Customize — add, remove and reorder modes and transitions">☰</button>
         <button id="vizMidiBtn" class="icon-btn" title="MIDI controller — pads pick modes, knobs turn the sliders (Web MIDI)">🎹</button>
