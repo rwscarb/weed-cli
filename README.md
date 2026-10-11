@@ -194,7 +194,7 @@ The player's 🌀 button opens the **Orbit Visualizer**: a canvas driven by
 the track's audio (Web Audio analyser) and a low-res sample of its
 picture. Eleven built-in modes — Tunnel, Bars, Mirror, Scope, Spiral,
 Pixels, ASCII (six character sets, natural or neon), Plasma, Kaleido,
-Particles, Freefall — plus the thirty-three in `web/orbit_extras.js` (next
+Particles, Freefall — plus the thirty-four in `web/orbit_extras.js` (next
 section). Click the lit mode again for the plain video. Speed, React and
 Zoom retune every mode; every setting persists in the browser.
 
@@ -361,7 +361,14 @@ out into an hourglass the way a ball of water stretches between two fingers
 in zero g, necking to a thread, then swells back and explodes under control,
 the liquid's polygons flying out while the faceted head's fly back in and
 lock into place; every kick flashing the tunnel
-and a big hit putting "I AM GOD HERE" up in chrome),
+and a big hit putting "I AM GOD HERE" up in chrome) and
+Attractor (a strange attractor traced in light by a few thousand
+particles riding its flow, the camera orbiting it: Lorenz's butterfly,
+Aizawa, Thomas and Halvorsen in turn, each particle as bright as its
+band, the bass bending the system's own parameter, the video showing
+through the streaks, every kick shoving the cloud outward to fall back
+onto the shape, and on a change of system the cloud unravelling from
+one into the next),
 plus the Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom
 blur, RGB split, VHS, Win95, Blinds, Flip tiles, CRT off, Droplet, Blur,
 Slide, Flash, Desktop cube, Carousel and Doors transitions (the 3D ones
