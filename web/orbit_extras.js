@@ -10,7 +10,7 @@
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
 //              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
-//              Synthwave, Fire, Lawnmower Man
+//              Synthwave, Fire, LMan (Lawnmower Man), Attractor
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -5696,7 +5696,7 @@
     });
   })();
 
-  // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
+  // ── LMan (mode), after The Lawnmower Man: Jobe's cyberspace, the way the 1992 film
   // drew it on an SGI. The camera flies down a twisting wireframe tunnel
   // whose rings bulge with the spectrum, past spinning wireframe shards.
   // Its panels are a checkerboard of glowing video screens, each showing
@@ -5797,7 +5797,7 @@
       return { x: (Math.random() - 0.5) * R0 * 1.3, y: (Math.random() - 0.5) * R0 * 1.3, z, s: 0.25 + Math.random() * 0.35, a: Math.random() * 6.28, sp: 0.5 + Math.random() * 2, h: Math.random() * 360 };
     }
     viz.registerMode({
-      id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
+      id: 'lawnmowerman', label: 'LMan', ownsRotation: true,
       init() { for (const m of [FACET, LIQUID]) m.pos = m.vel = m.amps = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; head = null; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;
@@ -6109,6 +6109,201 @@
           scan = { ctx: vctx, pat: vctx.createPattern(c, 'repeat') };
         }
         vctx.fillStyle = scan.pat; vctx.fillRect(0, 0, VW, VH);
+      },
+    });
+  })();
+
+
+  // ── Attractor (mode): a strange attractor flown round in 3D. A few
+  // ten thousand particles ride the flow of a chaotic system -- Lorenz's
+  // butterfly, Aizawa's apple, Thomas's knot, Halvorsen's propeller --
+  // each drawn as a streak through where it was the last few frames, so
+  // the shape is traced in light and its trails smear behind as the
+  // camera orbits.
+  // Every particle belongs to one band of the spectrum and burns as
+  // bright as its band is loud; the bass bends the system's own
+  // parameter (Lorenz's rho, Thomas's damping, ...), so the shape
+  // swells and tangles on loud passages. The current streaks are also
+  // laid over the video, masked to the streaks, so the picture shows
+  // through the flow. Each kick shoves the cloud outward and it falls
+  // back onto the attractor. Every so often (sooner on a big hit) it
+  // changes system: the particles keep where they are and simply start
+  // following the new equations, so one shape unravels into the next.
+  // Rotate swings the camera round the vertical axis (ownsRotation).
+  (function () {
+    // TL: how many frames back each streak reaches
+    const N = 10000, BANDS = 12, TL = 5;
+    // each system: its derivative (p = the bass, 0..1, bending one
+    // parameter), a step size, a label for the corner, and how hard the
+    // kick may shove it (Aizawa has a stable point just below its
+    // apple that a full shove knocks particles into). Bounds are
+    // measured once on first use (see fit) rather than hand-tuned.
+    const SYSTEMS = [
+      { name: 'LORENZ  σ=10 ρ=28 β=8/3', dt: 0.006,
+        f: (x, y, z, p, o) => { const r = 28 + p * 10; o[0] = 10 * (y - x); o[1] = x * (r - z) - y; o[2] = x * y - 8 / 3 * z; } },
+      { name: 'AIZAWA  a=.95 b=.7 c=.6 d=3.5', dt: 0.012, shove: 0.25,
+        f: (x, y, z, p, o) => { const d = 3.5 + p * 0.6, zb = z - 0.7; o[0] = zb * x - d * y; o[1] = d * x + zb * y; o[2] = 0.6 + 0.95 * z - z * z * z / 3 - (x * x + y * y) * (1 + 0.25 * z) + 0.1 * z * x * x * x; } },
+      { name: 'THOMAS  b=0.19', dt: 0.06,
+        f: (x, y, z, p, o) => { const b = 0.19 - p * 0.04; o[0] = Math.sin(y) - b * x; o[1] = Math.sin(z) - b * y; o[2] = Math.sin(x) - b * z; } },
+      { name: 'HALVORSEN  a=1.89', dt: 0.004,
+        f: (x, y, z, p, o) => { const a = 1.89 - p * 0.25; o[0] = -a * x - 4 * y - 4 * z - y * y; o[1] = -a * y - 4 * z - 4 * x - z * z; o[2] = -a * z - 4 * x - 4 * y - x * x; } },
+    ];
+    // which raw axis is "up" on screen for each (Lorenz and Aizawa
+    // stand on z); the other two lie flat
+    const UP = [2, 2, 1, 1];
+    const dv = [0, 0, 0];
+    // run one particle a while, take the centre and the reach of where
+    // it goes, so every system fills the same unit-ish sphere
+    function fit(sys) {
+      if (sys.c) return;
+      let x = 0.1, y = -0.3, z = 0.7; const sum = [0, 0, 0], pts = [];
+      for (let i = 0; i < 24000; i++) {
+        sys.f(x, y, z, 0, dv); x += dv[0] * sys.dt; y += dv[1] * sys.dt; z += dv[2] * sys.dt;
+        if (i > 4000 && i % 8 === 0) { pts.push([x, y, z]); sum[0] += x; sum[1] += y; sum[2] += z; }
+      }
+      sys.c = sum.map(v => v / pts.length);
+      let r = 0; for (const q of pts) r = Math.max(r, Math.hypot(q[0] - sys.c[0], q[1] - sys.c[1], q[2] - sys.c[2]));
+      sys.r = r || 1;
+    }
+    const P = new Float32Array(N * 3), HX = new Float32Array(N * TL), HY = new Float32Array(N * TL);
+    // live: how many of a particle's last TL positions are on screen in
+    // an unbroken run (0 after a respawn or passing behind the camera)
+    const live = new Uint8Array(N);
+    let frame = 0;
+    const mask = offscreen();
+    let cur = 0, sysT = 0, bassAvg = 0, kick = 0, shove = 0, label = 0, lastSwitch = 0, ready = false;
+    // one particle at a random spot in a small cloud round the centre
+    function place(i, sys) {
+      const u = Math.random() * 2 - 1, a = Math.random() * 6.283, rr = Math.cbrt(Math.random()) * 0.6 * sys.r, s = Math.sqrt(1 - u * u);
+      P[i * 3] = sys.c[0] + Math.cos(a) * s * rr; P[i * 3 + 1] = sys.c[1] + Math.sin(a) * s * rr; P[i * 3 + 2] = sys.c[2] + u * rr;
+    }
+    // seed: the whole cloud there, so it blooms onto the shape
+    function seed() {
+      const sys = SYSTEMS[cur]; fit(sys);
+      for (let i = 0; i < N; i++) { place(i, sys); live[i] = 0; }
+      ready = true;
+    }
+    // to the next system: carry each particle across in normalised
+    // coordinates, so the cloud keeps its place and unravels from there
+    function switchTo(next) {
+      const a = SYSTEMS[cur], b = SYSTEMS[next]; fit(b);
+      const ua = UP[cur], ub = UP[next];
+      for (let i = 0; i < N; i++) {
+        const o = i * 3, nrm = [(P[o] - a.c[0]) / a.r, (P[o + 1] - a.c[1]) / a.r, (P[o + 2] - a.c[2]) / a.r];
+        // keep "up" up across systems that stand on different axes
+        if (ua !== ub) { const k = nrm[ua]; nrm[ua] = nrm[ub]; nrm[ub] = k; }
+        P[o] = b.c[0] + nrm[0] * b.r; P[o + 1] = b.c[1] + nrm[1] * b.r; P[o + 2] = b.c[2] + nrm[2] * b.r;
+      }
+      cur = next; sysT = 0; label = 1; lastSwitch = performance.now();
+    }
+    viz.registerMode({
+      id: 'attractor', label: 'Attractor', ownsRotation: true, rotationCover: false,
+      init() { ready = false; cur = 0; sysT = 0; bassAvg = 0; kick = shove = 0; label = 1; lastSwitch = performance.now(); },
+      draw(ctx) {
+        const { vctx, VW, VH, cx, cy, hueBase, freqData, speed, reactivity, vizRot, vizUserScale, vizUserRot } = ctx;
+        if (!ready) { seed(); vctx.fillStyle = '#000'; vctx.fillRect(0, 0, VW, VH); }
+        const bass = bassOf(freqData), energy = energyOf(freqData), react = 0.5 + reactivity * 0.5;
+        const maxBin = Math.max(1, Math.floor(freqData.length * 0.7));
+        bassAvg += (bass - bassAvg) * 0.1;
+        if (bass - bassAvg > 0.06 / react && kick < 0.4) { kick = 1; shove = 1; }
+        kick *= 0.88;
+        const now = performance.now();
+        sysT += speed;
+        if ((sysT > 1500 || (kick > 0.95 && energy > 0.5 && now - lastSwitch > 12000)) && now - lastSwitch > 6000) switchTo((cur + 1) % SYSTEMS.length);
+        label = Math.max(0, label - 0.006);
+
+        // ── the flow ──
+        const sys = SYSTEMS[cur], up = UP[cur], dt = sys.dt * (0.8 + energy * 0.8);
+        const p = clamp01(bass * react), steps = Math.min(6, Math.max(1, Math.round(speed * 2)));
+        const sh = shove > 0.05 ? shove * 0.025 * react * (sys.shove || 1) : 0; shove *= 0.6;
+        const jit = sys.r * 1e-5, still = (sys.r * 2e-4) ** 2;
+        for (let i = 0; i < N; i++) {
+          const o = i * 3, x0 = P[o], y0 = P[o + 1], z0 = P[o + 2];
+          // a whisper of noise, far below a pixel: particles that land on
+          // exactly the same spot would otherwise move as one forever
+          let x = x0 + (Math.random() - 0.5) * jit, y = y0 + (Math.random() - 0.5) * jit, z = z0 + (Math.random() - 0.5) * jit;
+          for (let k = 0; k < steps; k++) { sys.f(x, y, z, p, dv); x += dv[0] * dt; y += dv[1] * dt; z += dv[2] * dt; }
+          if (sh) { x += (x - sys.c[0]) * sh; y += (y - sys.c[1]) * sh; z += (z - sys.c[2]) * sh; }
+          P[o] = x; P[o + 1] = y; P[o + 2] = z;
+          // a particle thrown off to infinity (stiff spots, a hard shove)
+          // starts again from a fresh random spot in the middle and flows
+          // back out onto the shape. Never a copy of another particle: on
+          // a loud stretch whole systems can blow up, and respawning onto
+          // the survivors used to collapse every particle into one point,
+          // which then moved as one through every later system -- a
+          // single invisible streak, the screen empty for good
+          if (!(Math.abs(x - sys.c[0]) < sys.r * 4 && Math.abs(y - sys.c[1]) < sys.r * 4 && Math.abs(z - sys.c[2]) < sys.r * 4)) { place(i, sys); live[i] = 0; }
+          // and one that has stopped dead -- sunk into a fixed point the
+          // bass has bent the system into, where its streak has no length
+          // -- is thrown back into the cloud the same way
+          else if ((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2 < still) { place(i, sys); live[i] = 0; }
+        }
+
+        // ── the camera: orbiting, bobbing, Rotate swinging it round ──
+        const S = Math.min(VW, VH), yaw = vizRot * 0.12 + vizUserRot, pitch = 0.3 + Math.sin(vizRot * 0.05) * 0.35;
+        const cyw = Math.cos(yaw), syw = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+        const f = S * 1.35 * vizUserScale * (1 + kick * 0.04), D = 3, ir = 1 / sys.r;
+        const a0 = 0, a1 = up === 2 ? 1 : 2;   // the two flat axes
+        // trails: last frame fades, faster when it's loud so it stays crisp
+        vctx.setTransform(1, 0, 0, 1, 0, 0);
+        fadeFrame(vctx, VW, VH, 0.08 + energy * 0.07);
+        // the mask the video shows through is drawn at half size: it's
+        // the costliest stroke here and it's blurred by its scale-up anyway
+        const v = picture(), MW = Math.ceil(VW / 2), MH = Math.ceil(VH / 2);
+        const { c: mc, ctx: mx } = mask(MW, MH);
+        mx.setTransform(1, 0, 0, 1, 0, 0); mx.globalCompositeOperation = 'source-over'; mx.clearRect(0, 0, MW, MH);
+        mx.setTransform(0.5, 0, 0, 0.5, 0, 0);
+        vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineCap = 'butt';
+        const lw = Math.max(1, S / 700);
+        for (let b = 0; b < BANDS; b++) {
+          const lv = freqData[Math.min(freqData.length - 1, ((b + 0.5) / BANDS * maxBin) | 0)] / 255;
+          const hue = (hueBase + b * 24 + kick * 40) % 360 | 0;
+          vctx.beginPath(); mx.beginPath();
+          for (let i = b; i < N; i += BANDS) {
+            const o = i * 3;
+            const X = (P[o + a0] - sys.c[a0]) * ir, Y = -(P[o + up] - sys.c[up]) * ir, Z = (P[o + a1] - sys.c[a1]) * ir;
+            const x1 = X * cyw + Z * syw, z1 = -X * syw + Z * cyw;
+            const y2 = Y * cp - z1 * sp, z2 = Y * sp + z1 * cp + D;
+            if (z2 < 0.3) { live[i] = 0; continue; }
+            const sx = cx + x1 * f / z2, sy = cy + y2 * f / z2;
+            const h = i * TL, k = frame % TL;
+            HX[h + k] = sx; HY[h + k] = sy;
+            const n = live[i] = Math.min(TL, live[i] + 1);
+            if (n > 1) {
+              // the streak: from the oldest kept position up to this one,
+              // broken wherever a step jumps (a shove, a wrap)
+              let px = HX[h + (k - n + 1 + TL) % TL], py = HY[h + (k - n + 1 + TL) % TL];
+              vctx.moveTo(px, py);
+              for (let j = n - 2; j >= 0; j--) {
+                const q = h + (k - j + TL) % TL, qx = HX[q], qy = HY[q], dx = qx - px, dy = qy - py;
+                if (dx * dx + dy * dy < S * S * 0.01) vctx.lineTo(qx, qy); else vctx.moveTo(qx, qy);
+                px = qx; py = qy;
+              }
+              if (v) { const q = h + (k - 1 + TL) % TL; mx.moveTo(HX[q], HY[q]); mx.lineTo(sx, sy); }
+            }
+          }
+          vctx.strokeStyle = `hsla(${hue},100%,${(48 + lv * 32) | 0}%,${(0.07 + lv * 0.35 * react).toFixed(3)})`;
+          vctx.lineWidth = lw * (0.8 + lv * 1.4);
+          vctx.stroke();
+          if (v) { mx.strokeStyle = '#fff'; mx.lineWidth = lw * 2.5; mx.stroke(); }
+        }
+        vctx.restore();
+        frame++;
+        // the video, seen only through this frame's streaks
+        if (v) {
+          mx.globalCompositeOperation = 'source-in';
+          const k = Math.max(VW / v.videoWidth, VH / v.videoHeight), dw = v.videoWidth * k, dh = v.videoHeight * k;
+          mx.drawImage(v, (VW - dw) / 2, (VH - dh) / 2, dw, dh);
+          vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.75;
+          vctx.drawImage(mc, 0, 0, VW, VH); vctx.restore();
+        }
+        // the system's name, typed in the corner when it changes
+        if (label > 0) {
+          const fs = Math.max(10, S * 0.028) | 0, txt = sys.name.slice(0, Math.ceil(sys.name.length * clamp01((1 - label) * 6)));
+          vctx.save(); vctx.font = `${fs}px 'Courier New', monospace`; vctx.textBaseline = 'bottom';
+          vctx.globalAlpha = clamp01(label * 3); vctx.fillStyle = `hsl(${hueBase % 360 | 0},80%,75%)`;
+          vctx.fillText(txt, fs, VH - fs); vctx.restore();
+        }
       },
     });
   })();
