@@ -6134,12 +6134,14 @@
     // TL: how many frames back each streak reaches
     const N = 10000, BANDS = 12, TL = 5;
     // each system: its derivative (p = the bass, 0..1, bending one
-    // parameter), a step size, and a label for the corner. Bounds are
+    // parameter), a step size, a label for the corner, and how hard the
+    // kick may shove it (Aizawa has a stable point just below its
+    // apple that a full shove knocks particles into). Bounds are
     // measured once on first use (see fit) rather than hand-tuned.
     const SYSTEMS = [
       { name: 'LORENZ  σ=10 ρ=28 β=8/3', dt: 0.006,
         f: (x, y, z, p, o) => { const r = 28 + p * 10; o[0] = 10 * (y - x); o[1] = x * (r - z) - y; o[2] = x * y - 8 / 3 * z; } },
-      { name: 'AIZAWA  a=.95 b=.7 c=.6 d=3.5', dt: 0.012,
+      { name: 'AIZAWA  a=.95 b=.7 c=.6 d=3.5', dt: 0.012, shove: 0.25,
         f: (x, y, z, p, o) => { const d = 3.5 + p * 0.6, zb = z - 0.7; o[0] = zb * x - d * y; o[1] = d * x + zb * y; o[2] = 0.6 + 0.95 * z - z * z * z / 3 - (x * x + y * y) * (1 + 0.25 * z) + 0.1 * z * x * x * x; } },
       { name: 'THOMAS  b=0.19', dt: 0.06,
         f: (x, y, z, p, o) => { const b = 0.19 - p * 0.04; o[0] = Math.sin(y) - b * x; o[1] = Math.sin(z) - b * y; o[2] = Math.sin(x) - b * z; } },
@@ -6170,14 +6172,15 @@
     let frame = 0;
     const mask = offscreen();
     let cur = 0, sysT = 0, bassAvg = 0, kick = 0, shove = 0, label = 0, lastSwitch = 0, ready = false;
-    // seed: a small cloud round the centre, so it blooms onto the shape
+    // one particle at a random spot in a small cloud round the centre
+    function place(i, sys) {
+      const u = Math.random() * 2 - 1, a = Math.random() * 6.283, rr = Math.cbrt(Math.random()) * 0.6 * sys.r, s = Math.sqrt(1 - u * u);
+      P[i * 3] = sys.c[0] + Math.cos(a) * s * rr; P[i * 3 + 1] = sys.c[1] + Math.sin(a) * s * rr; P[i * 3 + 2] = sys.c[2] + u * rr;
+    }
+    // seed: the whole cloud there, so it blooms onto the shape
     function seed() {
       const sys = SYSTEMS[cur]; fit(sys);
-      for (let i = 0; i < N; i++) {
-        const u = Math.random() * 2 - 1, a = Math.random() * 6.283, rr = Math.cbrt(Math.random()) * 0.6 * sys.r, s = Math.sqrt(1 - u * u);
-        P[i * 3] = sys.c[0] + Math.cos(a) * s * rr; P[i * 3 + 1] = sys.c[1] + Math.sin(a) * s * rr; P[i * 3 + 2] = sys.c[2] + u * rr;
-        live[i] = 0;
-      }
+      for (let i = 0; i < N; i++) { place(i, sys); live[i] = 0; }
       ready = true;
     }
     // to the next system: carry each particle across in normalised
@@ -6212,17 +6215,28 @@
         // ── the flow ──
         const sys = SYSTEMS[cur], up = UP[cur], dt = sys.dt * (0.8 + energy * 0.8);
         const p = clamp01(bass * react), steps = Math.min(6, Math.max(1, Math.round(speed * 2)));
-        const sh = shove > 0.05 ? shove * 0.025 * react : 0; shove *= 0.6;
+        const sh = shove > 0.05 ? shove * 0.025 * react * (sys.shove || 1) : 0; shove *= 0.6;
+        const jit = sys.r * 1e-5, still = (sys.r * 2e-4) ** 2;
         for (let i = 0; i < N; i++) {
-          const o = i * 3; let x = P[o], y = P[o + 1], z = P[o + 2];
+          const o = i * 3, x0 = P[o], y0 = P[o + 1], z0 = P[o + 2];
+          // a whisper of noise, far below a pixel: particles that land on
+          // exactly the same spot would otherwise move as one forever
+          let x = x0 + (Math.random() - 0.5) * jit, y = y0 + (Math.random() - 0.5) * jit, z = z0 + (Math.random() - 0.5) * jit;
           for (let k = 0; k < steps; k++) { sys.f(x, y, z, p, dv); x += dv[0] * dt; y += dv[1] * dt; z += dv[2] * dt; }
           if (sh) { x += (x - sys.c[0]) * sh; y += (y - sys.c[1]) * sh; z += (z - sys.c[2]) * sh; }
-          // a particle thrown off to infinity (stiff spots, a hard shove)
-          // rejoins next to another one
-          if (!(Math.abs(x - sys.c[0]) < sys.r * 4 && Math.abs(y - sys.c[1]) < sys.r * 4 && Math.abs(z - sys.c[2]) < sys.r * 4)) {
-            const j = ((Math.random() * N) | 0) * 3; x = P[j] + 1e-3; y = P[j + 1]; z = P[j + 2]; live[i] = 0;
-          }
           P[o] = x; P[o + 1] = y; P[o + 2] = z;
+          // a particle thrown off to infinity (stiff spots, a hard shove)
+          // starts again from a fresh random spot in the middle and flows
+          // back out onto the shape. Never a copy of another particle: on
+          // a loud stretch whole systems can blow up, and respawning onto
+          // the survivors used to collapse every particle into one point,
+          // which then moved as one through every later system -- a
+          // single invisible streak, the screen empty for good
+          if (!(Math.abs(x - sys.c[0]) < sys.r * 4 && Math.abs(y - sys.c[1]) < sys.r * 4 && Math.abs(z - sys.c[2]) < sys.r * 4)) { place(i, sys); live[i] = 0; }
+          // and one that has stopped dead -- sunk into a fixed point the
+          // bass has bent the system into, where its streak has no length
+          // -- is thrown back into the cloud the same way
+          else if ((x - x0) ** 2 + (y - y0) ** 2 + (z - z0) ** 2 < still) { place(i, sys); live[i] = 0; }
         }
 
         // ── the camera: orbiting, bobbing, Rotate swinging it round ──
