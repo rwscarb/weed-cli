@@ -362,8 +362,8 @@ in zero g, necking to a thread, then swells back and explodes under control,
 the liquid's polygons flying out while the faceted head's fly back in and
 lock into place; every kick flashing the tunnel
 and a big hit putting "I AM GOD HERE" up in chrome) and
-Attractor (a strange attractor traced in light by a few thousand
-particles riding its flow, the camera orbiting it: Lorenz's butterfly,
+Attractor (a strange attractor traced in light by ten thousand
+particles riding its flow, each trailing a long streak, the camera orbiting it: Lorenz's butterfly,
 Aizawa, Thomas and Halvorsen in turn, each particle as bright as its
 band, the bass bending the system's own parameter, the video showing
 through the streaks, every kick shoving the cloud outward to fall back

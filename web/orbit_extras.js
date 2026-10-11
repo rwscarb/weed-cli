@@ -6115,10 +6115,11 @@
 
 
   // ── Attractor (mode): a strange attractor flown round in 3D. A few
-  // thousand particles ride the flow of a chaotic system -- Lorenz's
+  // ten thousand particles ride the flow of a chaotic system -- Lorenz's
   // butterfly, Aizawa's apple, Thomas's knot, Halvorsen's propeller --
-  // each drawn as a streak from where it was last frame, so the shape
-  // is traced in light and its trails smear behind as the camera orbits.
+  // each drawn as a streak through where it was the last few frames, so
+  // the shape is traced in light and its trails smear behind as the
+  // camera orbits.
   // Every particle belongs to one band of the spectrum and burns as
   // bright as its band is loud; the bass bends the system's own
   // parameter (Lorenz's rho, Thomas's damping, ...), so the shape
@@ -6130,7 +6131,8 @@
   // following the new equations, so one shape unravels into the next.
   // Rotate swings the camera round the vertical axis (ownsRotation).
   (function () {
-    const N = 4200, BANDS = 12;
+    // TL: how many frames back each streak reaches
+    const N = 10000, BANDS = 12, TL = 5;
     // each system: its derivative (p = the bass, 0..1, bending one
     // parameter), a step size, and a label for the corner. Bounds are
     // measured once on first use (see fit) rather than hand-tuned.
@@ -6161,8 +6163,11 @@
       let r = 0; for (const q of pts) r = Math.max(r, Math.hypot(q[0] - sys.c[0], q[1] - sys.c[1], q[2] - sys.c[2]));
       sys.r = r || 1;
     }
-    const P = new Float32Array(N * 3), SX = new Float32Array(N), SY = new Float32Array(N);
+    const P = new Float32Array(N * 3), HX = new Float32Array(N * TL), HY = new Float32Array(N * TL);
+    // live: how many of a particle's last TL positions are on screen in
+    // an unbroken run (0 after a respawn or passing behind the camera)
     const live = new Uint8Array(N);
+    let frame = 0;
     const mask = offscreen();
     let cur = 0, sysT = 0, bassAvg = 0, kick = 0, shove = 0, label = 0, lastSwitch = 0, ready = false;
     // seed: a small cloud round the centre, so it blooms onto the shape
@@ -6227,11 +6232,14 @@
         const a0 = 0, a1 = up === 2 ? 1 : 2;   // the two flat axes
         // trails: last frame fades, faster when it's loud so it stays crisp
         vctx.setTransform(1, 0, 0, 1, 0, 0);
-        fadeFrame(vctx, VW, VH, 0.14 + energy * 0.12);
-        const { c: mc, ctx: mx } = mask(VW, VH);
-        mx.setTransform(1, 0, 0, 1, 0, 0); mx.globalCompositeOperation = 'source-over'; mx.clearRect(0, 0, VW, VH);
-        mx.lineCap = 'round';
-        vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineCap = 'round';
+        fadeFrame(vctx, VW, VH, 0.08 + energy * 0.07);
+        // the mask the video shows through is drawn at half size: it's
+        // the costliest stroke here and it's blurred by its scale-up anyway
+        const v = picture(), MW = Math.ceil(VW / 2), MH = Math.ceil(VH / 2);
+        const { c: mc, ctx: mx } = mask(MW, MH);
+        mx.setTransform(1, 0, 0, 1, 0, 0); mx.globalCompositeOperation = 'source-over'; mx.clearRect(0, 0, MW, MH);
+        mx.setTransform(0.5, 0, 0, 0.5, 0, 0);
+        vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.lineCap = 'butt';
         const lw = Math.max(1, S / 700);
         for (let b = 0; b < BANDS; b++) {
           const lv = freqData[Math.min(freqData.length - 1, ((b + 0.5) / BANDS * maxBin) | 0)] / 255;
@@ -6244,26 +6252,36 @@
             const y2 = Y * cp - z1 * sp, z2 = Y * sp + z1 * cp + D;
             if (z2 < 0.3) { live[i] = 0; continue; }
             const sx = cx + x1 * f / z2, sy = cy + y2 * f / z2;
-            if (live[i]) {
-              const dx = sx - SX[i], dy = sy - SY[i];
-              if (dx * dx + dy * dy < S * S * 0.01) { vctx.moveTo(SX[i], SY[i]); vctx.lineTo(sx, sy); mx.moveTo(SX[i], SY[i]); mx.lineTo(sx, sy); }
+            const h = i * TL, k = frame % TL;
+            HX[h + k] = sx; HY[h + k] = sy;
+            const n = live[i] = Math.min(TL, live[i] + 1);
+            if (n > 1) {
+              // the streak: from the oldest kept position up to this one,
+              // broken wherever a step jumps (a shove, a wrap)
+              let px = HX[h + (k - n + 1 + TL) % TL], py = HY[h + (k - n + 1 + TL) % TL];
+              vctx.moveTo(px, py);
+              for (let j = n - 2; j >= 0; j--) {
+                const q = h + (k - j + TL) % TL, qx = HX[q], qy = HY[q], dx = qx - px, dy = qy - py;
+                if (dx * dx + dy * dy < S * S * 0.01) vctx.lineTo(qx, qy); else vctx.moveTo(qx, qy);
+                px = qx; py = qy;
+              }
+              if (v) { const q = h + (k - 1 + TL) % TL; mx.moveTo(HX[q], HY[q]); mx.lineTo(sx, sy); }
             }
-            SX[i] = sx; SY[i] = sy; live[i] = 1;
           }
-          vctx.strokeStyle = `hsla(${hue},100%,${(48 + lv * 32) | 0}%,${(0.18 + lv * 0.7 * react).toFixed(3)})`;
-          vctx.lineWidth = lw * (1 + lv * 1.5);
+          vctx.strokeStyle = `hsla(${hue},100%,${(48 + lv * 32) | 0}%,${(0.07 + lv * 0.35 * react).toFixed(3)})`;
+          vctx.lineWidth = lw * (0.8 + lv * 1.4);
           vctx.stroke();
-          mx.strokeStyle = '#fff'; mx.lineWidth = lw * 2.5; mx.stroke();
+          if (v) { mx.strokeStyle = '#fff'; mx.lineWidth = lw * 2.5; mx.stroke(); }
         }
         vctx.restore();
+        frame++;
         // the video, seen only through this frame's streaks
-        const v = picture();
         if (v) {
           mx.globalCompositeOperation = 'source-in';
           const k = Math.max(VW / v.videoWidth, VH / v.videoHeight), dw = v.videoWidth * k, dh = v.videoHeight * k;
           mx.drawImage(v, (VW - dw) / 2, (VH - dh) / 2, dw, dh);
           vctx.save(); vctx.globalCompositeOperation = 'lighter'; vctx.globalAlpha = 0.75;
-          vctx.drawImage(mc, 0, 0); vctx.restore();
+          vctx.drawImage(mc, 0, 0, VW, VH); vctx.restore();
         }
         // the system's name, typed in the corner when it changes
         if (label > 0) {
