@@ -398,10 +398,12 @@ window.orbitMidi = (function () {
   // the DJ filter's centre (off) and each cutoff's open end
   const AUDIO_PARAMS = new Set(['volume', 'filter', 'lowpass', 'highpass', 'resonance']);
   const AUDIO_DETENTS = { filter: 0.5, lowpass: 1, highpass: 0 };
+  const DELAY_DETENT = 0.5;  // ⏱ is centred: 0.5 is no offset
   function detentOf(b) {
     const viz = window.orbitViz;
     if (!detentZone || !b.target.startsWith('param:')) return null;
     const param = b.target.slice(6);
+    if (param === 'delay') return DELAY_DETENT;
     if (AUDIO_PARAMS.has(param)) return AUDIO_DETENTS[param] !== undefined ? AUDIO_DETENTS[param] : null;
     if (!viz.controlDetent) return null;
     return viz.controlDetent(param);
@@ -447,7 +449,7 @@ window.orbitMidi = (function () {
     return next;
   }
   function applyParam(b, param, pos) {
-    if (param === 'delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: Math.round(pos * 10000) }));
+    if (param === 'delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: Math.round((pos * 2 - 1) * 10000) }));
     else if (param === 'xfade') window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: pos }));
     else if (AUDIO_PARAMS.has(param)) { if (window.orbitAudio) window.orbitAudio.set(param, pos); }
     else window.orbitViz.control(param, pos);

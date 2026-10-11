@@ -213,8 +213,11 @@ Zoom retune every mode; every setting persists in the browser.
   `/api/orbit-view` for VLC (`vlc --demux=mjpeg --network-caching=300
   <url>`; 🔗 copies the URL, token included), a Roku IP-camera viewer,
   or the guest party page. Resolution and JPEG quality are selectable;
-  the ⏱ slider delays the local audio by up to 10 s to line up with a
-  laggy viewer. While it runs the canvas is held at the stream's 16:9
+  the ⏱ slider shifts sound against picture up to 10 s either way:
+  right holds the local speakers back for a laggy picture (the stream in
+  VLC), left holds the picture back (player, visualizer and the stream
+  alike) for sound that arrives late, such as AirPlay mirroring or
+  Bluetooth. Double-click resets it to 0. While it runs the canvas is held at the stream's 16:9
   (letterboxed on screen if the window isn't), so the frame is filled
   edge to edge and never distorted whatever shape the window is. The
   stream keeps running while the visualizer is closed, minimised to PIP,
