@@ -10,7 +10,7 @@
 // Modes:       Halftone, Lava, Terrain, Rain, Lissajous, Ripples, Cube, VHS, Win95, J Division,
 //              Spectrogram, Stained glass, Fireworks, Screensaver, Slit-scan, Skyline, Globe,
 //              Aurora, Flow, Life, Tree, Warp, Cymatics, Orrery, Doom95, Hackers, Dancing baby,
-//              Synthwave, Fire, Lawnmower Man, Attractor
+//              Synthwave, Fire, LMan (Lawnmower Man), Attractor
 // Transitions: Melt, Dissolve, Iris, Shatter, Wave, Spin, Zoom blur, RGB split, VHS, Win95,
 //              Blinds, Flip tiles, CRT off, Droplet, Blur, Slide, Flash
 (function () {
@@ -5696,7 +5696,7 @@
     });
   })();
 
-  // ── Lawnmower Man (mode): Jobe's cyberspace, the way the 1992 film
+  // ── LMan (mode), after The Lawnmower Man: Jobe's cyberspace, the way the 1992 film
   // drew it on an SGI. The camera flies down a twisting wireframe tunnel
   // whose rings bulge with the spectrum, past spinning wireframe shards.
   // Its panels are a checkerboard of glowing video screens, each showing
@@ -5797,7 +5797,7 @@
       return { x: (Math.random() - 0.5) * R0 * 1.3, y: (Math.random() - 0.5) * R0 * 1.3, z, s: 0.25 + Math.random() * 0.35, a: Math.random() * 6.28, sp: 0.5 + Math.random() * 2, h: Math.random() * 360 };
     }
     viz.registerMode({
-      id: 'lawnmowerman', label: 'Lawnmower Man', ownsRotation: true,
+      id: 'lawnmowerman', label: 'LMan', ownsRotation: true,
       init() { for (const m of [FACET, LIQUID]) m.pos = m.vel = m.amps = null; pinch = pinchV = 0; lastRot = null; kick = flash = burst = god = 0; shards = null; head = null; },
       draw(ctx) {
         const { vctx, VW, VH, cx, cy, hueBase, freqData, videoFrame, vizRot, vizUserScale, vizUserRot } = ctx;

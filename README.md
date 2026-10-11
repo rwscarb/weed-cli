@@ -349,7 +349,7 @@ loud -- rising through a turbulence that makes the tongues lick, curl and
 taper to points, gusting in a wind, over the video -- at full resolution,
 dimmed, each flame shading it so the fire reads on a bright picture, Zoom
 and drag framing it -- and every kick flaring the bed and throwing a shower of sparks) and
-Lawnmower Man (Jobe's 1992 cyberspace: a flight down a twisting neon
+LMan (The Lawnmower Man: Jobe's 1992 cyberspace, a flight down a twisting neon
 wireframe tunnel whose rings bulge with the spectrum, its panels a
 checkerboard of bright, glowing screens playing the video, with chrome mirrors among them
 reflecting the head, past spinning
