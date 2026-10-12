@@ -380,6 +380,18 @@ projection of its own; Globe's coastlines are Natural Earth's public-domain 110m
 land set, simplified into `web/land.json`); `web/orbit_plugin_example.js`
 is a minimal one to copy.
 
+`web/orbit_joyride.js` (also loaded by default) adds Joyride: a ride
+down a bumpy, hilly road from the driver's seat of a future car, as a
+cartoon bear, on acid. Checkerboard fields race by under spectrum-shaped
+mountains and rolling hills, cartoon trees (and the odd mushroom) go past,
+a rainbow wobbles and everything melts and drips; every kick is a pothole
+and blooms a flower, bubble or star in the sky. Every so often the driver
+glances out of the side window for a few seconds and the fields stream
+past side-on, the video in the wing mirror too. A / D steer off the road and back (let go and the bear takes
+the wheel again). The video plays in the big rear-view mirror, the bears'
+ears just showing at its bottom edge, with a pair of pink fuzzy dice
+swinging from its middle.
+
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
