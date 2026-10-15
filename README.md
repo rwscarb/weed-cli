@@ -392,6 +392,16 @@ the wheel again). The video plays in the big rear-view mirror, the bears'
 ears just showing at its bottom edge, with a pair of pink fuzzy dice
 swinging from its middle.
 
+`web/orbit_deepsea.js` (also loaded by default) adds Deep Sea: hanging
+in dark water among glassy, see-through jellyfish lit in neon-tetra blue
+and red. Each jelly listens to its own slice of the spectrum, which lights
+its rim and gonads, and every kick makes them squeeze and shoot upward,
+oral arms and tentacles trailing behind. A school of neon tetras wheels
+through and scatters on the kicks, a manta glides past now and then, kelp
+sways over a sea floor of anemones that open up with the bass, marine snow
+sparkles with the highs, kicks loose strings of bubbles, and the video
+ripples on the surface overhead.
+
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
