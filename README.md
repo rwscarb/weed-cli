@@ -400,7 +400,11 @@ oral arms and tentacles trailing behind. A school of neon tetras wheels
 through and scatters on the kicks, a manta glides past now and then, kelp
 sways over a sea floor of anemones that open up with the bass, marine snow
 sparkles with the highs, kicks loose strings of bubbles, and the video
-ripples on the surface overhead.
+ripples on the surface overhead. There's a film of algae on the glass, and every
+so often a plecostomus swims up out of the gloom, clamps its sucker mouth
+onto the inside of the screen and inches across it rasping the algae off,
+so for a while you're looking straight into its mouth and at its spotted
+belly, before it lets go and sinks back into the dark.
 
 ### Docker
 
