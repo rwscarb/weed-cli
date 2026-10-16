@@ -8,7 +8,8 @@
 // the scene and scatters on the kicks, a manta glides past in the gloom,
 // kelp sways over a sea floor dotted with anemones that open up with the
 // bass, marine snow sparkles with the highs, kicks loose strings of
-// bubbles, and the video ripples on the surface overhead.
+// bubbles, and the video ripples on the surface overhead. Now and then
+// a plecostomus comes up to the glass and cleans the algae off it.
 (function () {
   const viz = window.orbitViz;
   if (!viz || typeof viz.registerMode !== 'function') return;
@@ -25,7 +26,7 @@
   // neon tetra: an electric blue-green stripe over a red belly. Each jelly
   // gets one of these as its glass/rim colour and the other for its gonads.
   const NEON = [[198, 352], [186, 348], [210, 0], [352, 196], [175, 330], [290, 190]];
-  let st = null, vid = null;
+  let st = null, vid = null, algae = null;
 
   // a jelly lives at (x, y) in 0..1 screen units, z 0.35 (far) .. 1 (near).
   // Tentacles and oral arms are chains of points that follow the bell with drag.
@@ -55,7 +56,7 @@
     };
   }
   function fresh() {
-    const s = { lastRot: null, lastT: 0, floor: 0, ceil: 0, armed: true, kickCool: 0, beats: 0, jellies: [], snow: [], bubbles: [], fish: [], t: 0, manta: null, mantaWait: 200, panic: 0, panicCool: 0 };
+    const s = { lastRot: null, lastT: 0, floor: 0, ceil: 0, armed: true, kickCool: 0, beats: 0, jellies: [], snow: [], bubbles: [], fish: [], t: 0, manta: null, mantaWait: 200, pleco: { phase: 'away', t: 0, wait: 900 }, panic: 0, panicCool: 0 };
     for (let i = 0; i < JELLIES; i++) s.jellies.push(jelly(i, false));
     for (let i = 0; i < SNOW; i++) s.snow.push({ x: Math.random(), y: Math.random(), z: 0.2 + Math.random() * 0.8, tw: Math.random() * TAU });
     for (let i = 0; i < FISH; i++) s.fish.push(fish());
@@ -215,10 +216,217 @@
     g.restore();
   }
 
+  // ── the pleco ────────────────────────────────────────────────────────
+  // Every so often a plecostomus swims up out of the gloom, clamps its
+  // sucker mouth onto the inside of the glass (our side of the screen)
+  // and inches its way across it rasping off the algae, so for a while
+  // we're looking straight into its mouth and at its pale, spotted belly.
+  // The algae is a film on the glass in front of everything; where the
+  // pleco has been it's clean, and it slowly grows back.
+  const ALW = 384, ALH = 216;
+  function makeAlgae() {
+    const base = document.createElement('canvas'); base.width = ALW; base.height = ALH;
+    const b = base.getContext('2d');
+    for (let i = 0; i < 900; i++) {
+      const x = Math.random() * ALW, y = Math.random() * ALH;
+      // thickest along the bottom and up the sides, thin in the middle
+      const edge = Math.min(x / ALW, 1 - x / ALW, y / ALH * 1.5, (1 - y / ALH) * 0.6);
+      const w = clamp(1 - edge * 3.6, 0.04, 1), r = 4 + Math.random() * 14, hue = 80 + Math.random() * 45;
+      const gr = b.createRadialGradient(x, y, 0, x, y, r);
+      gr.addColorStop(0, `hsla(${hue | 0},45%,${28 + Math.random() * 14 | 0}%,${(0.2 * w).toFixed(3)})`);
+      gr.addColorStop(1, `hsla(${hue | 0},45%,30%,0)`);
+      b.fillStyle = gr; b.fillRect(x - r, y - r, r * 2, r * 2);
+    }
+    for (let i = 0; i < 2600; i++) {   // and specks of it, so a cleaned patch shows
+      const x = Math.random() * ALW, y = Math.random() * ALH;
+      const edge = Math.min(x / ALW, 1 - x / ALW, y / ALH * 1.5, (1 - y / ALH) * 0.6);
+      if (Math.random() > 0.25 + (1 - clamp(edge * 3, 0, 1)) * 0.75) continue;
+      b.fillStyle = `hsla(${70 + Math.random() * 50 | 0},50%,${32 + Math.random() * 22 | 0}%,${(0.2 + Math.random() * 0.4).toFixed(2)})`;
+      b.fillRect(x, y, 1, 1);
+    }
+    // the cleaned patches, as a mask that fades away as the algae regrows
+    const mask = document.createElement('canvas'); mask.width = ALW; mask.height = ALH;
+    const c = document.createElement('canvas'); c.width = ALW; c.height = ALH;
+    return { base, mask, mg: mask.getContext('2d'), c, g: c.getContext('2d'), regrow: 0 };
+  }
+  function scrub(al, x, y, r) {
+    const gr = al.mg.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, 'rgba(0,0,0,0.9)'); gr.addColorStop(0.75, 'rgba(0,0,0,0.6)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    al.mg.fillStyle = gr; al.mg.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+
+  // where its mouth is (0..1 of the screen), which way its head points
+  // (0 = up the screen), how close it is to the glass (scale 0..1) and
+  // how much of it you can see
+  function plecoStep(p, k, t, al, VW, VH, L) {
+    p.t += k;
+    if (p.phase === 'away') {
+      if (p.t < p.wait) return null;
+      Object.assign(p, {
+        phase: 'approach', t: 0, dur: 260,
+        x0: 0.15 + Math.random() * 0.7, y0: 0.25 + Math.random() * 0.5,
+        x: 0.32 + Math.random() * 0.36, y: 0.35 + Math.random() * 0.3, ang: (Math.random() - 0.5) * 1.2,
+      });
+      p.ang0 = p.ang + (Math.random() - 0.5) * 1.5; p.turn = 0;
+    }
+    if (p.phase === 'approach') {
+      const f = clamp(p.t / p.dur, 0, 1), e = f * f * (3 - 2 * f);
+      if (f >= 1) Object.assign(p, { phase: 'clean', t: 0, dur: 900 + Math.random() * 400 });
+      return { x: p.x0 + (p.x - p.x0) * e, y: p.y0 + (p.y - p.y0) * e, ang: p.ang0 + (p.ang - p.ang0) * e, s: 0.07 + 0.93 * e * e, alpha: clamp(f * 2.5, 0, 1), attached: false };
+    }
+    if (p.phase === 'clean') {
+      // inching along: a shuffle forward, a pause to rasp, and so on,
+      // wandering, and turning back in before its mouth reaches an edge
+      const step = Math.max(0, Math.sin(p.t * 0.12));
+      const hx = Math.sin(p.ang), hy = -Math.cos(p.ang);
+      const toC = Math.atan2(0.5 - p.x, -(0.5 - p.y)), d = Math.hypot(p.x - 0.5, (p.y - 0.5) * VH / VW);
+      let want = Math.sin(t * 0.07 + p.t * 0.004) * 0.006;
+      if (d > 0.22) want += ((((toC - p.ang) % TAU) + TAU * 1.5) % TAU - Math.PI) * 0.012;
+      p.turn += (want - p.turn) * 0.1;
+      p.ang += p.turn * step * k;
+      p.x += hx * 0.0022 * step * k * VH / VW; p.y += hy * 0.0022 * step * k;
+      p.x = clamp(p.x, 0.12, 0.88); p.y = clamp(p.y, 0.15, 0.85);
+      scrub(al, p.x * ALW, p.y * ALH, L * 0.1 / VW * ALW);
+      if (p.t >= p.dur) Object.assign(p, { phase: 'leave', t: 0, dur: 220, x1: p.x + (Math.random() - 0.5) * 0.5, y1: p.y + 0.25, ang1: p.ang + (Math.random() - 0.5) * 2, xs: p.x, ys: p.y, angs: p.ang });
+      return { x: p.x, y: p.y, ang: p.ang, s: 1, alpha: 1, attached: true };
+    }
+    // leave: let go and sink back off into the dark
+    const f = clamp(p.t / p.dur, 0, 1), e = f * f;
+    if (f >= 1) { Object.assign(p, { phase: 'away', t: 0, wait: 2400 + Math.random() * 1800 }); return null; }
+    return { x: p.xs + (p.x1 - p.xs) * e, y: p.ys + (p.y1 - p.ys) * e, ang: p.angs + (p.ang1 - p.angs) * e, s: 1 - 0.93 * Math.sqrt(f), alpha: 1 - e, attached: false };
+  }
+
+  // dots scattered over a patch, the same every frame
+  function spots(g, n, x0, y0, w, h, r, seed, keep) {
+    for (let i = 0; i < n; i++) {
+      const x = x0 + hash(seed + i * 1.37) * w, y = y0 + hash(seed + i * 2.71 + 9) * h;
+      if (keep && !keep(x, y, i)) continue;
+      g.moveTo(x + r, y); g.arc(x, y, r * (0.6 + hash(seed + i * 4.1) * 0.8), 0, TAU);
+    }
+  }
+  const hash = (n) => { const x = Math.sin(n) * 43758.5453; return x - Math.floor(x); };
+
+  // drawn in units of its own length, mouth at the origin, tail down +y
+  function drawPleco(g, q, VW, VH, L, t, WH) {
+    const { attached } = q;
+    g.save();
+    g.translate(q.x * VW, q.y * VH); g.rotate(q.ang); g.scale(L, L);
+    g.globalAlpha = q.alpha;
+    g.lineJoin = 'round'; g.lineCap = 'round';
+    const px = 1 / L;
+    const wag = Math.sin(t * (attached ? 1.4 : 7)) * (attached ? 0.03 : 0.12);
+    const flut = Math.sin(t * 2.3) * 0.03, rasp = Math.sin(t * 6);
+    // the water between us and it: a blue cast, deepening the further off it is.
+    // Laid over each part as it's drawn, so overlapping parts don't double up
+    const cast = `hsla(${WH | 0},55%,${(14 - 8 * (1 - q.s)).toFixed(1)}%,${(0.22 + 0.65 * (1 - q.s)).toFixed(2)})`;
+    const tint = (path) => { g.fillStyle = cast; g.fill(path); };
+
+    // the tail, swishing
+    const tail = new Path2D();
+    tail.moveTo(-0.05, 0.76);
+    tail.quadraticCurveTo(-0.1 + wag * 0.5, 0.88, -0.19 + wag, 1.02);
+    tail.quadraticCurveTo(-0.06 + wag, 0.95, wag * 0.8, 0.93);
+    tail.quadraticCurveTo(0.06 + wag, 0.95, 0.19 + wag, 1.02);
+    tail.quadraticCurveTo(0.1 + wag * 0.5, 0.88, 0.05, 0.76);
+    tail.closePath();
+    g.fillStyle = 'hsl(32,28%,26%)'; g.fill(tail);
+    g.save(); g.clip(tail); g.beginPath(); spots(g, 140, -0.25, 0.75, 0.5, 0.3, 0.006, 3); g.fillStyle = 'hsl(30,30%,12%)'; g.fill(); g.restore();
+    tint(tail);
+
+    // the fins: big pectorals with their thick spines, smaller pelvics
+    const fin = (side, bx, by, tx, ty, ex, ey, spine) => {
+      const f = new Path2D();
+      f.moveTo(side * bx, by);
+      f.quadraticCurveTo(side * (bx + tx) * 0.55, (by + ty) / 2 - 0.04, side * tx, ty);
+      f.quadraticCurveTo(side * (tx + ex) * 0.5, (ty + ey) / 2 + 0.06, side * ex, ey);
+      f.closePath();
+      g.fillStyle = 'hsla(35,30%,34%,0.92)'; g.fill(f);
+      g.save(); g.clip(f);
+      g.beginPath(); spots(g, 260, Math.min(side * bx, side * tx) - 0.02, Math.min(by, ty) - 0.02, Math.abs(tx - bx) + 0.06, Math.abs(ey - by) + 0.2, 0.0055, side * 11 + by * 30);
+      g.fillStyle = 'hsl(28,35%,14%)'; g.fill();
+      g.beginPath();   // the rays fanning out from the base
+      for (let r = 1; r < 7; r++) { const u = r / 7; g.moveTo(side * bx, by); g.lineTo(side * (tx + (ex - tx) * u), ty + (ey - ty) * u); }
+      g.strokeStyle = 'hsla(30,30%,18%,0.6)'; g.lineWidth = 1.2 * px; g.stroke();
+      g.restore();
+      if (spine) {   // the leading spine, studded with odontodes
+        g.beginPath(); g.moveTo(side * bx, by); g.quadraticCurveTo(side * (bx + tx) * 0.55, (by + ty) / 2 - 0.04, side * tx, ty);
+        g.strokeStyle = 'hsl(33,25%,22%)'; g.lineWidth = 0.022; g.stroke();
+        g.strokeStyle = 'hsla(40,30%,55%,0.5)'; g.lineWidth = 0.006; g.setLineDash([0.006, 0.012]); g.stroke(); g.setLineDash([]);
+      }
+      tint(f);
+    };
+    for (const side of [-1, 1]) {
+      const fl = flut * side;
+      fin(side, 0.17, 0.15, 0.44 + fl, 0.44 - fl, 0.16, 0.33, true);
+      fin(side, 0.1, 0.47, 0.26 + fl * 0.5, 0.64, 0.08, 0.6, true);
+    }
+
+    // the body: a broad flat head tapering to the tail, pale underneath,
+    // darker and spotted up the flanks
+    const body = new Path2D();
+    body.moveTo(0, -0.14);
+    body.bezierCurveTo(0.14, -0.14, 0.24, -0.06, 0.245, 0.1);
+    body.bezierCurveTo(0.25, 0.25, 0.17, 0.45, 0.12, 0.58);
+    body.bezierCurveTo(0.09, 0.66, 0.06, 0.72, 0.05, 0.78);
+    body.lineTo(-0.05, 0.78);
+    body.bezierCurveTo(-0.06, 0.72, -0.09, 0.66, -0.12, 0.58);
+    body.bezierCurveTo(-0.17, 0.45, -0.25, 0.25, -0.245, 0.1);
+    body.bezierCurveTo(-0.24, -0.06, -0.14, -0.14, 0, -0.14);
+    const belly = g.createRadialGradient(0, 0.2, 0.02, 0, 0.22, 0.42);
+    belly.addColorStop(0, 'hsl(40,28%,66%)'); belly.addColorStop(0.5, 'hsl(36,24%,50%)'); belly.addColorStop(0.85, 'hsl(30,25%,30%)'); belly.addColorStop(1, 'hsl(28,25%,20%)');
+    g.fillStyle = belly; g.fill(body);
+    g.save(); g.clip(body);
+    // spots, crowding towards the edges, and the armour plates down the tail
+    g.beginPath(); spots(g, 900, -0.26, -0.15, 0.52, 0.95, 0.0042, 7, (x, y) => Math.abs(x) / (0.25 - Math.max(0, y - 0.1) * 0.28) > 0.3 + hash(x * 91 + y * 37) * 0.6);
+    g.fillStyle = 'hsla(28,35%,16%,0.85)'; g.fill();
+    g.beginPath();
+    for (let y = 0.5; y < 0.8; y += 0.04) { g.moveTo(-0.12, y - 0.02); g.quadraticCurveTo(0, y + 0.015, 0.12, y - 0.02); }
+    g.strokeStyle = 'hsla(30,25%,30%,0.35)'; g.lineWidth = 1.5 * px; g.stroke();
+    // the gill openings behind the head
+    g.beginPath();
+    for (const side of [-1, 1]) { g.moveTo(side * 0.205, 0.12); g.quadraticCurveTo(side * 0.19, 0.17, side * 0.2, 0.22); }
+    g.strokeStyle = 'hsla(25,30%,18%,0.6)'; g.lineWidth = 2.5 * px; g.stroke();
+    g.restore();
+    tint(body);
+
+    // the sucker mouth: a wide disc of lips covered in papillae, and inside
+    // it the two rows of comb-like teeth scraping back and forth
+    const lr = 1 + rasp * 0.025;
+    g.save(); g.scale(lr, lr);
+    const lips = g.createRadialGradient(0, 0, 0.03, 0, 0, 0.12);
+    lips.addColorStop(0, 'hsl(15,30%,32%)'); lips.addColorStop(0.55, 'hsl(22,28%,50%)'); lips.addColorStop(1, 'hsl(26,25%,38%)');
+    g.beginPath(); g.ellipse(0, 0.005, 0.115, 0.1, 0, 0, TAU); g.fillStyle = lips; g.fill();
+    g.beginPath(); spots(g, 650, -0.12, -0.1, 0.24, 0.21, 0.0026, 21, (x, y) => (x * x) / 0.0125 + ((y - 0.005) ** 2) / 0.0095 < 1 && (x * x) / 0.0026 + (y * y) / 0.0017 > 1);
+    g.fillStyle = 'hsla(30,30%,66%,0.6)'; g.fill();
+    if (attached) {   // where it's pressed flat against the glass, wet and shining
+      g.beginPath(); g.ellipse(0, 0.005, 0.11, 0.095, 0, 0, TAU);
+      g.strokeStyle = 'rgba(255,255,255,0.28)'; g.lineWidth = 3 * px; g.stroke();
+    }
+    // the throat, and the jaws working
+    g.beginPath(); g.ellipse(0, 0, 0.052, 0.038 + rasp * 0.006, 0, 0, TAU); g.fillStyle = '#1a0f08'; g.fill();
+    for (const side of [-1, 1]) {
+      const jy = side * (0.012 + rasp * side * 0.006);
+      g.beginPath();
+      for (let i = 0; i <= 16; i++) {
+        const u = i / 16 - 0.5, x = u * 0.085, y = jy + side * u * u * 0.04;
+        g.moveTo(x, y); g.lineTo(x * 1.02, y - side * 0.01);
+      }
+      g.strokeStyle = 'hsl(42,75%,58%)'; g.lineWidth = 1.6 * px; g.stroke();
+    }
+    g.restore();
+    // two little barbels at the corners of the mouth
+    g.beginPath();
+    for (const side of [-1, 1]) { g.moveTo(side * 0.105, -0.02); g.quadraticCurveTo(side * 0.14, -0.03, side * (0.16 + flut * 0.3), 0.005); }
+    g.strokeStyle = 'hsl(30,30%,45%)'; g.lineWidth = 0.008; g.stroke();
+
+    // far off, it's dim and blue with the water in between
+    g.restore();
+  }
+
   viz.registerMode({
     id: 'deepsea', label: 'Deep Sea',
     init() { st = fresh(); },
-    teardown() { st = null; vid = null; },
+    teardown() { st = null; vid = null; algae = null; },
     draw(ctx) {
       const { vctx: g, VW, VH, hueBase, freqData, vizRot, vizUserScale, videoFrame } = ctx;
       if (!st) st = fresh();
@@ -468,6 +676,21 @@
         g.fillStyle = 'rgba(255,255,255,0.5)';
         g.beginPath(); g.arc(bx - br * 0.35, by - br * 0.35, br * 0.25, 0, TAU); g.fill();
       }
+
+      // ── the pleco, on the glass, and the algae on the glass in front of it all ──
+      if (!algae) algae = makeAlgae();
+      const PL = M * 1.05;
+      const q = plecoStep(st.pleco, k, t, algae, VW, VH, PL);
+      if (q) drawPleco(g, q, VW, VH, PL * q.s, t, WH);
+      if ((algae.regrow += k) > 60) {   // in steps, so 8-bit alpha can't stall a tiny fade
+        algae.regrow = 0;
+        algae.mg.globalCompositeOperation = 'destination-out'; algae.mg.fillStyle = 'rgba(0,0,0,0.03)'; algae.mg.fillRect(0, 0, ALW, ALH);
+        algae.mg.globalCompositeOperation = 'source-over';
+      }
+      algae.g.globalCompositeOperation = 'copy'; algae.g.drawImage(algae.base, 0, 0);
+      algae.g.globalCompositeOperation = 'destination-out'; algae.g.drawImage(algae.mask, 0, 0);
+      algae.g.globalCompositeOperation = 'source-over';
+      g.drawImage(algae.c, 0, 0, VW, VH);
 
       // a vignette, the dark closing in from the edges
       const vg = g.createRadialGradient(VW / 2, VH / 2, M * 0.3, VW / 2, VH / 2, Math.hypot(VW, VH) * 0.6);
