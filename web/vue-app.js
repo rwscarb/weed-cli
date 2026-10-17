@@ -61,6 +61,11 @@ const app = createApp({
       // the guest page's 🔊 listen: true while its <audio> is playing
       // /api/orbit-audio (the element itself is this._partyAudio)
       partyListening: false,
+      // where a guest has the live picture: 'inline' (in the sticky top),
+      // 'pip' (docked in the corner) or 'theater' (centered, backdrop
+      // behind). Fullscreen isn't a value here, same as player.mode: it's
+      // the browser's own state on .party-picture (togglePartyFullscreen)
+      partyStreamMode: 'inline',
       partyUrl: '',          // admin: the guest link (lan url + stream token)
       partyStreamToken: '',
       partyForm: { title: '', links: '', autoplay: false, chat: false },
@@ -1181,8 +1186,10 @@ const app = createApp({
       if (this.isPlayerFullscreen()) this.wakePlayerCursor();
       else { clearTimeout(this._cursorIdleTimer); this.player.cursorIdle = false; }
     },
+    // a guest's party picture borrows the same idle-cursor handling (and
+    // player.cursorIdle) -- the global player never shows in party mode
     isPlayerFullscreen() {
-      const el = this.$refs.globalPlayer;
+      const el = this.partyMode ? this.$refs.partyPicture : this.$refs.globalPlayer;
       return !!el && (document.fullscreenElement || document.webkitFullscreenElement) === el;
     },
     wakePlayerCursor() {
@@ -1594,6 +1601,7 @@ const app = createApp({
         // closest-thing-first: only ever undoes one layer per press, same
         // as a browser's own Esc-closes-the-topmost-thing convention
         if (this.qr.visible) { this.qr.visible = false; return; }
+        if (this.partyMode && this.partyStreamMode !== 'inline') { this.partyStreamMode = 'inline'; return; }
         if (this.easterEggVisible) { this.easterEggVisible = false; return; }
         if (this.errorDialog.visible) { this.closeError(); return; }
         if (this.shortcutsVisible) { this.shortcutsVisible = false; return; }
@@ -1608,6 +1616,12 @@ const app = createApp({
       }
 
       if (typing) return;
+
+      // a guest has none of the tabs/player keys below
+      if (this.partyMode) {
+        if (e.key === 'f') this.cyclePartyStreamMode();
+        return;
+      }
 
       if (e.key === '/') {
         e.preventDefault();
@@ -1817,6 +1831,9 @@ const app = createApp({
       // audio switched off, or the stream (or just its audio) restarted,
       // which is a new container the old element can't continue into.
       // It's never restarted from here: play() needs a tap (autoplay).
+      // the stream stopped: the picture is gone, so the next one starts
+      // back in the page rather than reappearing docked or in theater
+      if (!(p.stream && p.stream.active)) this.partyStreamMode = 'inline';
       if (this._partyAudio) {
         const s = p.stream || {};
         if (!s.active || !s.audio || s.since !== this._partyAudio._since || s.audio_since !== this._partyAudio._audioSince) {
@@ -1829,6 +1846,30 @@ const app = createApp({
         this.partyForm.autoplay = !!p.autoplay;
         this.partyForm.chat = !!p.chat;
       }
+    },
+    // ── the party picture: inline / PIP / theater / fullscreen ────────
+    setPartyStreamMode(mode) {
+      if (this.isPlayerFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+      this.partyStreamMode = mode;
+    },
+    // an iPhone can't fullscreen anything but a <video>, and this is an
+    // <img>: theater (centered, backdrop behind) is the biggest it gets there
+    togglePartyFullscreen() {
+      if (this.isPlayerFullscreen()) { (document.exitFullscreen || document.webkitExitFullscreen).call(document); return; }
+      const el = this.$refs.partyPicture;
+      if (!el) return;
+      const req = el.requestFullscreen || el.webkitRequestFullscreen;
+      if (req) { const p = req.call(el); if (p && p.catch) p.catch(() => {}); }
+      else this.partyStreamMode = 'theater';
+    },
+    // `f`, same walk as the player's: in the page → PIP → Theater →
+    // Fullscreen → back in the page
+    cyclePartyStreamMode() {
+      if (!this.party.stream || !this.party.stream.active) return;
+      if (this.isPlayerFullscreen()) this.setPartyStreamMode('inline');
+      else if (this.partyStreamMode === 'inline') this.partyStreamMode = 'pip';
+      else if (this.partyStreamMode === 'pip') this.partyStreamMode = 'theater';
+      else this.togglePartyFullscreen();
     },
     // ── the party page's 🔊 listen ────────────────────────────────────
     // An <audio> pointed at /api/orbit-audio, created on the tap itself

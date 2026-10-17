@@ -32,12 +32,35 @@
   <h2 v-if="party.title">{{ party.title }}</h2>
   <!-- the sticky top: what's playing and the live picture stay put
        while the vote list scrolls beneath (see .party-top in style.css) -->
-  <div class="party-top">
+  <!-- lifted above the vote list and index strip while the picture is
+       docked or in theater: .party-top is sticky, so it's the stacking
+       context its position: fixed picture (and the backdrop) live in -->
+  <div class="party-top" :class="{lifted: party.stream.active && partyStreamMode !== 'inline'}">
+    <!-- behind the theater box; a click puts the picture back in the page -->
+    <div class="party-backdrop" v-if="party.stream.active && partyStreamMode === 'theater'"
+         @click="setPartyStreamMode('inline')"></div>
     <div class="party-now" v-if="party.now_playing">
       now playing: <strong>{{ displayTitle(party.now_playing.title) || shortHash(party.now_playing.content_hash) }}</strong>
     </div>
     <div class="party-stream" v-if="party.stream.active">
-      <img :key="party.stream.since" :src="party.stream.url + '?_=' + party.stream.since" alt="live visualizer">
+      <!-- the picture can sit here inline, dock PIP-style in the corner
+           (the vote list gets the whole page back), grow to a centered
+           theater box, or go real fullscreen -- see vue-app.js
+           setPartyStreamMode. Only the picture moves; the links below
+           stay put. -->
+      <div class="party-picture" ref="partyPicture" :class="['mode-' + partyStreamMode, {'cursor-idle': player.cursorIdle}]"
+           @mousemove="wakePlayerCursor" @pointerdown="wakePlayerCursor" @dblclick="togglePartyFullscreen">
+        <img :key="party.stream.since" :src="party.stream.url + '?_=' + party.stream.since" alt="live visualizer">
+        <div class="party-picture-controls">
+          <button type="button" class="icon-btn" :class="{active: partyStreamMode === 'pip'}"
+                  :title="partyStreamMode === 'pip' ? 'Back in the page' : 'Picture-in-picture'"
+                  @click.stop="setPartyStreamMode(partyStreamMode === 'pip' ? 'inline' : 'pip')">⧉</button>
+          <button type="button" class="icon-btn" :class="{active: partyStreamMode === 'theater'}"
+                  :title="partyStreamMode === 'theater' ? 'Back in the page' : 'Theater'"
+                  @click.stop="setPartyStreamMode(partyStreamMode === 'theater' ? 'inline' : 'theater')">⤢</button>
+          <button type="button" class="icon-btn" title="Fullscreen" @click.stop="togglePartyFullscreen">⛶</button>
+        </div>
+      </div>
       <!-- the streamer's 🔊 is on: a tap (never autoplay) starts an <audio>
            on /api/orbit-audio -- see vue-app.js togglePartyListen -->
       <button type="button" v-if="party.stream.audio" class="party-player-link party-listen-btn" :class="{active: partyListening}"
