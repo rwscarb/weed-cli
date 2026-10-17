@@ -406,6 +406,17 @@ onto the inside of the screen and inches across it rasping the algae off,
 so for a while you're looking straight into its mouth and at its spotted
 belly, before it lets go and sinks back into the dark.
 
+`web/orbit_virtualpet.js` (also loaded by default) adds Virtual Pet: a
+see-through plastic keychain egg from 1997, propped up on a bedroom desk
+at 3:33 AM in the glow of a CRT playing the video, with a red alarm clock
+and glow-in-the-dark stars on the wall. On its LCD a little creature
+hatches, dances (it hops on every kick), gets hungry, poops, grows up,
+grows old and dies, and its ghost floats up off the top of the screen;
+then there's a gravestone and a new egg. Left alone it gets sick and dies
+young. A feeds it, B flushes the mess away and C shows its stats. The
+post-it on the desk tallies every one that didn't make it, and each death
+moves the clock on a minute without ever getting it to 4 AM.
+
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
