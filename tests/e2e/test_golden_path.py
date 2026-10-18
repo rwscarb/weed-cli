@@ -478,6 +478,76 @@ def test_party_view_keeps_the_stream_picture_stuck_to_the_top(page, golden_path_
     assert now.inner_text().strip() == 'now playing: Late Night Mix'
 
 
+def _guest_page_with_stream(page, golden_path_server, monkeypatch):
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-tok')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-tok')
+    # same stand-in stream as the sticky test above
+    def party_with_stream(route):
+        resp = route.fetch()
+        body = resp.json()
+        body['stream'] = dict(body.get('stream') or {}, active=True, url='/api/orbit-view', since=1)
+        route.fulfill(response=resp, json=body)
+    page.route('**/api/party', party_with_stream)
+    page.goto(golden_path_server['web_url'] + '/?token=guest-tok')
+    page.wait_for_selector('.party-picture', state='attached')
+
+
+def test_party_view_picture_goes_pip_theater_and_fullscreen(page, golden_path_server, monkeypatch):
+    """Ryan: "add fullscreen/theater/PIP screen settings when viewing the
+    ui as a party member." The guest's live picture has its own size
+    buttons: PIP docks it in the corner, Theater centers it over a
+    backdrop (a click on which puts it back), Fullscreen is the real
+    thing, and `f` walks all of them like the player's own `f`."""
+    _guest_page_with_stream(page, golden_path_server, monkeypatch)
+    pic = page.locator('.party-picture')
+    pos = lambda: pic.evaluate('el => getComputedStyle(el).position')
+    assert pos() == 'relative'
+
+    page.click('.party-picture-controls .icon-btn[title="Picture-in-picture"]')
+    assert 'mode-pip' in pic.get_attribute('class') and pos() == 'fixed'
+    page.click('.party-picture-controls .icon-btn[title="Back in the page"]')
+    assert 'mode-inline' in pic.get_attribute('class') and pos() == 'relative'
+
+    page.click('.party-picture-controls .icon-btn[title="Theater"]')
+    assert 'mode-theater' in pic.get_attribute('class') and pos() == 'fixed'
+    page.locator('.party-backdrop').click(position={'x': 5, 'y': 5})
+    assert 'mode-inline' in pic.get_attribute('class')
+    assert page.locator('.party-backdrop').count() == 0
+
+    page.click('.party-picture-controls .icon-btn[title="Fullscreen"]')
+    page.wait_for_function(
+        "() => document.fullscreenElement === document.querySelector('.party-picture')")
+    page.click('.party-picture-controls .icon-btn[title="Fullscreen"]')
+    page.wait_for_function("() => document.fullscreenElement === null")
+
+    # f: in the page -> PIP -> Theater -> Fullscreen -> in the page
+    page.locator('body').click(position={'x': 5, 'y': 5})
+    page.keyboard.press('f')
+    assert 'mode-pip' in pic.get_attribute('class')
+    page.keyboard.press('f')
+    assert 'mode-theater' in pic.get_attribute('class')
+    page.keyboard.press('f')
+    page.wait_for_function(
+        "() => document.fullscreenElement === document.querySelector('.party-picture')")
+    page.keyboard.press('f')
+    page.wait_for_function("() => document.fullscreenElement === null")
+    assert 'mode-inline' in pic.get_attribute('class')
+
+
+def test_party_view_fullscreen_hides_the_cursor_when_idle(page, golden_path_server, monkeypatch):
+    """The player's idle-cursor hiding in fullscreen, on the guest's picture too."""
+    _guest_page_with_stream(page, golden_path_server, monkeypatch)
+    page.click('.party-picture-controls .icon-btn[title="Fullscreen"]')
+    page.wait_for_function(
+        "() => document.fullscreenElement === document.querySelector('.party-picture')")
+    page.mouse.move(200, 200)
+    assert 'cursor-idle' not in page.locator('.party-picture').get_attribute('class')
+    page.wait_for_timeout(3600)
+    assert page.locator('.party-picture').evaluate('el => getComputedStyle(el).cursor') == 'none'
+    page.mouse.move(220, 210)
+    assert 'cursor-idle' not in page.locator('.party-picture').get_attribute('class')
+
+
 def test_video_swap_borrows_another_downloads_picture_and_is_remembered(page, golden_path_server):
     """Ryan: "video swap" -- a user can choose a different video track to
     what's currently playing, for mp3s and static-image videos. The ⇄
