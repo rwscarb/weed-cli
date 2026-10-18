@@ -503,6 +503,15 @@
       const grass = g.createLinearGradient(0, Y0, 0, VH);
       grass.addColorStop(0, '#30522a'); grass.addColorStop(1, '#13240f');
       g.fillStyle = grass; g.fillRect(0, Y0, VW, VH - Y0);
+      // grass tufts, swaying with the mids (before the barn, so it stands in front of them)
+      g.strokeStyle = '#4a7a36'; g.lineWidth = Math.max(1, M * 0.002);
+      for (let i = 0; i < 90; i++) {
+        const gx = hash(i * 3.7) * VW, gy = Y0 + Math.pow(hash(i * 8.1), 0.7) * (VH - Y0), sz = (0.4 + (gy - Y0) / (VH - Y0)) * S * 0.025;
+        const sw = Math.sin(st.t * 25 + i) * (0.2 + mids * 0.6);
+        g.beginPath();
+        for (const o of [-0.4, 0, 0.4]) { g.moveTo(gx + o * sz * 0.3, gy); g.quadraticCurveTo(gx + o * sz * 0.5, gy - sz * 0.6, gx + (o + sw) * sz * 0.6, gy - sz); }
+        g.stroke();
+      }
       // the barn, and the light off its sheet
       const bw = Math.min(S * 0.46, W * 0.56), bx = cx - W * 0.72 - bw / 2, bBase = Y0 + S * 0.08;
       const spill = g.createRadialGradient(bx + bw / 2, bBase, 0, bx + bw / 2, bBase, bw * 1.3);
@@ -516,16 +525,6 @@
       g.beginPath(); g.moveTo(bx + bw, fy - S * 0.03); g.lineTo(VW, fy - S * 0.03); g.moveTo(bx + bw, fy - S * 0.012); g.lineTo(VW, fy - S * 0.012); g.stroke();
       g.fillStyle = '#3b2a1e';
       for (let x = bx + bw + S * 0.04; x < VW; x += S * 0.11) g.fillRect(x, fy - S * 0.045, S * 0.012, S * 0.05);
-      // grass tufts, swaying with the mids
-      g.strokeStyle = '#4a7a36'; g.lineWidth = Math.max(1, M * 0.002);
-      for (let i = 0; i < 90; i++) {
-        const gx = hash(i * 3.7) * VW, gy = Y0 + Math.pow(hash(i * 8.1), 0.7) * (VH - Y0), sz = (0.4 + (gy - Y0) / (VH - Y0)) * S * 0.025;
-        const sw = Math.sin(st.t * 25 + i) * (0.2 + mids * 0.6);
-        g.beginPath();
-        for (const o of [-0.4, 0, 0.4]) { g.moveTo(gx + o * sz * 0.3, gy); g.quadraticCurveTo(gx + o * sz * 0.5, gy - sz * 0.6, gx + (o + sw) * sz * 0.6, gy - sz); }
-        g.stroke();
-      }
-
       // ── the trampolines, back row first, each with whoever's on it ──
       const order = st.tramps.slice().sort((a, b) => a.gy - b.gy);
       for (const tr of order) {
