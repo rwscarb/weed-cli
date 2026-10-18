@@ -417,6 +417,18 @@ young. A feeds it, B flushes the mess away and C shows its stats. The
 post-it on the desk tallies every one that didn't make it, and each death
 moves the clock on a minute without ever getting it to 4 AM.
 
+`web/orbit_trampoline.js` (also loaded by default) adds Trampoline: dusk
+on a farm, and the cows and frogs have got hold of the trampolines. Each
+animal listens to its own slice of the spectrum, which decides how high
+it bounces, and every kick sends them all higher (and somebody shouts
+MOO! or RIBBIT about it). Cows do flips off the big bounces, frogs kick
+their legs out and snap flies out of the air with their tongues, and the
+cow and frog sharing the big trampoline in the middle double-bounce each
+other. The video plays on a sheet pegged to the side of the barn,
+fireflies come out with the highs, and every so often a cow bounces so
+hard it goes right over the moon. J makes everybody jump and M sends a
+cow over the moon on demand.
+
 ### Docker
 
 `Dockerfile.node` + `docker-compose.node.yml` package `web_ui.py` to run
