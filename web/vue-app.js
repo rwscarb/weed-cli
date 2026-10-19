@@ -1890,15 +1890,58 @@ const app = createApp({
       a.onended = () => { if (this._partyAudio === a) this.stopPartyListen(); };
       this._partyAudio = a;
       this.partyListening = true;
+      this._partyAudioTimer = setInterval(() => { if (this._partyAudio === a) this._chasePartyAudioEdge(a); }, 500);
       a.play().catch(err => {
         console.warn('[party] audio play() refused:', err && err.message);
         if (this._partyAudio === a) this.stopPartyListen();
       });
     },
+    // Why the guest's sound drifts behind the picture, and what undoes it.
+    // The picture is an <img> on MJPEG: every frame replaces the last and
+    // the server drops stale ones, so it's always live. The <audio> is a
+    // live WebM/Ogg file, and an element playing a file never skips: each
+    // stall (a wifi hiccup, the tab busy, the sender's blobs landing late)
+    // pauses it while the stream keeps coming, and it resumes from where it
+    // stopped. So its delay only ever grows, one hiccup at a time, and no
+    // fixed ⏱ offset can follow that.
+    // How far behind it is: buffered.end - currentTime, the audio that has
+    // arrived but not played yet. Chrome appends the incoming bytes about
+    // a second at a time, so one reading saws between x and x+1s; the
+    // floor of the last ~3s of readings is the real backlog. (Chrome also
+    // stops reading ahead at ~2.5s and leaves the rest of a long backlog
+    // in the socket, so this undercounts a big one; draining it pulls the
+    // rest in, so the floor stays up until it's all gone.) A little
+    // behind, it plays slightly fast (up to +8%, pitch preserved) until
+    // the floor is back near TARGET; seconds behind, it reconnects, which
+    // starts it at the live edge again (the server hands a new reader the
+    // next block, not the backlog) for the cost of a moment's silence. No
+    // wall clock involved, so a sender whose audio clock runs a hair slow
+    // or fast against this device's can't fool it. Run every 500ms while
+    // listening (togglePartyListen).
+    _chasePartyAudioEdge(a) {
+      const TARGET = 0.5, RECONNECT = 2, WINDOW = 6;   // seconds queued; samples
+      if (!a || a.paused || a.readyState < 3 || !a.buffered.length) return;
+      const hist = a._aheadHist || (a._aheadHist = []);
+      hist.push(a.buffered.end(a.buffered.length - 1) - a.currentTime);
+      if (hist.length > WINDOW) hist.shift();
+      if (hist.length < WINDOW) return;
+      const behind = Math.min(...hist);
+      if (behind > RECONNECT) {
+        hist.length = 0;
+        a.playbackRate = 1;
+        a.src = a.src.replace(/([?&]_=)\d+/, '$1' + Date.now());
+        a.play().catch(() => { if (this._partyAudio === a) this.stopPartyListen(); });
+        return;
+      }
+      // proportional: 0.6s over target plays at +6%, back to 1x once there
+      const rate = behind > TARGET + 0.1 ? 1 + Math.min(0.08, (behind - TARGET) * 0.1) : 1;
+      if (Math.abs(a.playbackRate - rate) > 0.005) a.playbackRate = rate;
+    },
     stopPartyListen() {
       const a = this._partyAudio;
       this._partyAudio = null;
       this.partyListening = false;
+      if (this._partyAudioTimer) { clearInterval(this._partyAudioTimer); this._partyAudioTimer = null; }
       if (!a) return;
       try { a.pause(); } catch (e) { /* never started */ }
       // dropping src closes the connection; the server sees the write fail
