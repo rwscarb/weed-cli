@@ -61,20 +61,20 @@ def test_live_audio_stays_at_the_edge_without_running_dry(browser, golden_path_s
         r = _vm(guest).evaluate(probe)
         worst = max(worst, r['ahead'])
     assert first['mse']
-    assert worst < 1.2, f'audio queued up to {worst:.2f}s behind the live edge'
+    assert worst < 1.5, f'audio queued up to {worst:.2f}s behind the live edge'
     # the old <audio src> ran dry ~4 times in this window; one is allowed
     # for a busy CI runner's scheduling, not for the 2s lumps
     assert r['waits'] <= 1, f"ran dry {r['waits']} times"
     # media time keeps pace with the wall clock: no drift
     assert abs(r['lag'] - first['lag']) < 0.4
 
-    # a stall (the element held up for 3s) is skipped, not kept
+    # a long hold-up (the element held for 4s) is skipped, not kept
     _vm(guest).evaluate("vm => vm._partyAudio.pause()")
-    time.sleep(3)
+    time.sleep(4)
     _vm(guest).evaluate("vm => { vm._partyAudio.play(); }")
-    time.sleep(1.5)
+    time.sleep(3)
     r = _vm(guest).evaluate(probe)
-    assert r['ahead'] < 1.2 and abs(r['lag'] - first['lag']) < 0.6
+    assert r['ahead'] < 1.5 and abs(r['lag'] - first['lag']) < 0.8, (first, r)
     _vm(guest).evaluate("vm => vm.stopPartyListen()")
 
 
@@ -101,20 +101,31 @@ def _run(page, readings, mse=False):
 
 def test_mse_near_the_edge_is_left_alone(page, golden_path_server):
     page.goto(golden_path_server['web_url'])
-    r = _run(page, [0.4, 0.5, 0.6, 0.4, 0.5, 0.6], mse=True)
-    assert r['rate'] == 1 and abs(r['ahead'] - 0.6) < 1e-9
+    r = _run(page, [0.3, 0.45, 0.6] * 11, mse=True)
+    assert r['rate'] == 1 and not r['reconnected']
 
 
-def test_mse_a_little_behind_plays_it_off(page, golden_path_server):
+def test_mse_audio_that_always_waits_is_played_off_at_one_steady_rate(page, golden_path_server):
     page.goto(golden_path_server['web_url'])
-    r = _run(page, [1.4] * 4, mse=True)                   # 1s over: +10%, no skip
-    assert abs(r['rate'] - 1.1) < 1e-9 and abs(r['ahead'] - 1.4) < 1e-9
+    r = _run(page, [1.0] * 32, mse=True)                  # 0.75s never used
+    assert r['rate'] == 1.04 and abs(r['ahead'] - 1.0) < 1e-9
+    r = _run(page, [1.0] * 32 + [0.3] * 32, mse=True)     # drained: back to 1x
+    assert r['rate'] == 1
 
 
-def test_mse_far_behind_skips_to_the_edge(page, golden_path_server):
+def test_mse_a_dip_between_bursts_keeps_the_buffer(page, golden_path_server):
+    """Over the internet the blobs come in bursts. The buffer that just
+    covers the gaps between them is in use, so it's kept: trimming it
+    was what ran the sound dry (stutter) and seeking was the click."""
     page.goto(golden_path_server['web_url'])
-    r = _run(page, [3.0], mse=True)
-    assert r['rate'] == 1 and abs(r['ahead'] - 0.4) < 1e-9 and not r['reconnected']
+    r = _run(page, [1.5] * 20 + [0.05] + [1.5] * 11, mse=True)
+    assert r['rate'] == 1 and abs(r['ahead'] - 1.5) < 1e-9
+
+
+def test_mse_seconds_behind_jumps_to_the_edge(page, golden_path_server):
+    page.goto(golden_path_server['web_url'])
+    r = _run(page, [4.0] * 8, mse=True)
+    assert r['rate'] == 1 and abs(r['ahead'] - 1.0) < 1e-9 and not r['reconnected']
 
 
 def test_mse_late_joiner_starts_at_the_edge(page, golden_path_server):
@@ -123,7 +134,7 @@ def test_mse_late_joiner_starts_at_the_edge(page, golden_path_server):
     r = _vm(page).evaluate("""vm => { const a = { paused: false, currentTime: 0, playbackRate: 1, _mse: {},
         buffered: { length: 1, start: () => 300, end: () => 300.5 } };
       vm._chasePartyAudioEdge(a); return a.currentTime; }""")
-    assert abs(r - 300.1) < 1e-9
+    assert abs(r - 299.5) < 1e-9
 
 
 def test_fallback_near_the_edge_plays_at_normal_speed(page, golden_path_server):

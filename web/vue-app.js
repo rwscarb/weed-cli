@@ -1962,38 +1962,51 @@ const app = createApp({
     },
     // Keep the guest's sound at the live edge, run every 250ms. ahead =
     // buffered.end - currentTime, the audio received but not yet played.
-    // With MSE the blobs land every ~250ms, so a healthy buffer holds a
-    // fraction of a second; anything well past TARGET is delay left by a
-    // stall: up to 1.5s of it is played off slightly fast, more than that
-    // and the playhead jumps straight to TARGET behind the edge (a one-off
-    // skip of whatever was missed, instead of hearing it late forever).
-    // The jump is also how a late joiner starts: its first blocks carry the
+    // With MSE that's what the page appended, blob by blob. On a LAN the
+    // blobs land every ~250ms; over the internet they come in bursts, a
+    // second or more apart, and a buffer sized for the LAN runs dry
+    // between them (a stutter), while trimming it back after each burst
+    // (a seek, a click) only sets up the next one. So the measure is the
+    // floor of the last 8s of readings: the least that was queued, dips
+    // between bursts included. A stall puts its own length into the
+    // buffer (playback waited, the stream didn't), and because that dip
+    // is in the window the extra is kept: the buffer grows to whatever the
+    // connection needs and nothing fights it. Only a floor well above
+    // CUSHION -- audio that's always been waiting, i.e. delay nothing is
+    // using -- is played off, at a steady +4% (pitch preserved; one rate
+    // change on, one off, not a new one every tick). Seconds of it for 2s
+    // straight (a backgrounded tab, a long outage) jumps to the edge. The
+    // jump is also how a late joiner starts: its first blocks carry the
     // recording's own timestamps, seconds or minutes in, not 0.
     // The <audio src> fallback can't be steered that finely (it's fed in
     // ~2s lumps, see above, so ahead saws by 2s on its own): there the
     // floor of the last ~3s of readings is the backlog, played off up to
-    // 8% fast (pitch preserved), and only a big one -- several seconds,
-    // which the lumps alone never reach -- reconnects to the live edge.
+    // 8% fast, and only a big one -- several seconds, which the lumps
+    // alone never reach -- reconnects to the live edge.
     _chasePartyAudioEdge(a) {
       if (!a || a.paused || !a.buffered || !a.buffered.length) return;
       const end = a.buffered.end(a.buffered.length - 1);
       const ahead = end - a.currentTime;
       if (a._mse) {
-        const TARGET = 0.4, JUMP = 1.5;   // seconds queued
+        const CUSHION = 0.25, START = 1, JUMP = 3, WINDOW = 32;   // seconds queued; samples (8s)
         const hist = a._aheadHist || (a._aheadHist = []);
+        if (a.currentTime < a.buffered.start(0)) {
+          a.currentTime = Math.max(0, end - START);
+          hist.length = 0;
+          return;
+        }
         hist.push(ahead);
-        if (hist.length > 4) hist.shift();
-        if (a.currentTime < a.buffered.start(0) || ahead > TARGET + JUMP) {
-          a.currentTime = Math.max(0, end - TARGET);
+        if (hist.length > WINDOW) hist.shift();
+        // seconds queued for 2s straight is a backlog, not a gap between bursts
+        if (hist.length >= 8 && Math.min(...hist.slice(-8)) - CUSHION > JUMP) {
+          a.currentTime = end - START;
           a.playbackRate = 1; hist.length = 0;
           return;
         }
-        // under JUMP over: played off at up to +10% (pitch preserved) rather
-        // than skipped; the floor of the last second, so the 250ms sawtooth
-        // of blobs landing doesn't count
-        const over = Math.min(...hist) - TARGET;
-        const rate = over > 0.15 ? 1 + Math.min(0.1, over * 0.1) : 1;
-        if (Math.abs(a.playbackRate - rate) > 0.005) a.playbackRate = rate;
+        if (hist.length < WINDOW) return;
+        const over = Math.min(...hist) - CUSHION;
+        if (a.playbackRate === 1 && over > 0.4) a.playbackRate = 1.04;
+        else if (a.playbackRate !== 1 && over < 0.1) a.playbackRate = 1;
         return;
       }
       const TARGET = 0.5, RECONNECT = 4.5, WINDOW = 12;   // seconds queued; samples (~3s)
