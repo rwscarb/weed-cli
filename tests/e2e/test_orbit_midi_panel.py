@@ -139,3 +139,47 @@ def test_knobs_drive_volume_and_the_filters(page, golden_path_server):
     assert graph()['muted'] is True
     note(60)
     assert graph()['muted'] is False
+
+
+def test_a_knob_on_the_sync_delay_moves_it_finely(page, golden_path_server):
+    """⏱ is for lining speakers up by ear, about a second either side of
+    0. It used to map a knob linearly over ±10s: 157ms per pot value,
+    400ms per encoder click, and the encoder's first click threw away
+    wherever the slider was."""
+    _open_midi_panel(page, golden_path_server)
+    page.evaluate("""() => window.orbitMidi.importKeymap({ format: 'weed.orbit.midi-keymap', version: 1, bindings: [
+        { id: 'k8', key: 'c0:30' } ] })""")
+    cc = lambda n, v: page.evaluate("([n, v]) => window.orbitMidi._onMessage({ data: [0xB0, n, v] })", [n, v])
+    vm = "document.getElementById('app').__vue_app__._container._vnode.component.proxy"
+    delay = lambda: page.evaluate(f"() => {vm}.orbitDelay")
+
+    # a pot: the centre is 0, the middle of the travel is fine, the ends still reach ±10s
+    for v in (70, 66, 64):
+        cc(30, v)
+    assert delay() == 0
+    readings = []
+    for v in (80, 81, 82, 83, 84):
+        cc(30, v)
+        readings.append(delay())
+    assert 100 < readings[0] < readings[-1] < 700, readings
+    assert max(b - a for a, b in zip(readings, readings[1:])) <= 60, readings
+    for v in (100, 120, 127):
+        cc(30, v)
+    assert delay() == 10000
+
+    # an encoder: 20ms a click, from wherever the slider is now
+    page.evaluate(f"() => {{ {vm}.orbitDelay = 800; }}")
+    page.evaluate("""() => window.orbitMidi.importKeymap({ format: 'weed.orbit.midi-keymap', version: 1, bindings: [
+        { id: 'k8', key: 'c0:31' } ] })""")
+    for _ in range(5):
+        cc(31, 1)
+    assert delay() == 900
+    for _ in range(3):
+        cc(31, 127)
+    assert delay() == 840
+    # crossing 0 stops on it
+    page.evaluate(f"() => {{ {vm}.orbitDelay = 10; }}")
+    cc(31, 127)
+    assert delay() == 0
+    cc(31, 127)
+    assert delay() == -20

@@ -625,6 +625,8 @@ const app = createApp({
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
     window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = this.clampOrbitDelay(e.detail | 0); });
+    // a MIDI encoder on ⏱ steps from wherever the slider is now
+    window.orbitSync = { delay: () => this.orbitDelay };
     setInterval(() => this._syncLagVideo(), 200);
     // the MIDI panel's volume/filter rows (orbit_midi.js): the player's
     // level and the mix bus's filters are this component's state too
@@ -1504,12 +1506,13 @@ const app = createApp({
       try { s.ws.close(); } catch (e) { /* already closed */ }
       console.log(`[orbit] audio off (${(s.bytes / 1024).toFixed(0)} KB sent)`);
     },
-    clampOrbitDelay(ms) { return Math.min(10000, Math.max(-10000, Math.round(ms / 100) * 100)); },
+    // 10ms steps: lining speakers up by ear needs finer than 0.1s
+    clampOrbitDelay(ms) { return Math.min(10000, Math.max(-10000, Math.round(ms / 10) * 10)); },
     orbitDelayText(ms) {
-      return (ms > 0 ? '+' : ms < 0 ? '−' : '') + (Math.abs(ms) / 1000).toFixed(1) + 's';
+      return (ms > 0 ? '+' : ms < 0 ? '−' : '') + (Math.abs(ms) / 1000).toFixed(ms % 100 ? 2 : 1) + 's';
     },
     orbitDelayTitle() {
-      const s = (Math.abs(this.orbitDelay) / 1000).toFixed(1) + 's';
+      const s = this.orbitDelayText(Math.abs(this.orbitDelay));
       const what = this.orbitDelay > 0 ? `sound ${s} later` : this.orbitDelay < 0 ? `picture ${s} later` : 'no offset';
       return `Sync: ${what}. Right holds the sound back (the picture lags, e.g. the VLC stream), `
         + 'left holds the picture back (the sound lags, e.g. AirPlay or Bluetooth); double-click to reset';
@@ -1531,7 +1534,7 @@ const app = createApp({
       const move = (ev) => {
         let v = startVal + (ev.clientX - startX) / width * 20000;
         if (Math.abs(v) < 250) v = 0;
-        v = this.clampOrbitDelay(v);
+        v = this.clampOrbitDelay(Math.round(v / 100) * 100);   // a pixel is ~30ms: 0.1s steps by mouse
         if (v !== this.orbitDelay) this.orbitDelay = v;
       };
       const up = () => {
