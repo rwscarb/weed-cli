@@ -1882,47 +1882,121 @@ const app = createApp({
       const s = this.party.stream;
       if (!s.active || !s.audio) return;
       const a = document.createElement('audio');
-      a.preload = 'none';
       a._since = s.since;
       a._audioSince = s.audio_since;
-      a.src = (s.audio_url || '/api/orbit-audio') + '?_=' + Date.now();
+      const url = (s.audio_url || '/api/orbit-audio') + '?_=' + Date.now();
+      const MS = window.MediaSource || window.ManagedMediaSource;
+      const mime = s.audio_mime || '';
+      if (MS && mime && MS.isTypeSupported(mime)) this._feedPartyAudio(a, MS, url, mime);
+      else { a.preload = 'none'; a.src = url; }
       a.onerror = () => { console.warn('[party] audio element error', a.error && a.error.message); if (this._partyAudio === a) this.stopPartyListen(); };
       a.onended = () => { if (this._partyAudio === a) this.stopPartyListen(); };
       this._partyAudio = a;
       this.partyListening = true;
-      this._partyAudioTimer = setInterval(() => { if (this._partyAudio === a) this._chasePartyAudioEdge(a); }, 500);
+      this._partyAudioTimer = setInterval(() => { if (this._partyAudio === a) this._chasePartyAudioEdge(a); }, 250);
       a.play().catch(err => {
         console.warn('[party] audio play() refused:', err && err.message);
         if (this._partyAudio === a) this.stopPartyListen();
       });
     },
-    // Why the guest's sound drifts behind the picture, and what undoes it.
-    // The picture is an <img> on MJPEG: every frame replaces the last and
-    // the server drops stale ones, so it's always live. The <audio> is a
-    // live WebM/Ogg file, and an element playing a file never skips: each
-    // stall (a wifi hiccup, the tab busy, the sender's blobs landing late)
-    // pauses it while the stream keeps coming, and it resumes from where it
-    // stopped. So its delay only ever grows, one hiccup at a time, and no
-    // fixed ⏱ offset can follow that.
-    // How far behind it is: buffered.end - currentTime, the audio that has
-    // arrived but not played yet. Chrome appends the incoming bytes about
-    // a second at a time, so one reading saws between x and x+1s; the
-    // floor of the last ~3s of readings is the real backlog. (Chrome also
-    // stops reading ahead at ~2.5s and leaves the rest of a long backlog
-    // in the socket, so this undercounts a big one; draining it pulls the
-    // rest in, so the floor stays up until it's all gone.) A little
-    // behind, it plays slightly fast (up to +8%, pitch preserved) until
-    // the floor is back near TARGET; seconds behind, it reconnects, which
-    // starts it at the live edge again (the server hands a new reader the
-    // next block, not the backlog) for the cost of a moment's silence. No
-    // wall clock involved, so a sender whose audio clock runs a hair slow
-    // or fast against this device's can't fool it. Run every 500ms while
-    // listening (togglePartyListen).
+    // Why the guest's sound drifted behind the picture. The picture is an
+    // <img> on MJPEG: every frame replaces the last and the server drops
+    // stale ones, so it's always live. The sound was an <audio src> on the
+    // live WebM, and Chrome's media loader only hands the decoder 32KB at
+    // a time -- at 128kbps that's 2s of audio per handoff, while playback
+    // starts on the first one. So the element ran dry every couple of
+    // seconds, sat 'waiting' until the next 32KB landed, and resumed where
+    // it stopped: each of those added delay that never came back, which is
+    // the slow drift (measured: ~0.1-1.5s per stall, several a minute).
+    // So where the browser has Media Source Extensions for the stream's
+    // type (Chrome, Edge, Firefox and desktop Safari, for WebM/Opus), the
+    // page fetches the stream itself and appends each ~250ms blob to a
+    // SourceBuffer the moment it arrives: no 32KB batching, and the buffer
+    // is the page's to manage (_chasePartyAudioEdge keeps it short). Ogg
+    // (a Firefox streamer) or no MSE (older iPhones) falls back to the
+    // plain <audio src>.
+    _feedPartyAudio(a, MS, url, mime) {
+      const ms = new MS();
+      const ctl = new AbortController();
+      a._mse = { ctl };
+      a.disableRemotePlayback = true;   // ManagedMediaSource (iOS 17.1+) requires it
+      a.src = URL.createObjectURL(ms);
+      ms.addEventListener('sourceopen', async () => {
+        URL.revokeObjectURL(a.src);
+        const gone = () => this._partyAudio !== a || ctl.signal.aborted;
+        let sb;
+        try { sb = ms.addSourceBuffer(mime); } catch (e) {
+          console.warn('[party] audio: MSE refused', mime, e);
+          if (!gone()) this.stopPartyListen();
+          return;
+        }
+        const pending = [];
+        const pump = () => {
+          if (sb.updating || gone() || ms.readyState !== 'open') return;
+          // keep ~10s behind the playhead, so a long listen can't hit the quota
+          const b = sb.buffered;
+          if (b.length && a.currentTime - b.start(0) > 20) { sb.remove(0, a.currentTime - 10); return; }
+          if (pending.length) {
+            try { sb.appendBuffer(pending.shift()); } catch (e) { console.warn('[party] audio: append failed', e); this.stopPartyListen(); }
+          }
+        };
+        sb.addEventListener('updateend', pump);
+        try {
+          const res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+          if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+          const reader = res.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || gone()) break;
+            pending.push(value);
+            pump();
+          }
+        } catch (e) {
+          if (!gone()) console.warn('[party] audio feed ended:', e && e.message);
+        }
+        if (!gone()) this.stopPartyListen();   // the stream ended
+      }, { once: true });
+    },
+    // Keep the guest's sound at the live edge, run every 250ms. ahead =
+    // buffered.end - currentTime, the audio received but not yet played.
+    // With MSE the blobs land every ~250ms, so a healthy buffer holds a
+    // fraction of a second; anything well past TARGET is delay left by a
+    // stall: up to 1.5s of it is played off slightly fast, more than that
+    // and the playhead jumps straight to TARGET behind the edge (a one-off
+    // skip of whatever was missed, instead of hearing it late forever).
+    // The jump is also how a late joiner starts: its first blocks carry the
+    // recording's own timestamps, seconds or minutes in, not 0.
+    // The <audio src> fallback can't be steered that finely (it's fed in
+    // ~2s lumps, see above, so ahead saws by 2s on its own): there the
+    // floor of the last ~3s of readings is the backlog, played off up to
+    // 8% fast (pitch preserved), and only a big one -- several seconds,
+    // which the lumps alone never reach -- reconnects to the live edge.
     _chasePartyAudioEdge(a) {
-      const TARGET = 0.5, RECONNECT = 2, WINDOW = 6;   // seconds queued; samples
-      if (!a || a.paused || a.readyState < 3 || !a.buffered.length) return;
+      if (!a || a.paused || !a.buffered || !a.buffered.length) return;
+      const end = a.buffered.end(a.buffered.length - 1);
+      const ahead = end - a.currentTime;
+      if (a._mse) {
+        const TARGET = 0.4, JUMP = 1.5;   // seconds queued
+        const hist = a._aheadHist || (a._aheadHist = []);
+        hist.push(ahead);
+        if (hist.length > 4) hist.shift();
+        if (a.currentTime < a.buffered.start(0) || ahead > TARGET + JUMP) {
+          a.currentTime = Math.max(0, end - TARGET);
+          a.playbackRate = 1; hist.length = 0;
+          return;
+        }
+        // under JUMP over: played off at up to +10% (pitch preserved) rather
+        // than skipped; the floor of the last second, so the 250ms sawtooth
+        // of blobs landing doesn't count
+        const over = Math.min(...hist) - TARGET;
+        const rate = over > 0.15 ? 1 + Math.min(0.1, over * 0.1) : 1;
+        if (Math.abs(a.playbackRate - rate) > 0.005) a.playbackRate = rate;
+        return;
+      }
+      const TARGET = 0.5, RECONNECT = 4.5, WINDOW = 12;   // seconds queued; samples (~3s)
+      if (a.readyState < 3) return;
       const hist = a._aheadHist || (a._aheadHist = []);
-      hist.push(a.buffered.end(a.buffered.length - 1) - a.currentTime);
+      hist.push(ahead);
       if (hist.length > WINDOW) hist.shift();
       if (hist.length < WINDOW) return;
       const behind = Math.min(...hist);
@@ -1943,6 +2017,7 @@ const app = createApp({
       this.partyListening = false;
       if (this._partyAudioTimer) { clearInterval(this._partyAudioTimer); this._partyAudioTimer = null; }
       if (!a) return;
+      if (a._mse) a._mse.ctl.abort();   // closes the fetch; the server sees the write fail
       try { a.pause(); } catch (e) { /* never started */ }
       // dropping src closes the connection; the server sees the write fail
       a.removeAttribute('src');
