@@ -23,6 +23,113 @@ const FilterToggle = {
   `,
 };
 
+// Re-times a live WebM/Opus byte stream so every audio frame starts
+// exactly where the last one ended. The streamer's MediaRecorder stamps
+// each Opus packet (60ms in Chrome) with its capture time, which jitters:
+// measured 52, 59, 69, 52, 59, 69ms apart. A player that decodes straight
+// through never notices, but Media Source Extensions place each frame at
+// its timestamp, so an early one overlaps the last (the overlap is cut)
+// and a late one leaves a gap of silence: a click either way, several a
+// second (the party page's 🔊 listen, _feedPartyAudio). Here each packet's
+// time is instead the previous one's plus its own duration, read from the
+// Opus TOC byte (RFC 6716 §3.1). Everything before the first Cluster (the
+// EBML header, Segment, Info, Tracks) passes through untouched; each
+// incoming Cluster becomes a fresh unknown-size Cluster whose Timecode is
+// the running time, holding the same SimpleBlocks with their 16-bit
+// relative timecodes rewritten. feed(chunk) returns the bytes ready so
+// far (possibly none); a partial element waits for the next chunk.
+function webmOpusRetimer() {
+  const EBML = 0x1A45DFA3, SEGMENT = 0x18538067, INFO = 0x1549A966, SCALE = 0x2AD7B1,
+        CLUSTER = 0x1F43B675, TIMECODE = 0xE7, SIMPLEBLOCK = 0xA3;
+  let buf = new Uint8Array(0);
+  let init = true, inInfo = 0;     // inInfo: bytes of Info still to walk
+  let scaleNs = 1000000;           // TimecodeScale: ns per timecode tick
+  let clusterTc = 0, fresh = true, t = null, t0 = 0;   // t, t0: running time / this cluster's, in ticks
+  function header(p) {
+    // { id, size (null = unknown), len } of the element at p, or null if incomplete
+    if (p >= buf.length) return null;
+    const b0 = buf[p], idLen = b0 >= 0x80 ? 1 : b0 >= 0x40 ? 2 : b0 >= 0x20 ? 3 : 4;
+    if (p + idLen >= buf.length) return null;
+    let id = 0;
+    for (let i = 0; i < idLen; i++) id = id * 256 + buf[p + i];
+    const s0 = buf[p + idLen];
+    let sLen = 1;
+    while (sLen <= 8 && !(s0 & (0x80 >> (sLen - 1)))) sLen++;
+    if (p + idLen + sLen > buf.length) return null;
+    let size = s0 & (0xFF >> sLen), allOnes = size === (0xFF >> sLen);
+    for (let i = 1; i < sLen; i++) { const v = buf[p + idLen + i]; size = size * 256 + v; if (v !== 0xFF) allOnes = false; }
+    return { id, size: allOnes ? null : size, len: idLen + sLen };
+  }
+  function uint(p, n) { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + buf[p + i]; return v; }
+  // one Opus packet's duration in ms, from its TOC byte and frame count
+  function opusMs(p, end) {
+    const toc = buf[p], cfg = toc >> 3;
+    const frame = cfg < 12 ? [10, 20, 40, 60][cfg & 3] : cfg < 16 ? [10, 20][cfg & 1] : [2.5, 5, 10, 20][cfg & 3];
+    const code = toc & 3;
+    const n = code === 0 ? 1 : code < 3 ? 2 : (p + 1 < end ? buf[p + 1] & 0x3F : 1);
+    return frame * n;
+  }
+  function clusterHeader(tc) {
+    const v = [];
+    for (let x = Math.round(tc); x > 0 || !v.length; x = Math.floor(x / 256)) v.unshift(x & 0xFF);
+    return [0x1F, 0x43, 0xB6, 0x75, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, TIMECODE, 0x80 | v.length, ...v];
+  }
+  return function feed(chunk) {
+    const joined = new Uint8Array(buf.length + chunk.length);
+    joined.set(buf); joined.set(chunk, buf.length);
+    buf = joined;
+    const out = [];
+    let p = 0;
+    inInfo = 0;   // the init walk starts over from byte 0 until a Cluster turns up
+    for (;;) {
+      const h = header(p);
+      if (!h) break;
+      if (init) {
+        if (h.id === CLUSTER) {
+          init = false;
+          if (p) out.push(buf.slice(0, p));
+          buf = buf.slice(p); p = 0;
+          continue;
+        }
+        // walk into Segment and Info (for TimecodeScale); step over the rest
+        if (h.id === SEGMENT) { p += h.len; continue; }
+        if (h.id === INFO && h.size !== null) { inInfo = h.size; p += h.len; continue; }
+        if (h.size === null || p + h.len + h.size > buf.length) break;
+        if (inInfo && h.id === SCALE) scaleNs = uint(p + h.len, h.size);
+        if (inInfo) inInfo = Math.max(0, inInfo - h.len - h.size);
+        p += h.len + h.size;
+        continue;
+      }
+      if (h.id === CLUSTER) { fresh = true; p += h.len; continue; }
+      if (h.size === null) { p += h.len; continue; }        // some other live master: its children follow
+      const end = p + h.len + h.size;
+      if (end > buf.length) break;
+      if (h.id === TIMECODE) clusterTc = uint(p + h.len, h.size);
+      else if (h.id === SIMPLEBLOCK) {
+        const body = p + h.len;
+        const tl = buf[body] >= 0x80 ? 1 : buf[body] >= 0x40 ? 2 : 3;   // track number vint
+        const rel = (buf[body + tl] << 8 | buf[body + tl + 1]) << 16 >> 16;
+        const laced = buf[body + tl + 2] & 0x06;
+        if (t === null || laced) t = clusterTc + rel;   // laced: can't size it, keep its own time
+        if (fresh || t - t0 > 30000) { out.push(new Uint8Array(clusterHeader(t))); t0 = Math.round(t); fresh = false; }
+        const block = buf.slice(p, end);
+        const r = Math.round(t) - t0;
+        block[h.len + tl] = (r >> 8) & 0xFF; block[h.len + tl + 1] = r & 0xFF;
+        out.push(block);
+        t += opusMs(body + tl + 3, end) * 1e6 / scaleNs;
+      }
+      p = end;   // Timecode, SimpleBlock, or anything else at cluster level (dropped)
+    }
+    if (!init) buf = buf.slice(p);   // still in the init segment: keep it all, it goes out whole
+    let n = 0;
+    for (const o of out) n += o.length;
+    const res = new Uint8Array(n);
+    let o2 = 0;
+    for (const o of out) { res.set(o, o2); o2 += o.length; }
+    return res;
+  };
+}
+
 const app = createApp({
   data() {
     const tabs = [
@@ -1934,6 +2041,7 @@ const app = createApp({
           return;
         }
         const pending = [];
+        const retime = mime.startsWith('audio/webm') ? webmOpusRetimer() : null;
         const pump = () => {
           if (sb.updating || gone() || ms.readyState !== 'open') return;
           // keep ~10s behind the playhead, so a long listen can't hit the quota
@@ -1951,7 +2059,8 @@ const app = createApp({
           for (;;) {
             const { done, value } = await reader.read();
             if (done || gone()) break;
-            pending.push(value);
+            const bytes = retime ? retime(value) : value;
+            if (bytes.length) pending.push(bytes);
             pump();
           }
         } catch (e) {

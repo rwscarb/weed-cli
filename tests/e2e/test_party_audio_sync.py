@@ -42,19 +42,28 @@ def test_live_audio_stays_at_the_edge_without_running_dry(browser, golden_path_s
     guest.wait_for_function(
         "() => document.getElementById('app').__vue_app__._container._vnode.component.proxy.party.stream.audio",
         timeout=10_000)
+    # listen to what the guest actually plays: the sender's oscillator is a
+    # sine, so sample-to-sample it never moves more than ~0.06 -- a jump
+    # past 0.25 is a click (a gap or a cut-off overlap between frames)
     _vm(guest).evaluate("""vm => { vm.togglePartyListen(); const a = vm._partyAudio;
-      window._waits = 0; a.addEventListener('waiting', () => { if (a.currentTime > 0) _waits++; }); }""")
+      window._waits = 0; a.addEventListener('waiting', () => { if (a.currentTime > 0) _waits++; });
+      const ctx = new AudioContext(), sp = ctx.createScriptProcessor(4096, 1, 1);
+      ctx.createMediaElementSource(a).connect(sp); sp.connect(ctx.destination);
+      window._clicks = 0; window._peak = 0; let prev = 0;
+      sp.onaudioprocess = e => { for (const v of e.inputBuffer.getChannelData(0)) {
+        if (Math.abs(v - prev) > 0.25) _clicks++; _peak = Math.max(_peak, Math.abs(v)); prev = v; } }; }""")
     guest.wait_for_function("() => { const a = document.getElementById('app').__vue_app__._container._vnode"
                             ".component.proxy._partyAudio; return a && a.readyState >= 3 && !a.paused; }",
                             timeout=10_000)
     time.sleep(1)
     probe = """vm => { const a = vm._partyAudio;
       return { mse: !!a._mse, ahead: a.buffered.end(a.buffered.length - 1) - a.currentTime,
-               lag: performance.now() / 1000 - a.currentTime, waits: window._waits }; }"""
+               lag: performance.now() / 1000 - a.currentTime, waits: window._waits,
+               clicks: window._clicks, peak: window._peak }; }"""
     first = _vm(guest).evaluate(probe)
     # from here on: the start (the jump to the edge is a seek, which can
     # itself fire one 'waiting') isn't what's being measured
-    guest.evaluate("() => { window._waits = 0; }")
+    guest.evaluate("() => { window._waits = 0; window._clicks = 0; window._peak = 0; }")
     worst = 0
     for _ in range(16):                 # 8s: the old path ran dry ~every 2s
         time.sleep(0.5)
@@ -65,6 +74,10 @@ def test_live_audio_stays_at_the_edge_without_running_dry(browser, golden_path_s
     # the old <audio src> ran dry ~4 times in this window; one is allowed
     # for a busy CI runner's scheduling, not for the 2s lumps
     assert r['waits'] <= 1, f"ran dry {r['waits']} times"
+    # the recorder's jittery timestamps used to put ~25 clicks a second in
+    # here (see webmOpusRetimer); a stall or two may still cost one each
+    assert r['peak'] > 0.5, r                 # it really was playing the tone
+    assert r['clicks'] <= 6, f"{r['clicks']} clicks in 8s"
     # media time keeps pace with the wall clock: no drift
     assert abs(r['lag'] - first['lag']) < 0.4
 
@@ -163,3 +176,37 @@ def test_starved_element_is_left_alone(page, golden_path_server):
         buffered: { length: 1, start: () => 0, end: () => 9 }, currentTime: 1 };
       for (let i = 0; i < 16; i++) vm._chasePartyAudioEdge(a); return [a.playbackRate, !!a._aheadHist]; }""")
     assert r == [1, False]
+
+
+# a minimal live WebM: EBML header, unknown-size Segment, Info with a 1ms
+# TimecodeScale, empty Tracks, then one Cluster (Timecode 1000) of three
+# 60ms Opus packets (TOC 0x9B: 20ms CELT, code 3, count byte 3) stamped
+# the way the recorder does it -- 0, 52 and 111ms in
+_STREAM = """() => {
+  const simple = (rel) => [0xA3, 0x86, 0x81, (rel >> 8) & 0xFF, rel & 0xFF, 0x80, 0x9B, 0x03];
+  return [0x1A, 0x45, 0xDF, 0xA3, 0x80,
+          0x18, 0x53, 0x80, 0x67, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+          0x15, 0x49, 0xA9, 0x66, 0x87, 0x2A, 0xD7, 0xB1, 0x83, 0x0F, 0x42, 0x40,
+          0x16, 0x54, 0xAE, 0x6B, 0x80,
+          0x1F, 0x43, 0xB6, 0x75, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xE7, 0x82, 0x03, 0xE8,
+          ...simple(0), ...simple(52), ...simple(111)];
+}"""
+
+
+def test_retimer_butts_the_recorders_jittery_packets_end_to_end(page, golden_path_server):
+    page.goto(golden_path_server['web_url'])
+    r = page.evaluate("""(mk) => { const src = new Uint8Array(eval(mk)());
+      const whole = Array.from(webmOpusRetimer()(src));
+      const f = webmOpusRetimer(), bytewise = [];            // the same, one byte at a time
+      for (const b of src) bytewise.push(...f(new Uint8Array([b])));
+      return { whole, bytewise, n: src.length }; }""", _STREAM)
+    assert r['whole'] == r['bytewise']
+    out = r['whole']
+    # the init segment passes through untouched (34 bytes, Info included)
+    assert out[:34] == page.evaluate(f"() => ({_STREAM})().slice(0, 34)")
+    # then a fresh Cluster at the running time, and the blocks 60ms apart
+    cl = out[34:]
+    assert cl[:4] == [0x1F, 0x43, 0xB6, 0x75] and cl[12:16] == [0xE7, 0x82, 0x03, 0xE8]
+    blocks = cl[16:]
+    rels = [(blocks[i + 3] << 8) | blocks[i + 4] for i in range(0, len(blocks), 8)]
+    assert rels == [0, 60, 120]
