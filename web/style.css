@@ -2589,3 +2589,15 @@ button.tag-suggestion { color: var(--accent); border-style: dashed; }
   #orbit-egg-dialog .hint { display: none; }
   #orbit-egg-dialog:fullscreen .viz-transport { bottom: 0; }
 }
+
+/* party webcams (index.html .party-cams, vue-app.js joinCam) */
+.party-cams { display: flex; flex-direction: column; gap: 0.4rem; }
+.party-cams h3 { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.cam-count { font-size: 0.85rem; font-weight: normal; }
+.cam-error { color: var(--muted); font-size: 0.85rem; }
+.cam-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 14rem), 1fr)); gap: 0.5rem; }
+.cam-tile { position: relative; aspect-ratio: 16 / 9; background: #000; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.cam-tile video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cam-tile.me video { transform: scaleX(-1); }   /* a mirror, like every video-call app */
+.cam-none { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 0.85rem; }
+.cam-name { position: absolute; left: 0.4rem; bottom: 0.4rem; background: rgba(0,0,0,0.55); color: #fff; border-radius: 6px; padding: 0.1rem 0.45rem; font-size: 0.8rem; max-width: calc(100% - 0.8rem); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -175,6 +175,16 @@ visualizer's canvas, so the stream carries them to VLC, a Roku and the
 guest page's picture alike (the visualizer's 💬 toggles that), and as
 an overlay on the plain player window. Messages live in memory only
 (the last 200), one per second per person, 200 characters each.
+Switch on **guest cams** and the party page (and the Party tab) get a
+📹 join button: a video call between up to six people, camera and mic,
+each with its own mute and camera-off. It's WebRTC, so the browsers
+send each other the video directly and the server only passes the
+connection setup between them. Browsers only hand out the camera on an
+`https://` page (`--tls`) or `localhost`; anyone else still joins, to
+watch. STUN (Google's public server) covers guests coming in from
+outside the LAN; two people both behind strict NATs also need a TURN
+server — set `$WEED_ICE_SERVERS` to the `iceServers` JSON, e.g.
+`[{"urls":"turn:turn.example.com:3478","username":"u","credential":"p"}]`.
 
 `--stream-plain-port` adds a plain-HTTP listener that serves *only* the
 stream endpoints (the Orbit MJPEG stream and downloaded files), for

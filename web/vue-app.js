@@ -1,6 +1,6 @@
 'use strict';
 
-const { createApp } = Vue;
+const { createApp, markRaw } = Vue;
 
 // three-way "Any / <label> / Not <label>" segmented toggle, standing in
 // for a plain checkbox anywhere a filter needs to say "must be false",
@@ -175,7 +175,7 @@ const app = createApp({
       partyStreamMode: 'inline',
       partyUrl: '',          // admin: the guest link (lan url + stream token)
       partyStreamToken: '',
-      partyForm: { title: '', links: '', autoplay: false, chat: false },
+      partyForm: { title: '', links: '', autoplay: false, chat: false, cam: false },
       partySaved: '',
       // the party chat (web_ui.py /api/chat): polled every few seconds
       // by admin and guest alike; overlay = draw the last few over the
@@ -185,6 +185,12 @@ const app = createApp({
       chat: { enabled: false, messages: [], lastId: 0, input: '', error: '',
               name: localStorage.getItem('weed.chat.name') || '',
               you: '', overlay: localStorage.getItem('weed.chat.overlay') !== '0' },
+      // the party webcams (web_ui.py /api/cam*): a WebRTC mesh, the
+      // browsers sending each other video directly. tiles are what's on
+      // screen ({id, name, stream, me}); the connections themselves live
+      // in this._cam, outside Vue (see joinCam)
+      cam: { enabled: false, count: 0, joined: false, joining: false, error: '',
+             micOn: true, camOn: true, sending: false, tiles: [] },
       // 'http://host:port' of the plain-HTTP stream listener when the
       // server has one (web_ui.py STREAM_PLAIN_PORT) -- the URL a TV or
       // Roku app can actually open when the UI itself is on self-signed
@@ -1937,6 +1943,9 @@ const app = createApp({
       if (p.error) return;
       this.party = p;
       this.chat.enabled = !!p.chat;
+      this.cam.enabled = !!p.cam;
+      this.cam.count = p.cam_count || 0;
+      if (!p.cam && this._cam) this.leaveCam('the host turned cams off');
       // the guest's <audio>: drop it the moment its feed is gone --
       // audio switched off, or the stream (or just its audio) restarted,
       // which is a new container the old element can't continue into.
@@ -1955,6 +1964,7 @@ const app = createApp({
         this.partyForm.links = (p.links || []).map(l => (l.label ? l.label + ' | ' : '') + l.url).join('\n');
         this.partyForm.autoplay = !!p.autoplay;
         this.partyForm.chat = !!p.chat;
+        this.partyForm.cam = !!p.cam;
       }
     },
     // ── the party picture: inline / PIP / theater / fullscreen ────────
@@ -2224,6 +2234,176 @@ const app = createApp({
       const d = new Date(ts * 1000);
       return `${d.getHours()}:${String(d.getMinutes()).padStart(2, '0')}`;
     },
+    // ── party webcams ─────────────────────────────────────────────────
+    // A mesh: every peer holds one RTCPeerConnection to every other. The
+    // server only relays signalling, each peer polling /api/cam about
+    // once a second. A newcomer offers to everyone already on (lower ids)
+    // and answers anyone who joins after it, so two peers never offer to
+    // each other at once. No camera (refused, none, or a plain-http page,
+    // where browsers hide getUserMedia) still joins, to watch.
+    async joinCam() {
+      if (this._cam || this.cam.joining) return;
+      this.cam.joining = true;
+      this.cam.error = '';
+      let local = null;
+      const md = navigator.mediaDevices;
+      if (md && md.getUserMedia) {
+        const video = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { max: 24 } };
+        const audio = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
+        try { local = await md.getUserMedia({ video, audio }); } catch (e) {
+          try { local = await md.getUserMedia({ video }); } catch (e2) {
+            this.cam.error = 'no camera (' + (e2.name || e2.message) + ') -- watching only';
+          }
+        }
+      } else {
+        this.cam.error = window.isSecureContext ? 'this browser has no camera access -- watching only'
+          : 'your camera needs an https:// page (the server\'s --tls) -- watching only';
+      }
+      const name = (this.chat.name || '').trim();
+      const r = await this.apiPost('/api/cam/join', { name });
+      this.cam.joining = false;
+      if (r.error) {
+        if (local) local.getTracks().forEach(t => t.stop());
+        this.cam.error = r.error;
+        return;
+      }
+      if (local) markRaw(local);
+      this._cam = { id: r.id, key: r.key, ice: r.ice_servers || [], local, pcs: new Map(), timer: null, polling: false,
+                   sending: Promise.resolve() };
+      this.cam.joined = true;
+      this.cam.sending = !!local;
+      this.cam.micOn = !!(local && local.getAudioTracks().length);
+      this.cam.camOn = !!(local && local.getVideoTracks().length);
+      this.cam.tiles = [{ id: r.id, name: r.name + ' (you)', stream: local, me: true }];
+      this._camPeers(r.peers || []);
+      this._cam.timer = setInterval(this._camPoll, 1000);
+      this._camUnload = () => this.leaveCam();
+      window.addEventListener('pagehide', this._camUnload);
+    },
+    leaveCam(why) {
+      const c = this._cam;
+      if (!c) return;
+      this._cam = null;
+      clearInterval(c.timer);
+      for (const pc of c.pcs.values()) pc.close();
+      if (c.local) c.local.getTracks().forEach(t => t.stop());
+      window.removeEventListener('pagehide', this._camUnload);
+      // keepalive: still sent when this runs from pagehide
+      fetch('/api/cam/leave', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ peer: c.id, key: c.key }) }).catch(() => {});
+      this.cam.joined = false;
+      this.cam.sending = false;
+      this.cam.tiles = [];
+      this.cam.error = typeof why === 'string' ? why : '';
+    },
+    toggleCamTrack(kind) {
+      const c = this._cam;
+      if (!c || !c.local) return;
+      const tracks = kind === 'audio' ? c.local.getAudioTracks() : c.local.getVideoTracks();
+      if (!tracks.length) return;
+      const on = !tracks[0].enabled;
+      tracks.forEach(t => { t.enabled = on; });
+      if (kind === 'audio') this.cam.micOn = on; else this.cam.camOn = on;
+    },
+    async _camPoll() {
+      const c = this._cam;
+      if (!c || c.polling) return;
+      c.polling = true;
+      try {
+        const res = await fetch(`/api/cam?peer=${c.id}&key=${c.key}`);
+        if (this._cam !== c) return;
+        if (res.status === 410) { this.leaveCam('dropped from the cam room -- join again'); return; }
+        if (!res.ok) return;
+        const r = await res.json();
+        if (this._cam !== c) return;
+        this._camPeers(r.peers || []);
+        for (const s of r.signals || []) await this._camSignal(s.from, s.data);
+      } catch (e) {
+        console.warn('[cam] poll failed', e);
+      } finally {
+        c.polling = false;
+      }
+    },
+    // the roster: offer to whoever is older than us and not connected yet,
+    // and drop the connection (and tile) of anyone who left
+    _camPeers(peers) {
+      const c = this._cam;
+      const ids = new Set(peers.map(p => p.id));
+      for (const [id, pc] of c.pcs) if (!ids.has(id)) { pc.close(); c.pcs.delete(id); }
+      this.cam.tiles = this.cam.tiles.filter(t => t.me || ids.has(t.id));
+      for (const p of peers) {
+        if (p.id === c.id) continue;
+        const tile = this.cam.tiles.find(t => t.id === p.id);
+        if (tile) tile.name = p.name;
+        else this.cam.tiles.push({ id: p.id, name: p.name, stream: null, me: false });
+        if (p.id < c.id && !c.pcs.has(p.id)) this._camOffer(p);
+      }
+    },
+    _camConnection(peerId) {
+      const c = this._cam;
+      const old = c.pcs.get(peerId);
+      if (old) old.close();
+      const pc = new RTCPeerConnection({ iceServers: c.ice });
+      c.pcs.set(peerId, pc);
+      pc.onicecandidate = e => { if (e.candidate) this._camSend(peerId, { candidate: e.candidate.toJSON() }); };
+      pc.ontrack = e => {
+        if (this._cam !== c || c.pcs.get(peerId) !== pc) return;
+        let tile = this.cam.tiles.find(t => t.id === peerId);
+        const stream = e.streams[0] || (tile && tile.stream) || new MediaStream();
+        if (!e.streams[0]) stream.addTrack(e.track);
+        if (!tile) this.cam.tiles.push({ id: peerId, name: 'guest', stream: markRaw(stream), me: false });
+        else if (tile.stream !== stream) tile.stream = markRaw(stream);
+      };
+      pc.onconnectionstatechange = () => {
+        // failed for good (a network change, a NAT that won't open):
+        // forget it, and the offering side builds a fresh one next poll
+        if (pc.connectionState === 'failed' && c.pcs.get(peerId) === pc) {
+          pc.close(); c.pcs.delete(peerId);
+          const tile = this.cam.tiles.find(t => t.id === peerId);
+          if (tile) tile.stream = null;
+        }
+      };
+      return pc;
+    },
+    async _camOffer(peer) {
+      const c = this._cam;
+      const pc = this._camConnection(peer.id);
+      if (c.local) c.local.getTracks().forEach(t => pc.addTrack(t, c.local));
+      if (!c.local || !c.local.getVideoTracks().length) pc.addTransceiver('video', { direction: 'recvonly' });
+      if (!c.local || !c.local.getAudioTracks().length) pc.addTransceiver('audio', { direction: 'recvonly' });
+      try {
+        await pc.setLocalDescription(await pc.createOffer());
+        this._camSend(peer.id, { sdp: pc.localDescription.toJSON() });
+      } catch (e) { console.warn('[cam] offer failed', e); }
+    },
+    async _camSignal(from, data) {
+      const c = this._cam;
+      try {
+        if (data.sdp && data.sdp.type === 'offer') {
+          // a newer peer calling us (or calling again after a failure):
+          // always a fresh connection, so there's no renegotiation to get wrong
+          const pc = this._camConnection(from);
+          await pc.setRemoteDescription(data.sdp);
+          if (c.local) c.local.getTracks().forEach(t => pc.addTrack(t, c.local));
+          await pc.setLocalDescription(await pc.createAnswer());
+          this._camSend(from, { sdp: pc.localDescription.toJSON() });
+        } else if (data.sdp && data.sdp.type === 'answer') {
+          const pc = c.pcs.get(from);
+          if (pc && pc.signalingState === 'have-local-offer') await pc.setRemoteDescription(data.sdp);
+        } else if (data.candidate) {
+          const pc = c.pcs.get(from);
+          if (pc && pc.remoteDescription) await pc.addIceCandidate(data.candidate);
+        }
+      } catch (e) { console.warn('[cam] signal failed', data, e); }
+    },
+    // one at a time, in order: an ICE candidate that overtook its offer
+    // would reach a peer with no connection to add it to
+    _camSend(to, data) {
+      const c = this._cam;
+      if (!c) return;
+      c.sending = c.sending.then(() => this.apiPost('/api/cam/signal', { peer: c.id, key: c.key, to, data }))
+        .catch(e => console.warn('[cam] signal not sent', e));
+    },
     async vote(track) {
       const r = await this.apiPost('/api/party/vote', { content_hash: track.content_hash });
       if (r.tracks) this.party.tracks = r.tracks;
@@ -2235,7 +2415,8 @@ const app = createApp({
                         : { label: '', url: line };
       });
       const r = await this.apiPost('/api/party/config',
-        { title: this.partyForm.title, links, autoplay: this.partyForm.autoplay, chat: this.partyForm.chat });
+        { title: this.partyForm.title, links, autoplay: this.partyForm.autoplay, chat: this.partyForm.chat,
+          cam: this.partyForm.cam });
       this.partySaved = r.ok ? 'saved' : ('error: ' + (r.error || 'unknown'));
       this.partyForm._touched = false;
       setTimeout(() => { this.partySaved = ''; }, 2000);
@@ -3593,6 +3774,12 @@ app.component('transport-bar', {
              :title="xfade.armed ? (xfade.flip ? '← fade to ' : 'fade to → ') + (displayTitle(xfade.next && xfade.next.title) || 'the cued track') : 'crossfader: press ⇆ to cue the next track'"
              @input="xfadeSetUi($event.target.value)" @click.stop>
     </div>`,
+});
+
+// a <video> showing a MediaStream: srcObject has no attribute to bind
+app.directive('src-object', {
+  mounted(el, { value }) { el.srcObject = value || null; },
+  updated(el, { value }) { if (el.srcObject !== (value || null)) el.srcObject = value || null; },
 });
 
 app.directive('marquee', {

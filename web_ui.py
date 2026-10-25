@@ -89,13 +89,57 @@ _chat_messages = []
 _chat_seq = 0
 _chat_last_post = {}      # guest id (or 'admin') -> last post time
 _chat_lock = threading.Lock()
+# the party webcams: a WebRTC mesh between whoever joins. The browsers
+# send each other their camera and mic directly; this server only passes
+# the offers, answers and ICE candidates between them (/api/cam*), each
+# peer polling for its own. Off unless the admin turns it on (party['cam']).
+CAM_MAX_PEERS = 6          # a mesh: every peer sends to every other, so keep it small
+CAM_PEER_TIMEOUT = 15.0    # seconds without a poll before a peer counts as gone
+CAM_MAX_SIGNAL = 16 * 1024 # one offer/answer/candidate, as JSON
+CAM_MAX_QUEUE = 500        # signals waiting for one peer before the oldest are dropped
+# STUN finds a public address for guests coming in from outside the LAN.
+# Two peers behind strict NATs also need a TURN server: set
+# $WEED_ICE_SERVERS to the RTCPeerConnection iceServers JSON to add one.
+try:
+    CAM_ICE_SERVERS = json.loads(os.environ.get('WEED_ICE_SERVERS') or 'null')
+except json.JSONDecodeError:
+    CAM_ICE_SERVERS = None
+if not isinstance(CAM_ICE_SERVERS, list):
+    CAM_ICE_SERVERS = [{'urls': 'stun:stun.l.google.com:19302'}]
+_cam_peers = {}            # id -> {id, key, name, role, seen, queue}
+_cam_seq = 0
+_cam_lock = threading.Lock()
+
+
+def _cam_prune():
+    """Caller holds _cam_lock. Drop peers that stopped polling (a closed
+    tab that never sent /api/cam/leave, a phone gone to sleep)."""
+    cutoff = time.time() - CAM_PEER_TIMEOUT
+    for pid in [pid for pid, p in _cam_peers.items() if p['seen'] < cutoff]:
+        del _cam_peers[pid]
+
+
+def _cam_roster():
+    """Caller holds _cam_lock. Who is on camera, oldest first; never the keys."""
+    return [{'id': p['id'], 'name': p['name'], 'role': p['role']} for p in _cam_peers.values()]
+
+
+def _cam_count():
+    with _cam_lock:
+        _cam_prune()
+        return len(_cam_peers)
+
+
+def _cam_clear():
+    with _cam_lock:
+        _cam_peers.clear()
 
 
 def _party_settings():
     """Caller must hold _lock. The library's 'party' dict, created on
     demand -- a library written (or a test fixture built) before this
     key existed simply doesn't have it."""
-    return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False, 'chat': False})
+    return _library.setdefault('party', {'title': '', 'links': [], 'autoplay': False, 'chat': False, 'cam': False})
 _orbit_ws_since = 0.0  # when the current stream started -- the party page keys its <img> on it
 # Optional second listener, plain HTTP, serving *only* the stream
 # endpoints (/api/orbit-view, /api/orbit-audio, /api/orbit-stream, /api/stream/<job>).
@@ -1278,7 +1322,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # GET endpoints a guest (stream token) may use; everything else under
     # /api/ is admin-only. The stream endpoints also take ?token=.
-    _GUEST_GET = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat')
+    _GUEST_GET = ('/api/orbit-view', '/api/orbit-audio', '/api/orbit-mux', '/api/orbit-stream', '/api/config', '/api/party', '/api/chat', '/api/cam')
 
     def do_GET(self):
         parsed = urlparse(self.path)
@@ -1327,6 +1371,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._handle_party()
         if path == '/api/chat':
             return self._handle_chat_get(qs)
+        if path == '/api/cam':
+            return self._handle_cam_get(qs)
         if path == '/api/discover':
             results = node.group_discover_by_content(node.discover(qs.get('relay') or [DEFAULT_RELAY]))
             _backfill_folders({r['content_hash']: r.get('folder') for r in results})
@@ -1457,7 +1503,7 @@ class Handler(BaseHTTPRequestHandler):
         # /api/login is how a browser *gets* the cookie (the unlock
         # prompt); voting is the one thing a guest may POST; everything
         # else needs the admin token already
-        if path in ('/api/party/vote', '/api/chat'):
+        if path in ('/api/party/vote', '/api/chat', '/api/cam/join', '/api/cam/signal', '/api/cam/leave'):
             if not self._guest_ok():
                 return self._deny()
         elif path != '/api/login' and not self._authorized():
@@ -1496,6 +1542,8 @@ class Handler(BaseHTTPRequestHandler):
             '/api/party/vote': self._handle_party_vote, '/api/party/config': self._handle_party_config,
             '/api/party/played': self._handle_party_played,
             '/api/chat': self._handle_chat_post, '/api/chat/clear': self._handle_chat_clear,
+            '/api/cam/join': self._handle_cam_join, '/api/cam/signal': self._handle_cam_signal,
+            '/api/cam/leave': self._handle_cam_leave,
             '/api/host': self._handle_host, '/api/host/forget': self._handle_forget_host,
             '/api/download': self._handle_download,
             '/api/like': self._handle_like, '/api/subscribe': self._handle_subscribe,
@@ -1839,6 +1887,7 @@ class Handler(BaseHTTPRequestHandler):
         self._json({
             'role': self._role(), 'title': party.get('title') or '', 'links': party.get('links') or [],
             'autoplay': bool(party.get('autoplay')), 'chat': bool(party.get('chat')),
+            'cam': bool(party.get('cam')), 'cam_count': _cam_count(),
             'now_playing': now_playing,
             'stream': {
                 'active': active, 'since': _orbit_ws_since,
@@ -1893,6 +1942,10 @@ class Handler(BaseHTTPRequestHandler):
                 party['autoplay'] = bool(body.get('autoplay'))
             if 'chat' in body:
                 party['chat'] = bool(body.get('chat'))
+            if 'cam' in body:
+                party['cam'] = bool(body.get('cam'))
+                if not party['cam']:
+                    _cam_clear()
             _save_library()
             self._json({'ok': True, 'party': dict(party)})
 
@@ -1947,6 +2000,92 @@ class Handler(BaseHTTPRequestHandler):
             n = len(_chat_messages)
             _chat_messages.clear()
         self._json({'ok': True, 'cleared': n})
+
+    # ── party webcams (signalling only; see CAM_MAX_PEERS) ──────────
+    def _cam_enabled(self):
+        with _lock:
+            return bool(_party_settings().get('cam'))
+
+    def _cam_peer(self, peer, key):
+        """Caller holds _cam_lock. The joined peer this id + key names, or
+        None. The key is the peer's own secret from /api/cam/join, so no
+        one else can read its signals or speak as it."""
+        p = _cam_peers.get(peer) if isinstance(peer, int) else None
+        if p and isinstance(key, str) and hmac.compare_digest(p['key'], key):
+            return p
+        return None
+
+    def _handle_cam_get(self, qs):
+        """GET /api/cam[?peer=<id>&key=<key>]: whether cams are on and
+        who is on camera. With a joined peer's id and key it is also that
+        peer's heartbeat, and it hands over (and drops) every signal
+        waiting for it. 410 once the peer has timed out or been dropped."""
+        enabled = self._cam_enabled()
+        try:
+            peer = int((qs.get('peer') or [''])[0])
+        except ValueError:
+            peer = None
+        key = (qs.get('key') or [''])[0]
+        with _cam_lock:
+            _cam_prune()
+            peers = _cam_roster()
+            if peer is None:
+                return self._json({'enabled': enabled, 'peers': peers})
+            p = self._cam_peer(peer, key)
+            if not p:
+                return self._json({'error': 'not on camera (left, timed out, or cams were turned off)'}, status=410)
+            p['seen'] = time.time()
+            signals, p['queue'] = p['queue'], []
+        self._json({'enabled': enabled, 'peers': peers, 'signals': signals})
+
+    def _handle_cam_join(self, body):
+        """POST /api/cam/join {name?} -> {id, key, peers, ice_servers}.
+        Peer ids only grow, and a newcomer offers to everyone already on
+        (lower ids), so two peers never offer to each other at once."""
+        global _cam_seq
+        if not self._cam_enabled():
+            return self._json({'error': 'cams are off'}, status=403)
+        gid, extra = self._ensure_guest_id()
+        role = self._role() or 'admin'
+        name = ' '.join(str(body.get('name') or '').split())[:24] or ('host' if role == 'admin' else 'guest-' + gid[:4])
+        with _cam_lock:
+            _cam_prune()
+            if len(_cam_peers) >= CAM_MAX_PEERS:
+                return self._json({'error': f'the cam room is full ({CAM_MAX_PEERS} max)'}, status=409)
+            _cam_seq += 1
+            p = {'id': _cam_seq, 'key': secrets.token_hex(16), 'name': name, 'role': role,
+                 'seen': time.time(), 'queue': []}
+            _cam_peers[p['id']] = p
+            peers = _cam_roster()
+        self._json({'ok': True, 'id': p['id'], 'key': p['key'], 'name': name, 'peers': peers,
+                    'ice_servers': CAM_ICE_SERVERS}, headers=extra)
+
+    def _handle_cam_signal(self, body):
+        """POST /api/cam/signal {peer, key, to, data}: queue one opaque
+        WebRTC message (an offer, answer or ICE candidate) for peer <to>."""
+        data = body.get('data')
+        if not isinstance(data, dict):
+            return self._json({'error': 'data must be an object'}, status=400)
+        if len(json.dumps(data)) > CAM_MAX_SIGNAL:
+            return self._json({'error': 'signal too large'}, status=400)
+        with _cam_lock:
+            p = self._cam_peer(body.get('peer'), body.get('key'))
+            if not p:
+                return self._json({'error': 'not on camera'}, status=410)
+            p['seen'] = time.time()
+            to = _cam_peers.get(body.get('to')) if isinstance(body.get('to'), int) else None
+            if not to or to is p:
+                return self._json({'error': 'no such peer'}, status=404)
+            to['queue'].append({'from': p['id'], 'data': data})
+            del to['queue'][:-CAM_MAX_QUEUE]
+        self._json({'ok': True})
+
+    def _handle_cam_leave(self, body):
+        with _cam_lock:
+            p = self._cam_peer(body.get('peer'), body.get('key'))
+            if p:
+                del _cam_peers[p['id']]
+        self._json({'ok': True, 'left': bool(p)})
 
     def _handle_party_played(self, body):
         """Admin: a voted track got played -- clear its tally so the next
