@@ -360,6 +360,7 @@ window.orbitViz = (function () {
       // app's own hotkeys don't steer an invisible visualizer
       backgrounded: false,
       rafPending: false,   // a drawViz rAF is already queued -- see scheduleDraw
+      drawDue: 0,          // when the next self-scheduled frame may draw -- see drawViz
       videoFrame: null,
       VW: 0, VH: 0,
       vizPanX: 0, vizPanY: 0, vizUserScale: 1.0, vizRot: 0,
@@ -900,7 +901,7 @@ window.orbitViz = (function () {
     const READOUT = {
       rotate: () => (deg() === 0 ? 'Rotate 0° (straight)' : `Rotate ${deg() > 0 ? '+' : ''}${deg()}°`),
       zoom: () => `Zoom ${s.vizUserScale.toFixed(2)}×`,
-      speed: () => `Speed ${s.speed.toFixed(1)}×`,
+      speed: () => `Speed ${s.speed.toFixed(2)}×`,
       reactivity: () => `React ${s.reactivity.toFixed(1)}×`,
       transitionMs: () => `Fade ${(s.transitionMs / 1000).toFixed(1)}s`,
       asciiBrightness: () => `ASCII brightness ${s.asciiBrightness.toFixed(1)}×`,
@@ -1108,9 +1109,9 @@ window.orbitViz = (function () {
     // Visible for every mode (unlike ASCII's own RES/BRI row), since
     // both apply everywhere.
     function setSpeed(value) {
-      s.speed = Math.min(3, Math.max(0.2, Math.round(value * 10) / 10));
+      s.speed = Math.min(3, Math.max(0.1, Math.round(value * 20) / 20));
       speedSlider.value = s.speed;
-      speedVal.textContent = s.speed.toFixed(1) + 'x';
+      speedVal.textContent = s.speed.toFixed(2) + 'x';
     }
     on(speedSlider, 'input', () => setSpeed(parseFloat(speedSlider.value)));
     setSpeed(s.speed);
@@ -1638,10 +1639,27 @@ window.orbitViz = (function () {
     s.cycleAutopilot = cycleAutopilot;
     s.setAutopilotTiming = (t) => Object.assign(AUTO, t);
 
-    function drawViz() {
+    // Every mode's per-frame math (vizRot's 0.006, plasma's 1/60, the
+    // plugin modes' own `x += vx * speed` steps) assumes ~60 frames a
+    // second, but rAF fires at the display's refresh rate -- on a 120Hz
+    // or 144Hz screen everything ran 2x+ as fast, Speed 1x included.
+    // So the self-scheduled loop draws at most every FRAME_MS: a
+    // callback that comes early is skipped. Owing the next frame at
+    // due+FRAME_MS keeps the average at 60 even when the refresh isn't
+    // a multiple of it; the max() means a stall never bursts to catch
+    // up. The external clock (the hidden-tab stream worker) already
+    // ticks at 60, and step() passes no timestamp, so it isn't paced.
+    const FRAME_MS = 1000 / 60, FRAME_SLACK_MS = 2;
+    function drawViz(now) {
       s.rafPending = false;
       if (!s.running) return;
-      if (!externalClock) scheduleDraw();
+      if (!externalClock) {
+        scheduleDraw();
+        if (typeof now === 'number') {
+          if (now < s.drawDue - FRAME_SLACK_MS) return;
+          s.drawDue = Math.max(s.drawDue + FRAME_MS, now);
+        }
+      }
       if (!s.VW || !s.VH) return;
       if (s.autopilot && !s.restoring) autopilotTick();
       const rotPm = !s.vizOff && pluginModes.get(s.vizMode);
@@ -2180,7 +2198,7 @@ window.orbitViz = (function () {
     // knob's 0..127 divided by 127) and maps it onto the parameter's
     // own range; trigger() fires a discrete action.
     const CONTROL_RANGES = {
-      speed: [0.2, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
+      speed: [0.1, 3], reactivity: [0.2, 3], zoom: [0.15, 8, 'log'], transitionMs: [0, 5000],
       asciiBrightness: [0.3, 3], asciiStride: [1, 4], asciiBgAlpha: [0, 1],
       buildingWidth: [0.3, 3], buildingHeight: [0.3, 3], buildingCount: [5, 120],
       rotate: [-Math.PI, Math.PI],
