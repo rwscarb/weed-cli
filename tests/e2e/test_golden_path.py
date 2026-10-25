@@ -899,11 +899,11 @@ def test_stream_audio_toggle_sends_opus_and_late_listeners_get_a_clean_start(pag
         listen.click()
         guest.wait_for_function("vm => vm.partyListening", arg=gvm)
         assert listen.inner_text().strip() == '🔇 mute'
-        assert guest.evaluate("vm => vm._partyAudio && vm._partyAudio.src.includes('/api/orbit-audio?_=')", gvm)
-        # the element is actually pulling the feed: the server counts it as
-        # a listener. (Not readyState: on the silence recorded here, ~300
-        # B/s, Chromium sits at HAVE_NOTHING for ages waiting to fill its
-        # first read buffer, while real music at 128 kbps is instant.)
+        # Chromium has MSE for WebM/Opus, so the page fetches the feed and
+        # feeds the element itself (see _feedPartyAudio)
+        assert guest.evaluate("vm => !!(vm._partyAudio && vm._partyAudio._mse && vm._partyAudio.src.startsWith('blob:'))", gvm)
+        # the page is actually pulling the feed: the server counts it as a
+        # listener
         page.wait_for_function(
             "() => fetch('/api/orbit-stream?token=admin-tok').then(r => r.json()).then(s => s.audio_listeners >= 1)", timeout=10_000)
         listen.click()                                                  # 🔇 drops it

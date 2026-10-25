@@ -23,6 +23,113 @@ const FilterToggle = {
   `,
 };
 
+// Re-times a live WebM/Opus byte stream so every audio frame starts
+// exactly where the last one ended. The streamer's MediaRecorder stamps
+// each Opus packet (60ms in Chrome) with its capture time, which jitters:
+// measured 52, 59, 69, 52, 59, 69ms apart. A player that decodes straight
+// through never notices, but Media Source Extensions place each frame at
+// its timestamp, so an early one overlaps the last (the overlap is cut)
+// and a late one leaves a gap of silence: a click either way, several a
+// second (the party page's 🔊 listen, _feedPartyAudio). Here each packet's
+// time is instead the previous one's plus its own duration, read from the
+// Opus TOC byte (RFC 6716 §3.1). Everything before the first Cluster (the
+// EBML header, Segment, Info, Tracks) passes through untouched; each
+// incoming Cluster becomes a fresh unknown-size Cluster whose Timecode is
+// the running time, holding the same SimpleBlocks with their 16-bit
+// relative timecodes rewritten. feed(chunk) returns the bytes ready so
+// far (possibly none); a partial element waits for the next chunk.
+function webmOpusRetimer() {
+  const EBML = 0x1A45DFA3, SEGMENT = 0x18538067, INFO = 0x1549A966, SCALE = 0x2AD7B1,
+        CLUSTER = 0x1F43B675, TIMECODE = 0xE7, SIMPLEBLOCK = 0xA3;
+  let buf = new Uint8Array(0);
+  let init = true, inInfo = 0;     // inInfo: bytes of Info still to walk
+  let scaleNs = 1000000;           // TimecodeScale: ns per timecode tick
+  let clusterTc = 0, fresh = true, t = null, t0 = 0;   // t, t0: running time / this cluster's, in ticks
+  function header(p) {
+    // { id, size (null = unknown), len } of the element at p, or null if incomplete
+    if (p >= buf.length) return null;
+    const b0 = buf[p], idLen = b0 >= 0x80 ? 1 : b0 >= 0x40 ? 2 : b0 >= 0x20 ? 3 : 4;
+    if (p + idLen >= buf.length) return null;
+    let id = 0;
+    for (let i = 0; i < idLen; i++) id = id * 256 + buf[p + i];
+    const s0 = buf[p + idLen];
+    let sLen = 1;
+    while (sLen <= 8 && !(s0 & (0x80 >> (sLen - 1)))) sLen++;
+    if (p + idLen + sLen > buf.length) return null;
+    let size = s0 & (0xFF >> sLen), allOnes = size === (0xFF >> sLen);
+    for (let i = 1; i < sLen; i++) { const v = buf[p + idLen + i]; size = size * 256 + v; if (v !== 0xFF) allOnes = false; }
+    return { id, size: allOnes ? null : size, len: idLen + sLen };
+  }
+  function uint(p, n) { let v = 0; for (let i = 0; i < n; i++) v = v * 256 + buf[p + i]; return v; }
+  // one Opus packet's duration in ms, from its TOC byte and frame count
+  function opusMs(p, end) {
+    const toc = buf[p], cfg = toc >> 3;
+    const frame = cfg < 12 ? [10, 20, 40, 60][cfg & 3] : cfg < 16 ? [10, 20][cfg & 1] : [2.5, 5, 10, 20][cfg & 3];
+    const code = toc & 3;
+    const n = code === 0 ? 1 : code < 3 ? 2 : (p + 1 < end ? buf[p + 1] & 0x3F : 1);
+    return frame * n;
+  }
+  function clusterHeader(tc) {
+    const v = [];
+    for (let x = Math.round(tc); x > 0 || !v.length; x = Math.floor(x / 256)) v.unshift(x & 0xFF);
+    return [0x1F, 0x43, 0xB6, 0x75, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, TIMECODE, 0x80 | v.length, ...v];
+  }
+  return function feed(chunk) {
+    const joined = new Uint8Array(buf.length + chunk.length);
+    joined.set(buf); joined.set(chunk, buf.length);
+    buf = joined;
+    const out = [];
+    let p = 0;
+    inInfo = 0;   // the init walk starts over from byte 0 until a Cluster turns up
+    for (;;) {
+      const h = header(p);
+      if (!h) break;
+      if (init) {
+        if (h.id === CLUSTER) {
+          init = false;
+          if (p) out.push(buf.slice(0, p));
+          buf = buf.slice(p); p = 0;
+          continue;
+        }
+        // walk into Segment and Info (for TimecodeScale); step over the rest
+        if (h.id === SEGMENT) { p += h.len; continue; }
+        if (h.id === INFO && h.size !== null) { inInfo = h.size; p += h.len; continue; }
+        if (h.size === null || p + h.len + h.size > buf.length) break;
+        if (inInfo && h.id === SCALE) scaleNs = uint(p + h.len, h.size);
+        if (inInfo) inInfo = Math.max(0, inInfo - h.len - h.size);
+        p += h.len + h.size;
+        continue;
+      }
+      if (h.id === CLUSTER) { fresh = true; p += h.len; continue; }
+      if (h.size === null) { p += h.len; continue; }        // some other live master: its children follow
+      const end = p + h.len + h.size;
+      if (end > buf.length) break;
+      if (h.id === TIMECODE) clusterTc = uint(p + h.len, h.size);
+      else if (h.id === SIMPLEBLOCK) {
+        const body = p + h.len;
+        const tl = buf[body] >= 0x80 ? 1 : buf[body] >= 0x40 ? 2 : 3;   // track number vint
+        const rel = (buf[body + tl] << 8 | buf[body + tl + 1]) << 16 >> 16;
+        const laced = buf[body + tl + 2] & 0x06;
+        if (t === null || laced) t = clusterTc + rel;   // laced: can't size it, keep its own time
+        if (fresh || t - t0 > 30000) { out.push(new Uint8Array(clusterHeader(t))); t0 = Math.round(t); fresh = false; }
+        const block = buf.slice(p, end);
+        const r = Math.round(t) - t0;
+        block[h.len + tl] = (r >> 8) & 0xFF; block[h.len + tl + 1] = r & 0xFF;
+        out.push(block);
+        t += opusMs(body + tl + 3, end) * 1e6 / scaleNs;
+      }
+      p = end;   // Timecode, SimpleBlock, or anything else at cluster level (dropped)
+    }
+    if (!init) buf = buf.slice(p);   // still in the init segment: keep it all, it goes out whole
+    let n = 0;
+    for (const o of out) n += o.length;
+    const res = new Uint8Array(n);
+    let o2 = 0;
+    for (const o of out) { res.set(o, o2); o2 += o.length; }
+    return res;
+  };
+}
+
 const app = createApp({
   data() {
     const tabs = [
@@ -625,6 +732,8 @@ const app = createApp({
     // a MIDI knob bound to the audio delay (orbit_midi.js) -- the delay
     // is this component's state, not the visualizer's
     window.addEventListener('weed:orbit-delay', (e) => { this.orbitDelay = this.clampOrbitDelay(e.detail | 0); });
+    // a MIDI encoder on ⏱ steps from wherever the slider is now
+    window.orbitSync = { delay: () => this.orbitDelay };
     setInterval(() => this._syncLagVideo(), 200);
     // the MIDI panel's volume/filter rows (orbit_midi.js): the player's
     // level and the mix bus's filters are this component's state too
@@ -1504,12 +1613,13 @@ const app = createApp({
       try { s.ws.close(); } catch (e) { /* already closed */ }
       console.log(`[orbit] audio off (${(s.bytes / 1024).toFixed(0)} KB sent)`);
     },
-    clampOrbitDelay(ms) { return Math.min(10000, Math.max(-10000, Math.round(ms / 100) * 100)); },
+    // 10ms steps: lining speakers up by ear needs finer than 0.1s
+    clampOrbitDelay(ms) { return Math.min(10000, Math.max(-10000, Math.round(ms / 10) * 10)); },
     orbitDelayText(ms) {
-      return (ms > 0 ? '+' : ms < 0 ? '−' : '') + (Math.abs(ms) / 1000).toFixed(1) + 's';
+      return (ms > 0 ? '+' : ms < 0 ? '−' : '') + (Math.abs(ms) / 1000).toFixed(ms % 100 ? 2 : 1) + 's';
     },
     orbitDelayTitle() {
-      const s = (Math.abs(this.orbitDelay) / 1000).toFixed(1) + 's';
+      const s = this.orbitDelayText(Math.abs(this.orbitDelay));
       const what = this.orbitDelay > 0 ? `sound ${s} later` : this.orbitDelay < 0 ? `picture ${s} later` : 'no offset';
       return `Sync: ${what}. Right holds the sound back (the picture lags, e.g. the VLC stream), `
         + 'left holds the picture back (the sound lags, e.g. AirPlay or Bluetooth); double-click to reset';
@@ -1531,7 +1641,7 @@ const app = createApp({
       const move = (ev) => {
         let v = startVal + (ev.clientX - startX) / width * 20000;
         if (Math.abs(v) < 250) v = 0;
-        v = this.clampOrbitDelay(v);
+        v = this.clampOrbitDelay(Math.round(v / 100) * 100);   // a pixel is ~30ms: 0.1s steps by mouse
         if (v !== this.orbitDelay) this.orbitDelay = v;
       };
       const up = () => {
@@ -1882,24 +1992,157 @@ const app = createApp({
       const s = this.party.stream;
       if (!s.active || !s.audio) return;
       const a = document.createElement('audio');
-      a.preload = 'none';
       a._since = s.since;
       a._audioSince = s.audio_since;
-      a.src = (s.audio_url || '/api/orbit-audio') + '?_=' + Date.now();
+      const url = (s.audio_url || '/api/orbit-audio') + '?_=' + Date.now();
+      const MS = window.MediaSource || window.ManagedMediaSource;
+      const mime = s.audio_mime || '';
+      if (MS && mime && MS.isTypeSupported(mime)) this._feedPartyAudio(a, MS, url, mime);
+      else { a.preload = 'none'; a.src = url; }
       a.onerror = () => { console.warn('[party] audio element error', a.error && a.error.message); if (this._partyAudio === a) this.stopPartyListen(); };
       a.onended = () => { if (this._partyAudio === a) this.stopPartyListen(); };
       this._partyAudio = a;
       this.partyListening = true;
+      this._partyAudioTimer = setInterval(() => { if (this._partyAudio === a) this._chasePartyAudioEdge(a); }, 250);
       a.play().catch(err => {
         console.warn('[party] audio play() refused:', err && err.message);
         if (this._partyAudio === a) this.stopPartyListen();
       });
     },
+    // Why the guest's sound drifted behind the picture. The picture is an
+    // <img> on MJPEG: every frame replaces the last and the server drops
+    // stale ones, so it's always live. The sound was an <audio src> on the
+    // live WebM, and Chrome's media loader only hands the decoder 32KB at
+    // a time -- at 128kbps that's 2s of audio per handoff, while playback
+    // starts on the first one. So the element ran dry every couple of
+    // seconds, sat 'waiting' until the next 32KB landed, and resumed where
+    // it stopped: each of those added delay that never came back, which is
+    // the slow drift (measured: ~0.1-1.5s per stall, several a minute).
+    // So where the browser has Media Source Extensions for the stream's
+    // type (Chrome, Edge, Firefox and desktop Safari, for WebM/Opus), the
+    // page fetches the stream itself and appends each ~250ms blob to a
+    // SourceBuffer the moment it arrives: no 32KB batching, and the buffer
+    // is the page's to manage (_chasePartyAudioEdge keeps it short). Ogg
+    // (a Firefox streamer) or no MSE (older iPhones) falls back to the
+    // plain <audio src>.
+    _feedPartyAudio(a, MS, url, mime) {
+      const ms = new MS();
+      const ctl = new AbortController();
+      a._mse = { ctl };
+      a.disableRemotePlayback = true;   // ManagedMediaSource (iOS 17.1+) requires it
+      a.src = URL.createObjectURL(ms);
+      ms.addEventListener('sourceopen', async () => {
+        URL.revokeObjectURL(a.src);
+        const gone = () => this._partyAudio !== a || ctl.signal.aborted;
+        let sb;
+        try { sb = ms.addSourceBuffer(mime); } catch (e) {
+          console.warn('[party] audio: MSE refused', mime, e);
+          if (!gone()) this.stopPartyListen();
+          return;
+        }
+        const pending = [];
+        const retime = mime.startsWith('audio/webm') ? webmOpusRetimer() : null;
+        const pump = () => {
+          if (sb.updating || gone() || ms.readyState !== 'open') return;
+          // keep ~10s behind the playhead, so a long listen can't hit the quota
+          const b = sb.buffered;
+          if (b.length && a.currentTime - b.start(0) > 20) { sb.remove(0, a.currentTime - 10); return; }
+          if (pending.length) {
+            try { sb.appendBuffer(pending.shift()); } catch (e) { console.warn('[party] audio: append failed', e); this.stopPartyListen(); }
+          }
+        };
+        sb.addEventListener('updateend', pump);
+        try {
+          const res = await fetch(url, { signal: ctl.signal, cache: 'no-store' });
+          if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+          const reader = res.body.getReader();
+          for (;;) {
+            const { done, value } = await reader.read();
+            if (done || gone()) break;
+            const bytes = retime ? retime(value) : value;
+            if (bytes.length) pending.push(bytes);
+            pump();
+          }
+        } catch (e) {
+          if (!gone()) console.warn('[party] audio feed ended:', e && e.message);
+        }
+        if (!gone()) this.stopPartyListen();   // the stream ended
+      }, { once: true });
+    },
+    // Keep the guest's sound at the live edge, run every 250ms. ahead =
+    // buffered.end - currentTime, the audio received but not yet played.
+    // With MSE that's what the page appended, blob by blob. On a LAN the
+    // blobs land every ~250ms; over the internet they come in bursts, a
+    // second or more apart, and a buffer sized for the LAN runs dry
+    // between them (a stutter), while trimming it back after each burst
+    // (a seek, a click) only sets up the next one. So the measure is the
+    // floor of the last 8s of readings: the least that was queued, dips
+    // between bursts included. A stall puts its own length into the
+    // buffer (playback waited, the stream didn't), and because that dip
+    // is in the window the extra is kept: the buffer grows to whatever the
+    // connection needs and nothing fights it. Only a floor well above
+    // CUSHION -- audio that's always been waiting, i.e. delay nothing is
+    // using -- is played off, at a steady +4% (pitch preserved; one rate
+    // change on, one off, not a new one every tick). Seconds of it for 2s
+    // straight (a backgrounded tab, a long outage) jumps to the edge. The
+    // jump is also how a late joiner starts: its first blocks carry the
+    // recording's own timestamps, seconds or minutes in, not 0.
+    // The <audio src> fallback can't be steered that finely (it's fed in
+    // ~2s lumps, see above, so ahead saws by 2s on its own): there the
+    // floor of the last ~3s of readings is the backlog, played off up to
+    // 8% fast, and only a big one -- several seconds, which the lumps
+    // alone never reach -- reconnects to the live edge.
+    _chasePartyAudioEdge(a) {
+      if (!a || a.paused || !a.buffered || !a.buffered.length) return;
+      const end = a.buffered.end(a.buffered.length - 1);
+      const ahead = end - a.currentTime;
+      if (a._mse) {
+        const CUSHION = 0.25, START = 1, JUMP = 3, WINDOW = 32;   // seconds queued; samples (8s)
+        const hist = a._aheadHist || (a._aheadHist = []);
+        if (a.currentTime < a.buffered.start(0)) {
+          a.currentTime = Math.max(0, end - START);
+          hist.length = 0;
+          return;
+        }
+        hist.push(ahead);
+        if (hist.length > WINDOW) hist.shift();
+        // seconds queued for 2s straight is a backlog, not a gap between bursts
+        if (hist.length >= 8 && Math.min(...hist.slice(-8)) - CUSHION > JUMP) {
+          a.currentTime = end - START;
+          a.playbackRate = 1; hist.length = 0;
+          return;
+        }
+        if (hist.length < WINDOW) return;
+        const over = Math.min(...hist) - CUSHION;
+        if (a.playbackRate === 1 && over > 0.4) a.playbackRate = 1.04;
+        else if (a.playbackRate !== 1 && over < 0.1) a.playbackRate = 1;
+        return;
+      }
+      const TARGET = 0.5, RECONNECT = 4.5, WINDOW = 12;   // seconds queued; samples (~3s)
+      if (a.readyState < 3) return;
+      const hist = a._aheadHist || (a._aheadHist = []);
+      hist.push(ahead);
+      if (hist.length > WINDOW) hist.shift();
+      if (hist.length < WINDOW) return;
+      const behind = Math.min(...hist);
+      if (behind > RECONNECT) {
+        hist.length = 0;
+        a.playbackRate = 1;
+        a.src = a.src.replace(/([?&]_=)\d+/, '$1' + Date.now());
+        a.play().catch(() => { if (this._partyAudio === a) this.stopPartyListen(); });
+        return;
+      }
+      // proportional: 0.6s over target plays at +6%, back to 1x once there
+      const rate = behind > TARGET + 0.1 ? 1 + Math.min(0.08, (behind - TARGET) * 0.1) : 1;
+      if (Math.abs(a.playbackRate - rate) > 0.005) a.playbackRate = rate;
+    },
     stopPartyListen() {
       const a = this._partyAudio;
       this._partyAudio = null;
       this.partyListening = false;
+      if (this._partyAudioTimer) { clearInterval(this._partyAudioTimer); this._partyAudioTimer = null; }
       if (!a) return;
+      if (a._mse) a._mse.ctl.abort();   // closes the fetch; the server sees the write fail
       try { a.pause(); } catch (e) { /* never started */ }
       // dropping src closes the connection; the server sees the write fail
       a.removeAttribute('src');

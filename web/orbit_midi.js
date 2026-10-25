@@ -308,7 +308,8 @@ window.orbitMidi = (function () {
     const t = b.target;
     if (t.startsWith('param:')) {
       if (kind !== 'cc') return;
-      applyParam(b, t.slice(6), knobPosition(b, v, ccKey));
+      if (t === 'param:delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: delayFromKnob(b, v, ccKey) }));
+      else applyParam(b, t.slice(6), knobPosition(b, v, ccKey));
     } else if (t.startsWith('select:')) {
       const sel = SELECTORS[t.slice(7)];
       const list = sel.list(viz);
@@ -448,9 +449,31 @@ window.orbitMidi = (function () {
     relValue[b.id] = next;
     return next;
   }
+  // ⏱ on a knob. What it's for is lining speakers up by ear -- the
+  // stream's listeners are ~1s behind, Bluetooth a few hundred ms -- so
+  // the range that matters is a second or so either side of 0, in tens of
+  // ms. The other params' linear 0..1 gave ±10s a pot's 157ms per value
+  // and an encoder 400ms per 2% click, and the encoder started from 0
+  // rather than wherever the slider was (Ryan). Now an encoder moves it
+  // DELAY_STEP_MS per click from its current value (mouse, saved, or
+  // another knob), stopping on 0 when it crosses; a pot follows a cubic
+  // curve: ~±1s across the middle 40% of its travel at 1-90ms per value,
+  // still ±10s at the ends, its centre still 0.
+  const DELAY_STEP_MS = 20;
+  function delayFromKnob(b, v, ccKey) {
+    if (!isRelative(b, ccKey)) {
+      const x = v / 127 * 2 - 1;
+      return Math.round(Math.sign(x) * Math.pow(Math.abs(x), 3) * 10000);
+    }
+    const cur = window.orbitSync ? window.orbitSync.delay() : 0;
+    const steps = stepOf(v) + (pendingSteps[ccKey] || 0);
+    pendingSteps[ccKey] = 0;
+    let next = cur + steps * DELAY_STEP_MS;
+    if (detentZone && ((cur > 0 && next < 0) || (cur < 0 && next > 0))) next = 0;
+    return Math.max(-10000, Math.min(10000, next));
+  }
   function applyParam(b, param, pos) {
-    if (param === 'delay') window.dispatchEvent(new CustomEvent('weed:orbit-delay', { detail: Math.round((pos * 2 - 1) * 10000) }));
-    else if (param === 'xfade') window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: pos }));
+    if (param === 'xfade') window.dispatchEvent(new CustomEvent('weed:orbit-xfade', { detail: pos }));
     else if (AUDIO_PARAMS.has(param)) { if (window.orbitAudio) window.orbitAudio.set(param, pos); }
     else window.orbitViz.control(param, pos);
   }

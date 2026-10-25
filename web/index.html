@@ -704,7 +704,7 @@
         <!-- pointerdown.stop: this header's own pointerdown is what starts a
              window drag (onPlayerHeaderPointerDown), so dragging the slider
              thumb used to drag the whole PIP along with it -->
-        <input type="range" min="-10000" max="10000" step="100" list="orbit-delay-zero" v-model.number="orbitDelay"
+        <input type="range" min="-10000" max="10000" step="10" list="orbit-delay-zero" v-model.number="orbitDelay"
                @click.stop @pointerdown.stop="onOrbitDelayPointerDown" @dblclick.stop="orbitDelay = 0">
         <span class="orbit-delay-val" :class="{zero: !orbitDelay}">{{ orbitDelayText(orbitDelay) }}</span>
         <datalist id="orbit-delay-zero"><option value="0"></option></datalist>
@@ -912,7 +912,7 @@
                 @click.stop="copyOrbitViewUrl">{{ orbitUrlCopied ? '✓' : '🔗' }}</button>
         <label class="orbit-delay-label" :title="orbitDelayTitle()">
           <span class="orbit-delay-icon">⏱</span>
-          <input type="range" min="-10000" max="10000" step="100" list="orbit-delay-zero" v-model.number="orbitDelay"
+          <input type="range" min="-10000" max="10000" step="10" list="orbit-delay-zero" v-model.number="orbitDelay"
                @click.stop @pointerdown.stop="onOrbitDelayPointerDown" @dblclick.stop="orbitDelay = 0">
           <span class="orbit-delay-val" :class="{zero: !orbitDelay}">{{ orbitDelayText(orbitDelay) }}</span>
         </label>
