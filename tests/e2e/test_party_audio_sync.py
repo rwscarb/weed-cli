@@ -75,9 +75,11 @@ def test_live_audio_stays_at_the_edge_without_running_dry(browser, golden_path_s
     # for a busy CI runner's scheduling, not for the 2s lumps
     assert r['waits'] <= 1, f"ran dry {r['waits']} times"
     # the recorder's jittery timestamps used to put ~25 clicks a second in
-    # here (see webmOpusRetimer); a stall or two may still cost one each
+    # here (see webmOpusRetimer): ~190 in this window. A busy CI runner
+    # costs a few of its own (a stall, a late ScriptProcessor callback;
+    # 0-2 locally, 9 seen in CI), so the bar sits well between the two
     assert r['peak'] > 0.5, r                 # it really was playing the tone
-    assert r['clicks'] <= 6, f"{r['clicks']} clicks in 8s"
+    assert r['clicks'] <= 40, f"{r['clicks']} clicks in 8s"
     # media time keeps pace with the wall clock: no drift
     assert abs(r['lag'] - first['lag']) < 0.4
 
