@@ -76,6 +76,30 @@
       </div>
     </div>
   </div>
+  <!-- party webcams: a WebRTC mesh between whoever joins (vue-app.js
+       joinCam); the server only passes signalling between the browsers -->
+  <div class="party-cams" v-if="cam.enabled">
+    <h3>cams
+      <button type="button" class="icon-btn" v-if="!cam.joined" :disabled="cam.joining" @click="joinCam">
+        {{ cam.joining ? 'joining…' : '📹 join' }}</button>
+      <template v-else>
+        <button type="button" class="icon-btn" :class="{active: !cam.micOn}" :disabled="!cam.sending"
+                :title="cam.micOn ? 'Mute your mic' : 'Unmute your mic'" @click="toggleCamTrack('audio')">{{ cam.micOn ? '🎤' : '🔇' }}</button>
+        <button type="button" class="icon-btn" :class="{active: !cam.camOn}" :disabled="!cam.sending"
+                :title="cam.camOn ? 'Turn your camera off' : 'Turn your camera on'" @click="toggleCamTrack('video')">{{ cam.camOn ? '📷' : '🚫' }}</button>
+        <button type="button" class="icon-btn" title="Leave the cams" @click="leaveCam">✕ leave</button>
+      </template>
+      <span class="muted cam-count" v-if="!cam.joined && cam.count">{{ cam.count }} on camera</span>
+    </h3>
+    <div class="cam-error" v-if="cam.error">{{ cam.error }}</div>
+    <div class="cam-grid" v-if="cam.joined">
+      <div class="cam-tile" v-for="t in cam.tiles" :key="t.id" :class="{me: t.me}">
+        <video v-if="t.stream" v-src-object="t.stream" autoplay playsinline :muted="t.me"></video>
+        <div class="cam-none" v-else>{{ t.me ? 'no camera' : 'connecting…' }}</div>
+        <span class="cam-name">{{ t.name }}</span>
+      </div>
+    </div>
+  </div>
   <div class="party-chat" v-if="chat.enabled">
     <h3>wall</h3>
     <div class="chat-list" ref="partyChatList">
@@ -596,9 +620,37 @@
         <input type="checkbox" id="party-chat-toggle" v-model="partyForm.chat" @change="partyForm._touched = true">
         Guest chat — messages overlay the picture (and the stream, via the visualizer's 💬)
       </label>
+      <label class="checkbox">
+        <input type="checkbox" id="party-cam-toggle" v-model="partyForm.cam" @change="partyForm._touched = true">
+        Guest cams — up to 6 people (you included) can join a video call on the party page; cameras need https (<code>--tls</code>)
+      </label>
       <button type="submit">Save</button>
       <span class="party-saved">{{ partySaved }}</span>
     </form>
+    <!-- party webcams: a WebRTC mesh between whoever joins (vue-app.js
+         joinCam); the server only passes signalling between the browsers -->
+    <div class="party-cams admin-cams" v-if="cam.enabled">
+      <h3>cams
+        <button type="button" class="icon-btn" v-if="!cam.joined" :disabled="cam.joining" @click="joinCam">
+          {{ cam.joining ? 'joining…' : '📹 join' }}</button>
+        <template v-else>
+          <button type="button" class="icon-btn" :class="{active: !cam.micOn}" :disabled="!cam.sending"
+                  :title="cam.micOn ? 'Mute your mic' : 'Unmute your mic'" @click="toggleCamTrack('audio')">{{ cam.micOn ? '🎤' : '🔇' }}</button>
+          <button type="button" class="icon-btn" :class="{active: !cam.camOn}" :disabled="!cam.sending"
+                  :title="cam.camOn ? 'Turn your camera off' : 'Turn your camera on'" @click="toggleCamTrack('video')">{{ cam.camOn ? '📷' : '🚫' }}</button>
+          <button type="button" class="icon-btn" title="Leave the cams" @click="leaveCam">✕ leave</button>
+        </template>
+        <span class="muted cam-count" v-if="!cam.joined && cam.count">{{ cam.count }} on camera</span>
+      </h3>
+      <div class="cam-error" v-if="cam.error">{{ cam.error }}</div>
+      <div class="cam-grid" v-if="cam.joined">
+        <div class="cam-tile" v-for="t in cam.tiles" :key="t.id" :class="{me: t.me}">
+          <video v-if="t.stream" v-src-object="t.stream" autoplay playsinline :muted="t.me"></video>
+          <div class="cam-none" v-else>{{ t.me ? 'no camera' : 'connecting…' }}</div>
+          <span class="cam-name">{{ t.name }}</span>
+        </div>
+      </div>
+    </div>
     <div class="party-chat admin-chat" v-if="chat.enabled">
       <h3>Chat <button type="button" class="icon-btn" title="wipe the chat" @click="clearChat">✕ clear</button></h3>
       <div class="chat-list" ref="chatList">

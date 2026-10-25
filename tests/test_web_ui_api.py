@@ -734,6 +734,68 @@ def test_party_chat_is_gated_rate_limited_and_polled_by_id(web_server, monkeypat
     assert json.loads(_raw_get(f'{web_server}/api/chat', voter)[2])['messages'] == []
 
 
+def test_party_cams_relay_signals_between_joined_peers_only(web_server, monkeypatch):
+    """The party webcams' signalling: off until the admin turns it on, a
+    capped room, each peer's signals only readable (and sendable) with
+    the key it got at join, delivered once and in order, peers that stop
+    polling time out, and turning cams off empties the room."""
+    import web_ui
+    monkeypatch.setattr(web_ui, 'AUTH_TOKEN', 'admin-secret')
+    monkeypatch.setattr(web_ui, 'STREAM_TOKEN', 'guest-secret')
+    monkeypatch.setattr(web_ui, 'CAM_MAX_PEERS', 3)
+    web_ui._cam_clear()
+    guest = {'Authorization': 'Bearer guest-secret'}
+    admin = {'Authorization': 'Bearer admin-secret'}
+    assert _raw_post(f'{web_server}/api/cam/join', {}, guest)[0] == 403              # off
+    assert _raw_post(f'{web_server}/api/cam/join', {})[0] == 401                     # no token
+    assert _raw_post(f'{web_server}/api/party/config', {'cam': True}, guest)[0] == 401
+    status, _, r = _raw_post(f'{web_server}/api/party/config', {'cam': True}, admin)
+    assert status == 200 and r['party']['cam'] is True
+
+    status, _, a = _raw_post(f'{web_server}/api/cam/join', {'name': 'host'}, admin)
+    assert status == 200 and a['peers'] == [{'id': a['id'], 'name': 'host', 'role': 'admin'}]
+    assert a['ice_servers'] and 'key' not in a['peers'][0]
+    status, _, b = _raw_post(f'{web_server}/api/cam/join', {'name': '  dave  '}, guest)
+    assert status == 200 and b['id'] > a['id'] and [p['name'] for p in b['peers']] == ['host', 'dave']
+    party = json.loads(_raw_get(f'{web_server}/api/party', guest)[2])
+    assert party['cam'] is True and party['cam_count'] == 2
+
+    # b offers to a (the older one), then a candidate; a gets both, in order, once
+    sig = f'{web_server}/api/cam/signal'
+    offer = {'sdp': {'type': 'offer', 'sdp': 'v=0'}}
+    assert _raw_post(sig, {'peer': b['id'], 'key': b['key'], 'to': a['id'], 'data': offer}, guest)[0] == 200
+    assert _raw_post(sig, {'peer': b['id'], 'key': b['key'], 'to': a['id'], 'data': {'candidate': {'candidate': 'c1'}}}, guest)[0] == 200
+    assert _raw_post(sig, {'peer': b['id'], 'key': 'wrong', 'to': a['id'], 'data': offer}, guest)[0] == 410
+    assert _raw_post(sig, {'peer': b['id'], 'key': b['key'], 'to': 999, 'data': offer}, guest)[0] == 404
+    assert _raw_post(sig, {'peer': b['id'], 'key': b['key'], 'to': a['id'], 'data': 'x'}, guest)[0] == 400
+    assert _raw_post(sig, {'peer': b['id'], 'key': b['key'], 'to': a['id'],
+                           'data': {'sdp': 'x' * (web_ui.CAM_MAX_SIGNAL + 1)}}, guest)[0] == 400
+    assert _raw_get(f'{web_server}/api/cam?peer={a["id"]}&key={b["key"]}', guest)[0] == 410   # b can't read a's
+    status, _, body = _raw_get(f'{web_server}/api/cam?peer={a["id"]}&key={a["key"]}', admin)
+    got = json.loads(body)
+    assert status == 200 and got['signals'] == [{'from': b['id'], 'data': offer},
+                                                {'from': b['id'], 'data': {'candidate': {'candidate': 'c1'}}}]
+    assert json.loads(_raw_get(f'{web_server}/api/cam?peer={a["id"]}&key={a["key"]}', admin)[2])['signals'] == []
+    # anyone with a token sees who's on, never the keys
+    roster = json.loads(_raw_get(f'{web_server}/api/cam', guest)[2])
+    assert [p['id'] for p in roster['peers']] == [a['id'], b['id']] and 'key' not in json.dumps(roster)
+
+    # the room is capped
+    assert _raw_post(f'{web_server}/api/cam/join', {}, guest)[0] == 200
+    assert _raw_post(f'{web_server}/api/cam/join', {}, guest)[0] == 409
+
+    # leaving needs the key; a peer that stops polling times out
+    assert _raw_post(f'{web_server}/api/cam/leave', {'peer': b['id'], 'key': 'nope'}, guest)[2]['left'] is False
+    assert _raw_post(f'{web_server}/api/cam/leave', {'peer': b['id'], 'key': b['key']}, guest)[2]['left'] is True
+    with web_ui._cam_lock:
+        web_ui._cam_peers[a['id']]['seen'] -= web_ui.CAM_PEER_TIMEOUT + 1
+    assert _raw_get(f'{web_server}/api/cam?peer={a["id"]}&key={a["key"]}', admin)[0] == 410
+    assert len(json.loads(_raw_get(f'{web_server}/api/cam', guest)[2])['peers']) == 1
+
+    # turning cams off empties the room
+    _raw_post(f'{web_server}/api/party/config', {'cam': False}, admin)
+    assert json.loads(_raw_get(f'{web_server}/api/cam', guest)[2]) == {'enabled': False, 'peers': []}
+
 def test_tags_are_set_whole_normalised_and_kept_on_the_record(web_server):
     """POST /api/tags replaces a download record's tag list: trimmed,
     lower-cased, deduped, capped, and only for a download that exists."""
