@@ -91,7 +91,10 @@ def test_speed_reactivity_and_zoom_sliders_update_their_own_labels(page, golden_
     _open_orbit_viz(page)
 
     _set_range(page, '#speedSlider', '2.5')
-    assert page.locator('#speedVal').inner_text() == '2.5x'
+    assert page.locator('#speedVal').inner_text() == '2.50x'
+    # the low end goes down to 0.1x in 0.05 steps for a slow drift
+    _set_range(page, '#speedSlider', '0.15')
+    assert page.locator('#speedVal').inner_text() == '0.15x'
 
     _set_range(page, '#reactivitySlider', '0.4')
     assert page.locator('#reactivityVal').inner_text() == '0.4x'
@@ -468,7 +471,7 @@ def test_an_undecided_encoder_on_an_action_row_fires_on_its_first_click(page, go
     row.locator('button', has_text='learn').click()
     page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
     page.evaluate("() => window.__midi.send([0xB0, 15, 1])")
-    assert page.locator('#speedVal').inner_text() == '1.0x'
+    assert page.locator('#speedVal').inner_text() == '1.00x'
 
 
 def test_an_encoder_on_the_mode_selector_never_skips_a_mode(page, golden_path_server):

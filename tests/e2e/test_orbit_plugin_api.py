@@ -399,6 +399,28 @@ def test_plugin_modes_and_transitions_get_learnable_midi_rows(page, golden_path_
     assert any(r['id'] == 'mode:halftone' and r['key'] == 'n9:60' for r in saved)
 
 
+def test_a_high_refresh_display_still_draws_at_60fps(page, golden_path_server):
+    """Ryan: "the speed control in the visualizer seems very sensitive and
+    much faster than before". Every mode steps its animation once per
+    frame on a ~60fps assumption, so a 144Hz screen ran everything ~2.4x
+    as fast. The self-scheduled loop now draws at most 60 times a
+    second, whatever rate requestAnimationFrame fires at."""
+    page.add_init_script("""
+      // a 144Hz display: rAF every ~6.9ms, with the usual timestamp
+      window.requestAnimationFrame = (cb) => setTimeout(() => cb(performance.now()), 1000 / 144);
+    """)
+    _download_and_play(page, golden_path_server)
+    _register_stub(page, 'stub-hz')
+    _open_orbit_viz(page)
+    page.click('[data-viz="stub-hz"]')
+    page.wait_for_function("() => window.__pluginCalls['stub-hz'].draw > 5")
+    before = _call_counts(page, 'stub-hz')['draw']
+    page.wait_for_timeout(2000)
+    drawn = _call_counts(page, 'stub-hz')['draw'] - before
+    # ~120 at 60fps; unpaced it would be ~280
+    assert 90 <= drawn <= 135, drawn
+
+
 def test_a_mode_that_owns_rotation_gets_the_angle_instead_of_a_turned_canvas(page, golden_path_server):
     """Ryan, on Dancing baby: Rotate should swing round the baby's
     y-axis like the ring and the lights do, not roll the picture about
